@@ -1,0 +1,55 @@
+version: "0.1"
+
+runtime:
+  backend: claude-code
+  max_concurrent: 5
+  task_timeout: 30m
+  max_attempts: 2
+  max_turns: 50
+  permission_mode: acceptEdits
+  env:
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
+    CLAUDE_CODE_EFFORT_LEVEL: "high"
+
+tmux:
+  session_prefix: pylon
+  history_limit: 10000
+
+git:
+  branch_prefix: task
+  default_base: main
+  auto_push: true
+  worktree:
+    enabled: true
+    auto_cleanup: true
+  pr:
+    reviewers:
+      - keiyjay
+    draft: false
+    template: null
+
+projects:
+  project-api:
+    stack: go
+  project-web:
+    stack: react
+
+wiki:
+  auto_update: true
+  update_on:
+    - task_complete
+    - pr_merged
+
+dashboard:
+  host: localhost
+  port: 7777
+
+memory:
+  compaction_threshold: 0.7
+  proactive_injection: true
+  proactive_max_tokens: 2000
+  session_archive: true
+  retention_days: 0
+
+conversation:
+  retention_days: 90

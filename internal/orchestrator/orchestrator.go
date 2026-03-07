@@ -1,0 +1,177 @@
+package orchestrator
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/yongjunkang/pylon/internal/config"
+	"github.com/yongjunkang/pylon/internal/store"
+	"github.com/yongjunkang/pylon/internal/tmux"
+)
+
+// Orchestrator coordinates the pylon pipeline execution.
+// Spec Reference: Section 8 "Orchestrator Core"
+type Orchestrator struct {
+	Config    *config.Config
+	Store     *store.Store
+	Tmux      tmux.SessionManager
+	WorkDir   string // workspace root
+	Pipeline  *Pipeline
+}
+
+// NewOrchestrator creates a new orchestrator instance.
+func NewOrchestrator(cfg *config.Config, s *store.Store, mgr tmux.SessionManager, workDir string) *Orchestrator {
+	return &Orchestrator{
+		Config:  cfg,
+		Store:   s,
+		Tmux:    mgr,
+		WorkDir: workDir,
+	}
+}
+
+// StartPipeline creates a new pipeline and persists its initial state.
+func (o *Orchestrator) StartPipeline(id string) error {
+	o.Pipeline = NewPipeline(id, o.Config.Runtime.MaxAttempts)
+	return o.savePipelineState()
+}
+
+// TransitionTo advances the pipeline to the next stage.
+func (o *Orchestrator) TransitionTo(stage Stage) error {
+	if o.Pipeline == nil {
+		return fmt.Errorf("no active pipeline")
+	}
+
+	if err := o.Pipeline.Transition(stage); err != nil {
+		return err
+	}
+
+	return o.savePipelineState()
+}
+
+// savePipelineState persists the pipeline to both SQLite and state.json.
+func (o *Orchestrator) savePipelineState() error {
+	data, err := o.Pipeline.Snapshot()
+	if err != nil {
+		return err
+	}
+
+	// Save to SQLite
+	if o.Store != nil {
+		if err := o.Store.UpsertPipeline(&store.PipelineRecord{
+			PipelineID: o.Pipeline.ID,
+			Stage:      string(o.Pipeline.CurrentStage),
+			StateJSON:  string(data),
+			UpdatedAt:  time.Now(),
+		}); err != nil {
+			return fmt.Errorf("failed to persist pipeline state: %w", err)
+		}
+	}
+
+	// Save to state.json (SPOF recovery)
+	stateDir := filepath.Join(o.WorkDir, ".pylon", "runtime")
+	os.MkdirAll(stateDir, 0755)
+	statePath := filepath.Join(stateDir, "state.json")
+
+	tmp := statePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, statePath)
+}
+
+// Recover restores pipeline state after orchestrator crash.
+// Spec Reference: Section 8 "SPOF Recovery"
+func (o *Orchestrator) Recover() error {
+	statePath := filepath.Join(o.WorkDir, ".pylon", "runtime", "state.json")
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no state to recover
+		}
+		return fmt.Errorf("failed to read state.json: %w", err)
+	}
+
+	pipeline, err := LoadPipeline(data)
+	if err != nil {
+		return fmt.Errorf("failed to parse state.json: %w", err)
+	}
+
+	if pipeline.IsTerminal() {
+		return nil // already done
+	}
+
+	o.Pipeline = pipeline
+
+	// Check surviving tmux sessions
+	sessions, err := o.Tmux.List()
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	sessionMap := make(map[string]bool)
+	for _, s := range sessions {
+		sessionMap[s.Name] = true
+	}
+
+	// Update agent statuses
+	for name, status := range o.Pipeline.Agents {
+		if !sessionMap[status.TmuxSession] {
+			status.Status = "crashed"
+			o.Pipeline.Agents[name] = status
+		}
+	}
+
+	// Scan for unprocessed outbox results
+	outboxDir := filepath.Join(o.WorkDir, ".pylon", "runtime", "outbox")
+	entries, err := os.ReadDir(outboxDir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				agentDir := filepath.Join(outboxDir, entry.Name())
+				files, _ := os.ReadDir(agentDir)
+				for _, f := range files {
+					if filepath.Ext(f.Name()) == ".json" && !isProcessed(f.Name()) {
+						// Mark as needing processing
+						fmt.Printf("[recovery] unprocessed result: %s/%s\n", entry.Name(), f.Name())
+					}
+				}
+			}
+		}
+	}
+
+	return o.savePipelineState()
+}
+
+func isProcessed(filename string) bool {
+	return filepath.Ext(filename) != ".json"
+}
+
+// GetStatus returns a summary of the current orchestrator state.
+func (o *Orchestrator) GetStatus() map[string]any {
+	status := map[string]any{
+		"workspace": o.WorkDir,
+	}
+
+	if o.Pipeline != nil {
+		status["pipeline_id"] = o.Pipeline.ID
+		status["stage"] = o.Pipeline.CurrentStage
+		status["agents"] = o.Pipeline.Agents
+		status["created_at"] = o.Pipeline.CreatedAt
+	} else {
+		status["pipeline"] = "none"
+	}
+
+	return status
+}
+
+// GetStatusJSON returns the status as pretty-printed JSON.
+func (o *Orchestrator) GetStatusJSON() (string, error) {
+	data, err := json.MarshalIndent(o.GetStatus(), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
