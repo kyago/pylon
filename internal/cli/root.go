@@ -66,6 +66,7 @@ func init() {
 	rootCmd.AddCommand(newDestroyCmd())
 	rootCmd.AddCommand(newAddProjectCmd())
 	rootCmd.AddCommand(newDashboardCmd())
+	rootCmd.AddCommand(newIndexCmd())
 }
 
 // Execute runs the root command.
