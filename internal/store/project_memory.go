@@ -37,7 +37,13 @@ func (s *Store) InsertMemory(entry *MemoryEntry) error {
 	}
 	now := time.Now()
 
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO project_memory (id, project_id, category, key, content, metadata, author, confidence, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.ID, entry.ProjectID, entry.Category, entry.Key,
@@ -47,8 +53,8 @@ func (s *Store) InsertMemory(entry *MemoryEntry) error {
 		return fmt.Errorf("failed to insert memory: %w", err)
 	}
 
-	// Update FTS index
-	_, err = s.db.Exec(`
+	// Update FTS index within the same transaction
+	_, err = tx.Exec(`
 		INSERT INTO project_memory_fts (rowid, key, content, category)
 		SELECT rowid, key, content, category FROM project_memory WHERE id = ?`,
 		entry.ID,
@@ -57,7 +63,7 @@ func (s *Store) InsertMemory(entry *MemoryEntry) error {
 		return fmt.Errorf("failed to update FTS index: %w", err)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 // SearchMemory performs BM25 full-text search on project memory.

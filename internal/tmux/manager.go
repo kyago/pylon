@@ -76,10 +76,18 @@ func (m *Manager) Create(cfg SessionConfig) error {
 
 	// Send the command to execute
 	if cfg.Command != "" {
-		if err := m.SendKeys(cfg.Name, cfg.Command+" Enter"); err != nil {
-			// Kill the session if command sending fails
+		// Use -l flag for literal text (prevents tmux key name interpretation
+		// of sequences like "Enter", "C-c" that may appear in command content)
+		sendCmd := exec.Command("tmux", "send-keys", "-t", cfg.Name, "-l", cfg.Command)
+		if output, err := sendCmd.CombinedOutput(); err != nil {
 			m.Kill(cfg.Name)
-			return fmt.Errorf("failed to send command to session %q: %w", cfg.Name, err)
+			return fmt.Errorf("failed to send command to session %q: %w\n%s", cfg.Name, err, output)
+		}
+		// Send Enter key separately to execute the command
+		enterCmd := exec.Command("tmux", "send-keys", "-t", cfg.Name, "Enter")
+		if output, err := enterCmd.CombinedOutput(); err != nil {
+			m.Kill(cfg.Name)
+			return fmt.Errorf("failed to send Enter to session %q: %w\n%s", cfg.Name, err, output)
 		}
 	}
 

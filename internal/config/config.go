@@ -115,7 +115,26 @@ func LoadConfig(path string) (*Config, error) {
 
 // ParseConfig parses config.yml content from bytes, applying defaults for missing fields.
 func ParseConfig(data []byte) (*Config, error) {
-	cfg := &Config{}
+	// Pre-initialize bool fields that should default to true.
+	// go-yaml v3 only overwrites fields present in the YAML,
+	// so pre-initialized values are preserved when not explicitly set.
+	cfg := &Config{
+		Git: GitConfig{
+			AutoPush: true,
+			Worktree: WorktreeConfig{
+				Enabled:     true,
+				AutoCleanup: true,
+			},
+		},
+		Wiki: WikiConfig{
+			AutoUpdate: true,
+		},
+		Memory: MemoryConfig{
+			ProactiveInjection: true,
+			SessionArchive:     true,
+		},
+	}
+
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
@@ -125,7 +144,7 @@ func ParseConfig(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("config validation error: 'version' is required")
 	}
 
-	// Apply defaults for missing fields (Spec Section 16 defaults)
+	// Apply defaults for non-bool fields (Spec Section 16 defaults)
 	applyDefaults(cfg)
 
 	return cfg, nil
@@ -175,20 +194,11 @@ func applyDefaults(cfg *Config) {
 	if cfg.Git.DefaultBase == "" {
 		cfg.Git.DefaultBase = "main"
 	}
-	// AutoPush defaults to true (Spec Section 16)
-	// Note: bool zero value is false, but spec default is true.
-	// We handle this by checking if git section was specified at all.
-	// For simplicity, we set it in the full default application.
+	// Bool fields (AutoPush, Worktree.Enabled, etc.) are handled by
+	// pre-initialization in ParseConfig. Only set non-bool defaults here.
 
-	// Worktree defaults (Spec Section 16: enabled=true, auto_cleanup=true)
-	// These are only set if the git section exists but worktree wasn't specified.
-	// Since Go zero value for bool is false, we need to handle this carefully.
-	// The approach: set defaults unconditionally for worktree.
-	// Users must explicitly set to false to disable.
-
-	// Wiki defaults
-	if !cfg.Wiki.AutoUpdate && len(cfg.Wiki.UpdateOn) == 0 {
-		cfg.Wiki.AutoUpdate = true
+	// Wiki defaults: set update_on triggers if auto_update is true but no triggers specified
+	if cfg.Wiki.AutoUpdate && len(cfg.Wiki.UpdateOn) == 0 {
 		cfg.Wiki.UpdateOn = []string{"task_complete", "pr_merged"}
 	}
 
@@ -207,13 +217,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Memory.ProactiveMaxTokens == 0 {
 		cfg.Memory.ProactiveMaxTokens = 2000
 	}
-	// ProactiveInjection defaults to true, SessionArchive defaults to true
-	// bool zero value is false, so we handle via explicit default logic
-	// For fresh configs (no memory section), set defaults:
-	if cfg.Memory.CompactionThreshold == 0.7 && cfg.Memory.ProactiveMaxTokens == 2000 {
-		cfg.Memory.ProactiveInjection = true
-		cfg.Memory.SessionArchive = true
-	}
+	// ProactiveInjection and SessionArchive default to true,
+	// handled by pre-initialization in ParseConfig.
 
 	// Conversation defaults
 	if cfg.Conversation.RetentionDays == 0 {

@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/git"
 	"github.com/kyago/pylon/internal/orchestrator"
+	"github.com/kyago/pylon/internal/slug"
 	"github.com/kyago/pylon/internal/store"
 	"github.com/kyago/pylon/internal/tmux"
 )
@@ -96,7 +96,7 @@ func runRequest(cmd *cobra.Command, args []string) error {
 	fmt.Printf("✓ Conversation: %s\n", conv.ID)
 
 	// Step 3: Create git branch
-	branch := git.BranchName(cfg.Git.BranchPrefix, slugify(requirement))
+	branch := git.BranchName(cfg.Git.BranchPrefix, slug.Slugify(requirement))
 	fmt.Printf("✓ Branch: %s\n", branch)
 
 	// Step 4: Transition to PO conversation
@@ -117,21 +117,10 @@ func runRequest(cmd *cobra.Command, args []string) error {
 // generatePipelineID creates an ID in format "YYYYMMDD-slug".
 func generatePipelineID(requirement string) string {
 	date := time.Now().Format("20060102")
-	slug := slugify(requirement)
-	if len(slug) > 30 {
-		slug = slug[:30]
+	s := slug.Slugify(requirement)
+	if len(s) > 30 {
+		s = s[:30]
 	}
-	return fmt.Sprintf("%s-%s", date, slug)
-}
-
-// slugify converts a string to a URL-safe slug.
-func slugify(s string) string {
-	s = strings.ToLower(s)
-	reg := regexp.MustCompile(`[^a-z0-9가-힣]+`)
-	s = reg.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if s == "" {
-		s = "task"
-	}
-	return s
+	s = strings.TrimRight(s, "-")
+	return fmt.Sprintf("%s-%s", date, s)
 }

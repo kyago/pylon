@@ -97,8 +97,9 @@ func FailedSummary(results []VerifyResult) string {
 
 func truncateOutput(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
+	runes := []rune(s)
+	if len(runes) > maxLen {
+		return string(runes[:maxLen]) + "..."
 	}
 	return s
 }

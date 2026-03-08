@@ -133,7 +133,7 @@ func (o *Orchestrator) Recover() error {
 				agentDir := filepath.Join(outboxDir, entry.Name())
 				files, _ := os.ReadDir(agentDir)
 				for _, f := range files {
-					if filepath.Ext(f.Name()) == ".json" && !isProcessed(f.Name()) {
+					if filepath.Ext(f.Name()) == ".json" && !isProcessed(agentDir, f.Name()) {
 						// Mark as needing processing
 						fmt.Printf("[recovery] unprocessed result: %s/%s\n", entry.Name(), f.Name())
 					}
@@ -145,8 +145,18 @@ func (o *Orchestrator) Recover() error {
 	return o.savePipelineState()
 }
 
-func isProcessed(filename string) bool {
-	return filepath.Ext(filename) != ".json"
+// isProcessed checks whether a result file has been marked as processed.
+// Convention: processed files have a companion ".done" marker file.
+func isProcessed(dir, filename string) bool {
+	donePath := filepath.Join(dir, filename+".done")
+	_, err := os.Stat(donePath)
+	return err == nil
+}
+
+// markProcessed creates a ".done" marker for a processed result file.
+func markProcessed(dir, filename string) error {
+	donePath := filepath.Join(dir, filename+".done")
+	return os.WriteFile(donePath, []byte{}, 0644)
 }
 
 // GetStatus returns a summary of the current orchestrator state.

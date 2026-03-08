@@ -53,31 +53,31 @@ func newDoctorCmd() *cobra.Command {
 	}
 }
 
+// runChecks executes all doctor checks and returns results.
+func runChecks() (allPassed bool, failures []Check) {
+	allPassed = true
+	for _, check := range checks {
+		ver, err := check.Verify()
+		reqLabel := ""
+		if check.Required {
+			reqLabel = " [required]"
+		}
+		if err != nil {
+			allPassed = false
+			failures = append(failures, check)
+			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "missing", reqLabel)
+		} else {
+			fmt.Printf("\u2713 %-10s %-10s%s\n", check.Name, ver, reqLabel)
+		}
+	}
+	return allPassed, failures
+}
+
 func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println("Pylon Doctor")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
-	allPassed := true
-	var failures []Check
-
-	for _, check := range checks {
-		ver, err := check.Verify()
-		if err != nil {
-			allPassed = false
-			failures = append(failures, check)
-			reqLabel := ""
-			if check.Required {
-				reqLabel = " [required]"
-			}
-			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "missing", reqLabel)
-		} else {
-			reqLabel := ""
-			if check.Required {
-				reqLabel = " [required]"
-			}
-			fmt.Printf("\u2713 %-10s %-10s%s\n", check.Name, ver, reqLabel)
-		}
-	}
+	allPassed, failures := runChecks()
 
 	fmt.Println()
 	if allPassed {
@@ -98,27 +98,7 @@ func RunDoctorChecks() (bool, error) {
 	fmt.Println("Pylon Doctor")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
-	allPassed := true
-	var failures []Check
-
-	for _, check := range checks {
-		ver, err := check.Verify()
-		if err != nil {
-			allPassed = false
-			failures = append(failures, check)
-			reqLabel := ""
-			if check.Required {
-				reqLabel = " [required]"
-			}
-			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "missing", reqLabel)
-		} else {
-			reqLabel := ""
-			if check.Required {
-				reqLabel = " [required]"
-			}
-			fmt.Printf("\u2713 %-10s %-10s%s\n", check.Name, ver, reqLabel)
-		}
-	}
+	allPassed, failures := runChecks()
 
 	fmt.Println()
 	if !allPassed {

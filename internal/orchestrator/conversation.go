@@ -93,9 +93,15 @@ func (c *ConversationManager) saveMeta(dir string, meta ConversationMeta) error 
 		return fmt.Errorf("failed to marshal meta: %w", err)
 	}
 
+	// Atomic write: write to temp file then rename
 	metaPath := filepath.Join(dir, "meta.yml")
-	if err := os.WriteFile(metaPath, data, 0644); err != nil {
+	tmpPath := metaPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write meta: %w", err)
+	}
+	if err := os.Rename(tmpPath, metaPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to rename meta: %w", err)
 	}
 
 	return nil

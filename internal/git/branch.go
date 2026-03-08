@@ -5,7 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-	"unicode"
+
+	"github.com/kyago/pylon/internal/slug"
 )
 
 // BranchName generates a branch name from the task spec.
@@ -13,11 +14,12 @@ import (
 // Example: task/20260305-user-login
 func BranchName(prefix, taskDesc string) string {
 	date := time.Now().Format("20060102")
-	slug := slugify(taskDesc)
-	if len(slug) > 40 {
-		slug = slug[:40]
+	s := slug.Slugify(taskDesc)
+	if len(s) > 40 {
+		s = s[:40]
 	}
-	return fmt.Sprintf("%s/%s-%s", prefix, date, slug)
+	s = strings.TrimRight(s, "-")
+	return fmt.Sprintf("%s/%s-%s", prefix, date, s)
 }
 
 // CreateBranch creates a new git branch from the current HEAD.
@@ -41,19 +43,3 @@ func CurrentBranch(dir string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// slugify converts a description into a URL-safe slug.
-func slugify(s string) string {
-	s = strings.ToLower(s)
-	var result []rune
-	prevDash := false
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			result = append(result, r)
-			prevDash = false
-		} else if !prevDash && len(result) > 0 {
-			result = append(result, '-')
-			prevDash = true
-		}
-	}
-	return strings.TrimRight(string(result), "-")
-}
