@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/store"
 	"github.com/kyago/pylon/internal/tmux"
@@ -77,10 +78,16 @@ func runLaunch() error {
 		return tmuxAttach(sessionName)
 	}
 
-	// Step 7: Build claude command
-	claudeCmd := buildClaudeCommand(cfg)
+	// Step 7: Select permission mode
+	permMode, err := selectPermissionMode(cfg.Runtime.PermissionMode)
+	if err != nil {
+		return err
+	}
 
-	// Step 8: Create tmux session with claude
+	// Step 8: Build claude command
+	claudeCmd := buildClaudeCommand(cfg, permMode)
+
+	// Step 9: Create tmux session with claude
 	err = mgr.Create(tmux.SessionConfig{
 		Name:         sessionName,
 		WorkDir:      root,
@@ -105,14 +112,52 @@ func tmuxAttach(sessionName string) error {
 	return syscall.Exec(tmuxPath, []string{"tmux", "attach-session", "-t", sessionName}, os.Environ())
 }
 
+// selectPermissionMode presents an interactive selector for Claude Code permission mode.
+func selectPermissionMode(defaultMode string) (string, error) {
+	if defaultMode == "" {
+		defaultMode = "default"
+	}
+
+	modes := []huh.Option[string]{
+		huh.NewOption("default — 매번 권한 확인", "default"),
+		huh.NewOption("acceptEdits — 파일 편집 자동 허용", "acceptEdits"),
+		huh.NewOption("bypassPermissions — 모든 권한 자동 허용", "bypassPermissions"),
+	}
+
+	// Pre-select the default from config
+	for i, m := range modes {
+		if m.Value == defaultMode {
+			modes[i] = modes[i].Selected(true)
+			break
+		}
+	}
+
+	var selected string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Permission Mode 선택").
+				Description("Claude Code 실행 권한을 설정합니다").
+				Options(modes...).
+				Value(&selected),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		return "", fmt.Errorf("선택 취소됨: %w", err)
+	}
+
+	return selected, nil
+}
+
 // buildClaudeCommand constructs the claude CLI invocation string.
-func buildClaudeCommand(cfg *config.Config) string {
+func buildClaudeCommand(cfg *config.Config, permMode string) string {
 	parts := []string{"claude"}
 
 	if cfg.Runtime.MaxTurns > 0 {
 		parts = append(parts, fmt.Sprintf("--max-turns %d", cfg.Runtime.MaxTurns))
 	}
-	parts = append(parts, "--permission-mode", cfg.Runtime.PermissionMode)
+	parts = append(parts, "--permission-mode", permMode)
 
 	return strings.Join(parts, " ")
 }
