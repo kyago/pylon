@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/kyago/pylon/internal/agent"
@@ -31,34 +29,49 @@ Spec Reference: Section 12 "Domain Knowledge"`,
 	}
 }
 
-// selectProjects presents an interactive menu for the user to choose
-// which projects to index. Returns the selected subset.
+// selectProjects presents an interactive multi-select menu (arrow keys + space)
+// for the user to choose which projects to index. All projects are pre-selected.
 func selectProjects(projects []config.ProjectInfo) ([]config.ProjectInfo, error) {
-	reader := bufio.NewReader(os.Stdin)
-
-	fmt.Println("프로젝트를 선택하세요:")
-	fmt.Println()
-	fmt.Printf("  [0] 전체 인덱싱 (모든 프로젝트)\n")
+	// Build options — all pre-selected by default
+	options := make([]huh.Option[string], len(projects))
 	for i, p := range projects {
-		fmt.Printf("  [%d] %s\n", i+1, p.Name)
-	}
-	fmt.Println()
-	fmt.Printf("번호 입력 (기본값: 0): ")
-
-	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(answer)
-
-	// Default: all projects
-	if answer == "" || answer == "0" {
-		return projects, nil
+		options[i] = huh.NewOption(p.Name, p.Name).Selected(true)
 	}
 
-	num, err := strconv.Atoi(answer)
-	if err != nil || num < 1 || num > len(projects) {
-		return nil, fmt.Errorf("유효하지 않은 번호: %s", answer)
+	var selectedNames []string
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("인덱싱할 프로젝트를 선택하세요").
+				Description("↑↓ 이동 · space 선택/해제 · enter 확인").
+				Options(options...).
+				Value(&selectedNames),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		return nil, fmt.Errorf("프로젝트 선택 취소됨: %w", err)
 	}
 
-	return []config.ProjectInfo{projects[num-1]}, nil
+	if len(selectedNames) == 0 {
+		return nil, fmt.Errorf("선택된 프로젝트가 없습니다")
+	}
+
+	// Map selected names back to ProjectInfo
+	nameSet := make(map[string]bool, len(selectedNames))
+	for _, n := range selectedNames {
+		nameSet[n] = true
+	}
+
+	var selected []config.ProjectInfo
+	for _, p := range projects {
+		if nameSet[p.Name] {
+			selected = append(selected, p)
+		}
+	}
+
+	return selected, nil
 }
 
 func runIndex(cmd *cobra.Command, args []string) error {
