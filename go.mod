@@ -1,4 +1,4 @@
-module github.com/yongjunkang/pylon
+module github.com/kyago/pylon
 
 go 1.26.0
 

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yongjunkang/pylon/internal/config"
-	"github.com/yongjunkang/pylon/internal/tmux"
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/tmux"
 )
 
 // RunConfig holds parameters for running a Claude Code agent.

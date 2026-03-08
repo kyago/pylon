@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/yongjunkang/pylon/internal/cli"
+	"github.com/kyago/pylon/internal/cli"
 )
 
 // version is set at build time via ldflags.

@@ -6,10 +6,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yongjunkang/pylon/internal/config"
-	"github.com/yongjunkang/pylon/internal/orchestrator"
-	"github.com/yongjunkang/pylon/internal/store"
-	"github.com/yongjunkang/pylon/internal/tmux"
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/orchestrator"
+	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/tmux"
 )
 
 func newReviewCmd() *cobra.Command {

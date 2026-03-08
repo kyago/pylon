@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yongjunkang/pylon/internal/config"
+	"github.com/kyago/pylon/internal/config"
 )
 
 // --- Env Tests ---

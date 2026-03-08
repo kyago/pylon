@@ -3,8 +3,8 @@ package memory
 import (
 	"testing"
 
-	"github.com/yongjunkang/pylon/internal/config"
-	"github.com/yongjunkang/pylon/internal/store"
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/store"
 )
 
 func setupTestManager(t *testing.T) *Manager {

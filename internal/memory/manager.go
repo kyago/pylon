@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yongjunkang/pylon/internal/config"
-	"github.com/yongjunkang/pylon/internal/store"
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/store"
 )
 
 // Manager handles proactive and reactive memory operations.

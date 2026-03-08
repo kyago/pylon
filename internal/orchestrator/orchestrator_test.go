@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yongjunkang/pylon/internal/config"
-	"github.com/yongjunkang/pylon/internal/store"
-	"github.com/yongjunkang/pylon/internal/tmux"
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/tmux"
 )
 
 // mockTmux implements tmux.SessionManager for testing.

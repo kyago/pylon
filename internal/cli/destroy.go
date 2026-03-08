@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yongjunkang/pylon/internal/config"
-	"github.com/yongjunkang/pylon/internal/tmux"
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/tmux"
 )
 
 func newDestroyCmd() *cobra.Command {
