@@ -58,21 +58,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("Pylon Workspace Initialization")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
-	// Backend selection (MVP: claude-code only)
-	fmt.Printf("Agent backend [claude-code]: ")
-	backendInput, _ := reader.ReadString('\n')
-	backendInput = strings.TrimSpace(backendInput)
-	if backendInput == "" {
-		backendInput = "claude-code"
-	}
+	// Backend is fixed to claude-code in MVP
+	backendInput := "claude-code"
+	fmt.Printf("Agent backend: %s\n", backendInput)
 
 	// PR reviewer
-	fmt.Printf("PR reviewer GitHub username: ")
+	fmt.Printf("PR reviewer GitHub username (Enter to skip): ")
 	reviewerInput, _ := reader.ReadString('\n')
 	reviewerInput = strings.TrimSpace(reviewerInput)
-	if reviewerInput == "" {
-		reviewerInput = "your-github-username"
-	}
 
 	// Step 4: Create directory structure
 	// Spec Reference: Section 4 "Workspace Structure", Section 7 "pylon init"
@@ -95,6 +88,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create config.yml (Spec Section 16: minimal config after init)
+	reviewerSection := "    reviewers: []"
+	if reviewerInput != "" {
+		reviewerSection = fmt.Sprintf("    reviewers:\n      - %s", reviewerInput)
+	}
+
 	configContent := fmt.Sprintf(`version: "0.1"
 
 runtime:
@@ -105,9 +103,8 @@ runtime:
 
 git:
   pr:
-    reviewers:
-      - %s
-`, backendInput, reviewerInput)
+%s
+`, backendInput, reviewerSection)
 
 	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to create config.yml: %w", err)
