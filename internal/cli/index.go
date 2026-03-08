@@ -31,11 +31,14 @@ Spec Reference: Section 12 "Domain Knowledge"`,
 
 // selectProjects presents an interactive multi-select menu (arrow keys + space)
 // for the user to choose which projects to index. All projects are pre-selected.
+const selectAllValue = "__all__"
+
 func selectProjects(projects []config.ProjectInfo) ([]config.ProjectInfo, error) {
-	// Build options — all pre-selected by default
-	options := make([]huh.Option[string], len(projects))
-	for i, p := range projects {
-		options[i] = huh.NewOption(p.Name, p.Name).Selected(true)
+	// Build options — "전체 인덱싱" first, then individual projects
+	options := make([]huh.Option[string], 0, len(projects)+1)
+	options = append(options, huh.NewOption("전체 인덱싱 (모든 프로젝트)", selectAllValue).Selected(true))
+	for _, p := range projects {
+		options = append(options, huh.NewOption(p.Name, p.Name))
 	}
 
 	var selectedNames []string
@@ -56,6 +59,13 @@ func selectProjects(projects []config.ProjectInfo) ([]config.ProjectInfo, error)
 
 	if len(selectedNames) == 0 {
 		return nil, fmt.Errorf("선택된 프로젝트가 없습니다")
+	}
+
+	// "전체 인덱싱" selected → return all projects
+	for _, n := range selectedNames {
+		if n == selectAllValue {
+			return projects, nil
+		}
 	}
 
 	// Map selected names back to ProjectInfo
