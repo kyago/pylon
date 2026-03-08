@@ -116,7 +116,7 @@ func (m *Manager) List() ([]SessionInfo, error) {
 	if err != nil {
 		// "no server running" or "no sessions" is not an error for us
 		outStr := string(output)
-		if strings.Contains(outStr, "no server running") || strings.Contains(outStr, "no sessions") {
+		if strings.Contains(outStr, "no server running") || strings.Contains(outStr, "no sessions") || strings.Contains(outStr, "error connecting to") {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to list tmux sessions: %w\n%s", err, output)
