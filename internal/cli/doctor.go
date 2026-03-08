@@ -92,15 +92,42 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("doctor checks failed")
 }
 
-// RunDoctorChecks runs doctor checks and returns whether all passed.
+// RunDoctorChecks runs doctor checks with detailed output and returns whether all passed.
 // Used internally by pylon init.
 func RunDoctorChecks() (bool, error) {
+	fmt.Println("Pylon Doctor")
+	fmt.Println(strings.Repeat("\u2500", 40))
+
 	allPassed := true
+	var failures []Check
+
 	for _, check := range checks {
-		if _, err := check.Verify(); err != nil {
+		ver, err := check.Verify()
+		if err != nil {
 			allPassed = false
+			failures = append(failures, check)
+			reqLabel := ""
+			if check.Required {
+				reqLabel = " [required]"
+			}
+			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "missing", reqLabel)
+		} else {
+			reqLabel := ""
+			if check.Required {
+				reqLabel = " [required]"
+			}
+			fmt.Printf("\u2713 %-10s %-10s%s\n", check.Name, ver, reqLabel)
 		}
 	}
+
+	fmt.Println()
+	if !allPassed {
+		fmt.Println("Some checks failed. Install missing tools:")
+		for _, f := range failures {
+			fmt.Printf("  %s: %s\n", f.Name, f.InstallURL)
+		}
+	}
+
 	return allPassed, nil
 }
 

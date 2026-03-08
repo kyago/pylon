@@ -27,15 +27,14 @@ Spec Reference: Section 7 "pylon init"`,
 
 func runInit(cmd *cobra.Command, args []string) error {
 	// Step 1: Run doctor checks
-	fmt.Println("Running dependency checks...")
 	passed, err := RunDoctorChecks()
 	if err != nil {
 		return fmt.Errorf("doctor check failed: %w", err)
 	}
 	if !passed {
-		return fmt.Errorf("required tools are missing. Run 'pylon doctor' for details")
+		return fmt.Errorf("required tools are missing — install them and retry 'pylon init'")
 	}
-	fmt.Println("All dependency checks passed.")
+	fmt.Println("All checks passed.")
 	fmt.Println()
 
 	// Determine workspace directory
