@@ -24,6 +24,7 @@ func SetVersion(v string) {
 }
 
 // rootCmd is the base command for pylon.
+// When invoked without subcommands, it launches the Claude Code TUI session.
 var rootCmd = &cobra.Command{
 	Use:   "pylon",
 	Short: "AI multi-agent development team orchestrator",
@@ -33,9 +34,14 @@ Like the Protoss Pylon in StarCraft, Pylon is the energy source
 that powers your AI agent team to build and ship software.
 
 Users provide requirements, and the AI agent team handles
-analysis, design, implementation, and PR creation.`,
+analysis, design, implementation, and PR creation.
+
+Run 'pylon' without subcommands to launch the interactive AI session.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runLaunch()
+	},
 }
 
 // versionCmd prints build version information.
@@ -67,6 +73,8 @@ func init() {
 	rootCmd.AddCommand(newAddProjectCmd())
 	rootCmd.AddCommand(newDashboardCmd())
 	rootCmd.AddCommand(newIndexCmd())
+	rootCmd.AddCommand(newStageCmd())
+	rootCmd.AddCommand(newMemCmd())
 }
 
 // Execute runs the root command.

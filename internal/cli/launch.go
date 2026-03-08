@@ -1,0 +1,457 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/tmux"
+)
+
+const pylonTmuxSession = "pylon-root"
+
+// runLaunch is the main entry point when `pylon` is invoked without subcommands.
+// It generates .claude/ artifacts from .pylon/ (source of truth) and launches
+// Claude Code TUI inside a tmux session.
+func runLaunch() error {
+	// Step 1: Find workspace
+	startDir := flagWorkspace
+	if startDir == "" {
+		startDir = "."
+	}
+	root, err := config.FindWorkspaceRoot(startDir)
+	if err != nil {
+		return fmt.Errorf("pylon 워크스페이스가 아닙니다 — 'pylon init'을 먼저 실행하세요")
+	}
+
+	// Step 2: Load config
+	cfg, err := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml"))
+	if err != nil {
+		return fmt.Errorf("설정 로드 실패: %w", err)
+	}
+
+	// Step 3: Discover projects
+	projects, err := config.DiscoverProjects(root)
+	if err != nil {
+		// Non-fatal: workspace may not have projects yet
+		projects = nil
+	}
+
+	// Step 4: Load project memory for context injection
+	var memoryContext string
+	dbPath := filepath.Join(root, ".pylon", "pylon.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		s, err := store.NewStore(dbPath)
+		if err == nil {
+			defer s.Close()
+			_ = s.Migrate()
+			memoryContext = buildMemoryContext(s, projects)
+		}
+	}
+
+	// Step 5: Generate .claude/ directory structure
+	if err := generateClaudeDir(root, cfg, projects, memoryContext); err != nil {
+		return fmt.Errorf(".claude/ 생성 실패: %w", err)
+	}
+
+	// Ensure .claude/ and CLAUDE.md are in .gitignore
+	ensureGitignore(root)
+
+	// Step 6: Check for existing tmux session → reattach or create new
+	prefix := cfg.Tmux.SessionPrefix
+	if prefix == "" {
+		prefix = "pylon"
+	}
+	sessionName := prefix + "-root"
+
+	mgr := tmux.NewManager(prefix)
+
+	if mgr.IsAlive(sessionName) {
+		fmt.Printf("기존 세션에 재연결합니다: %s\n", sessionName)
+		return tmuxAttach(sessionName)
+	}
+
+	// Step 7: Build claude command
+	claudeCmd := buildClaudeCommand(cfg)
+
+	// Step 8: Create tmux session with claude
+	err = mgr.Create(tmux.SessionConfig{
+		Name:         sessionName,
+		WorkDir:      root,
+		Command:      claudeCmd,
+		Env:          cfg.Runtime.Env,
+		HistoryLimit: cfg.Tmux.HistoryLimit,
+	})
+	if err != nil {
+		return fmt.Errorf("tmux 세션 생성 실패: %w", err)
+	}
+
+	fmt.Printf("Pylon 세션을 시작합니다: %s\n", sessionName)
+	return tmuxAttach(sessionName)
+}
+
+// tmuxAttach attaches to an existing tmux session, replacing the current process.
+func tmuxAttach(sessionName string) error {
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		return fmt.Errorf("tmux를 찾을 수 없습니다: %w", err)
+	}
+	return syscall.Exec(tmuxPath, []string{"tmux", "attach-session", "-t", sessionName}, os.Environ())
+}
+
+// buildClaudeCommand constructs the claude CLI invocation string.
+func buildClaudeCommand(cfg *config.Config) string {
+	parts := []string{"claude"}
+
+	if cfg.Runtime.MaxTurns > 0 {
+		parts = append(parts, fmt.Sprintf("--max-turns %d", cfg.Runtime.MaxTurns))
+	}
+	parts = append(parts, "--permission-mode", cfg.Runtime.PermissionMode)
+
+	return strings.Join(parts, " ")
+}
+
+// generateClaudeDir creates/updates the .claude/ directory from .pylon/ source of truth.
+func generateClaudeDir(root string, cfg *config.Config, projects []config.ProjectInfo, memoryContext string) error {
+	claudeDir := filepath.Join(root, ".claude")
+	commandsDir := filepath.Join(claudeDir, "commands")
+
+	// Ensure directories exist
+	if err := os.MkdirAll(commandsDir, 0755); err != nil {
+		return err
+	}
+
+	// Generate CLAUDE.md at workspace root
+	claudeMD := buildRootCLAUDEMD(cfg, projects, memoryContext, root)
+	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte(claudeMD), 0644); err != nil {
+		return fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
+	}
+
+	// Generate slash commands
+	commands := buildSlashCommands(root)
+	for name, content := range commands {
+		path := filepath.Join(commandsDir, name+".md")
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fmt.Errorf("커맨드 %s 생성 실패: %w", name, err)
+		}
+	}
+
+	return nil
+}
+
+// buildRootCLAUDEMD generates the root agent system prompt.
+func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memoryContext string, root string) string {
+	var b strings.Builder
+
+	// Identity
+	b.WriteString("# Pylon — AI 개발팀 오케스트레이터\n\n")
+	b.WriteString("당신은 Pylon의 루트 에이전트(PO)입니다.\n")
+	b.WriteString("사용자의 요구사항을 분석하고, AI 에이전트 팀을 오케스트레이션하여\n")
+	b.WriteString("분석 → 설계 → 구현 → 검증 → PR 생성까지 자동 수행합니다.\n\n")
+
+	// Workspace info
+	b.WriteString("## 워크스페이스\n\n")
+	b.WriteString(fmt.Sprintf("- **루트**: `%s`\n", root))
+	b.WriteString(fmt.Sprintf("- **설정**: `.pylon/config.yml`\n"))
+	b.WriteString(fmt.Sprintf("- **도메인 지식**: `.pylon/domain/`\n"))
+	b.WriteString(fmt.Sprintf("- **에이전트 정의**: `.pylon/agents/`\n"))
+
+	// Projects
+	if len(projects) > 0 {
+		b.WriteString(fmt.Sprintf("- **프로젝트**: %d개\n", len(projects)))
+		for _, p := range projects {
+			relPath, _ := filepath.Rel(root, p.Path)
+			if relPath == "" {
+				relPath = p.Path
+			}
+			b.WriteString(fmt.Sprintf("  - `%s` (`%s`)\n", p.Name, relPath))
+		}
+	} else {
+		b.WriteString("- **프로젝트**: 없음 — `pylon add-project <git-url>`로 추가\n")
+	}
+	b.WriteString("\n")
+
+	// Pipeline stages
+	b.WriteString("## 파이프라인 단계\n\n")
+	b.WriteString("요구사항 처리 시 다음 단계를 순서대로 수행합니다:\n\n")
+	b.WriteString("1. **PO 대화** — 요구사항 분석, 역질문, 수용 기준 확정\n")
+	b.WriteString("2. **Architect 분석** — 기술 방향성, 의존성, 아키텍처 결정\n")
+	b.WriteString("3. **PM 태스크 분해** — 작업 분해, 에이전트 할당, 실행 순서\n")
+	b.WriteString("4. **에이전트 실행** — 프로젝트별 에이전트가 병렬 구현\n")
+	b.WriteString("5. **교차 검증** — 빌드/테스트/린트 자동 검증\n")
+	b.WriteString("6. **PR 생성** — 변경사항 PR 생성\n")
+	b.WriteString("7. **PO 검증** — 수용 기준 충족 확인\n")
+	b.WriteString("8. **위키 갱신** — 도메인 지식 자동 업데이트\n\n")
+
+	// State management
+	b.WriteString("## 상태 관리\n\n")
+	b.WriteString("파이프라인 상태 전이는 `pylon stage` CLI를 사용합니다:\n")
+	b.WriteString("```bash\n")
+	b.WriteString("pylon stage transition --pipeline <id> --to <stage>  # 상태 전이\n")
+	b.WriteString("pylon stage status --pipeline <id>                   # 상태 조회\n")
+	b.WriteString("pylon stage list                                     # 파이프라인 목록\n")
+	b.WriteString("```\n\n")
+
+	// Memory access
+	b.WriteString("## 프로젝트 메모리\n\n")
+	b.WriteString("프로젝트 지식은 `pylon mem` CLI를 사용합니다:\n")
+	b.WriteString("```bash\n")
+	b.WriteString("pylon mem search --project <name> --query \"검색어\"   # BM25 검색\n")
+	b.WriteString("pylon mem store --project <name> --key \"키\" --content \"내용\"  # 저장\n")
+	b.WriteString("pylon mem list --project <name>                       # 목록\n")
+	b.WriteString("```\n\n")
+
+	// Available skills
+	b.WriteString("## 사용 가능한 스킬 (슬래시 커맨드)\n\n")
+	b.WriteString("- `/index` — 프로젝트 코드베이스 인덱싱 (도메인 위키 갱신)\n")
+	b.WriteString("- `/status` — 파이프라인 및 에이전트 상태 조회\n")
+	b.WriteString("- `/verify` — 교차 검증 실행 (빌드/테스트/린트)\n")
+	b.WriteString("- `/add-project` — 새 프로젝트 추가 (git submodule)\n")
+	b.WriteString("- `/cancel` — 진행 중인 파이프라인 취소\n")
+	b.WriteString("- `/review` — PR 코드 리뷰 요청\n\n")
+
+	// Sub-agent orchestration
+	b.WriteString("## 서브 에이전트 오케스트레이션\n\n")
+	b.WriteString("Claude Code의 Agent 도구를 사용하여 서브 에이전트를 실행합니다.\n")
+	b.WriteString("각 에이전트 정의는 `.pylon/agents/`에 있습니다.\n\n")
+	b.WriteString("서브 에이전트 실행 결과는 `.pylon/runtime/results/`에 JSON으로 저장합니다.\n\n")
+
+	// Domain knowledge
+	b.WriteString("## 도메인 지식\n\n")
+	b.WriteString("다음 파일들을 참조하여 프로젝트 컨텍스트를 파악하세요:\n\n")
+	b.WriteString("- `.pylon/domain/architecture.md` — 시스템 아키텍처\n")
+	b.WriteString("- `.pylon/domain/conventions.md` — 코딩 컨벤션\n")
+	b.WriteString("- `.pylon/domain/glossary.md` — 비즈니스 용어 사전\n")
+	if len(projects) > 0 {
+		for _, p := range projects {
+			b.WriteString(fmt.Sprintf("- `%s/.pylon/context.md` — %s 프로젝트 컨텍스트\n", p.Name, p.Name))
+		}
+	}
+	b.WriteString("\n")
+
+	// Memory context (pre-injected from SQLite)
+	if memoryContext != "" {
+		b.WriteString("## 프로젝트 메모리 요약\n\n")
+		b.WriteString(memoryContext)
+		b.WriteString("\n")
+	}
+
+	// Rules
+	b.WriteString("## 행동 규칙\n\n")
+	b.WriteString("- 사용자와 한국어로 대화합니다\n")
+	b.WriteString("- 요구사항이 모호하면 역질문으로 구체화합니다\n")
+	b.WriteString("- 코드를 직접 작성하지 말고, 서브 에이전트에게 위임합니다\n")
+	b.WriteString("- 모든 파이프라인 상태 전이는 `pylon stage transition`을 사용합니다\n")
+	b.WriteString("- 교차 검증은 `/verify` 또는 `pylon verify`를 사용합니다\n")
+	b.WriteString("- 작업 완료 후 도메인 지식 갱신을 잊지 마세요\n")
+	b.WriteString("- 추측이 아닌 코드에서 확인된 사실만 기록합니다\n")
+
+	return b.String()
+}
+
+// buildSlashCommands generates .claude/commands/ markdown files.
+func buildSlashCommands(root string) map[string]string {
+	commands := map[string]string{
+		"index": `# /index — 프로젝트 코드베이스 인덱싱
+
+프로젝트 코드베이스를 분석하여 도메인 위키와 프로젝트 컨텍스트를 갱신합니다.
+
+## 절차
+
+1. 대상 프로젝트를 사용자에게 확인합니다
+2. 각 프로젝트 디렉토리의 구조, 주요 파일, 의존성을 분석합니다
+3. ` + "`" + `.pylon/domain/` + "`" + ` 하위에 도메인 지식 문서를 생성/갱신합니다:
+   - architecture.md — 아키텍처 개요
+   - conventions.md — 코딩 컨벤션
+   - glossary.md — 비즈니스 용어 사전
+4. 각 프로젝트의 ` + "`" + `{프로젝트}/.pylon/context.md` + "`" + `를 실제 코드에 맞게 갱신합니다
+5. 발견한 기술 스택 정보를 메모리에 저장합니다:
+   ` + "```" + `bash
+   pylon mem store --project <name> --key "tech-stack" --content "..." --category codebase
+   ` + "```" + `
+
+## 주의사항
+
+- 기존 내용이 있으면 보존하되, 변경된 부분만 업데이트
+- 추측이 아닌 코드에서 확인된 사실만 기록
+- 위키 문서는 마크다운 형식으로 작성
+`,
+		"status": `# /status — 상태 조회
+
+현재 파이프라인과 에이전트의 상태를 조회합니다.
+
+## 절차
+
+1. 파이프라인 상태를 확인합니다:
+   ` + "```" + `bash
+   pylon stage list
+   ` + "```" + `
+
+2. 활성 파이프라인이 있으면 상세 상태를 확인합니다:
+   ` + "```" + `bash
+   pylon stage status --pipeline <id>
+   ` + "```" + `
+
+3. tmux 세션 목록을 확인하여 실행 중인 에이전트를 파악합니다:
+   ` + "```" + `bash
+   tmux list-sessions 2>/dev/null | grep pylon || echo "활성 에이전트 없음"
+   ` + "```" + `
+
+4. 결과를 사용자에게 요약하여 보고합니다
+`,
+		"verify": `# /verify — 교차 검증 실행
+
+프로젝트의 빌드/테스트/린트를 실행하여 코드 품질을 검증합니다.
+
+## 절차
+
+1. 대상 프로젝트를 확인합니다
+2. 프로젝트의 ` + "`" + `.pylon/verify.yml` + "`" + `을 읽어 검증 명령을 파악합니다
+3. 각 검증 명령을 순서대로 실행합니다:
+   ` + "```" + `bash
+   # verify.yml에 정의된 명령 실행
+   cd <project-dir>
+   <build-command>
+   <test-command>
+   <lint-command>
+   ` + "```" + `
+4. 실패한 항목이 있으면 원인을 분석하고 보고합니다
+5. 모든 검증 통과 시 파이프라인 상태를 갱신합니다:
+   ` + "```" + `bash
+   pylon stage transition --pipeline <id> --to pr_creation
+   ` + "```" + `
+`,
+		"add-project": `# /add-project — 프로젝트 추가
+
+새 프로젝트를 워크스페이스에 git submodule로 추가합니다.
+
+## 절차
+
+1. 사용자에게 git URL을 확인합니다
+2. 프로젝트 이름을 결정합니다 (URL에서 추론 또는 사용자 지정)
+3. git submodule을 추가합니다:
+   ` + "```" + `bash
+   git submodule add <git-url> <project-name>
+   ` + "```" + `
+4. 프로젝트 ` + "`" + `.pylon/` + "`" + ` 구조를 생성합니다:
+   - ` + "`" + `.pylon/context.md` + "`" + ` — 기술 스택 분석 결과
+   - ` + "`" + `.pylon/verify.yml` + "`" + ` — 검증 명령
+   - ` + "`" + `.pylon/agents/` + "`" + ` — 프로젝트별 에이전트
+5. 코드베이스를 분석하여 기본 컨텍스트를 생성합니다
+6. 사용자에게 결과를 보고합니다
+`,
+		"cancel": `# /cancel — 파이프라인 취소
+
+진행 중인 파이프라인을 취소합니다.
+
+## 절차
+
+1. 활성 파이프라인 목록을 확인합니다:
+   ` + "```" + `bash
+   pylon stage list
+   ` + "```" + `
+2. 취소할 파이프라인을 사용자에게 확인합니다
+3. 관련 tmux 세션(서브 에이전트)을 종료합니다:
+   ` + "```" + `bash
+   tmux kill-session -t <session-name>
+   ` + "```" + `
+4. 파이프라인 상태를 failed로 전이합니다:
+   ` + "```" + `bash
+   pylon stage transition --pipeline <id> --to failed
+   ` + "```" + `
+5. 사용자에게 취소 완료를 알립니다
+`,
+		"review": `# /review — PR 코드 리뷰
+
+생성된 PR의 코드를 리뷰합니다.
+
+## 절차
+
+1. 현재 브랜치의 변경사항을 확인합니다:
+   ` + "```" + `bash
+   git diff main...HEAD
+   ` + "```" + `
+2. 변경된 파일들을 분석합니다:
+   - 코드 품질
+   - 보안 취약점
+   - 테스트 커버리지
+   - 컨벤션 준수 여부 (` + "`" + `.pylon/domain/conventions.md` + "`" + ` 참조)
+3. 리뷰 결과를 구조화하여 보고합니다:
+   - 승인 가능 여부
+   - 수정 필요 사항 (있으면)
+   - 개선 제안 (선택)
+`,
+	}
+	return commands
+}
+
+// buildMemoryContext reads project memory from SQLite and formats it for CLAUDE.md injection.
+func buildMemoryContext(s *store.Store, projects []config.ProjectInfo) string {
+	if len(projects) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, p := range projects {
+		entries, err := s.GetMemoryByCategory(p.Name, "codebase")
+		if err != nil || len(entries) == 0 {
+			continue
+		}
+
+		b.WriteString(fmt.Sprintf("### %s\n", p.Name))
+		for _, e := range entries {
+			b.WriteString(fmt.Sprintf("- **%s**: %s\n", e.Key, e.Content))
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// addToGitignore appends .claude/ entries to .gitignore if not already present.
+func addClaudeDirToGitignore(root string) error {
+	gitignorePath := filepath.Join(root, ".gitignore")
+
+	existing, _ := os.ReadFile(gitignorePath)
+	content := string(existing)
+
+	if strings.Contains(content, ".claude/") {
+		return nil // already present
+	}
+
+	entry := "\n# Pylon-generated Claude Code config (dynamically generated)\n.claude/\nCLAUDE.md\n"
+
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(entry)
+	return err
+}
+
+// ensureGitignore is called on first launch to add .claude/ to .gitignore.
+func ensureGitignore(root string) {
+	_ = addClaudeDirToGitignore(root)
+}
+
+// formatProjectsJSON returns project info as JSON for agent consumption.
+func formatProjectsJSON(projects []config.ProjectInfo) string {
+	type projectOut struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	out := make([]projectOut, len(projects))
+	for i, p := range projects {
+		out[i] = projectOut{Name: p.Name, Path: p.Path}
+	}
+	data, _ := json.Marshal(out)
+	return string(data)
+}

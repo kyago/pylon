@@ -71,3 +71,25 @@ func (s *Store) GetActivePipelines() ([]PipelineRecord, error) {
 	}
 	return records, rows.Err()
 }
+
+// ListAllPipelines returns all pipelines ordered by most recently updated.
+func (s *Store) ListAllPipelines() ([]PipelineRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT pipeline_id, stage, state_json, updated_at
+		FROM pipeline_state
+		ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pipelines: %w", err)
+	}
+	defer rows.Close()
+
+	var records []PipelineRecord
+	for rows.Next() {
+		var rec PipelineRecord
+		if err := rows.Scan(&rec.PipelineID, &rec.Stage, &rec.StateJSON, &rec.UpdatedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, rec)
+	}
+	return records, rows.Err()
+}

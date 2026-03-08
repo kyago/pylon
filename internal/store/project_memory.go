@@ -138,6 +138,37 @@ func (s *Store) GetMemoryByCategory(projectID, category string) ([]MemoryEntry, 
 	return entries, rows.Err()
 }
 
+// ListProjectMemory returns all memory entries for a given project.
+func (s *Store) ListProjectMemory(projectID string) ([]MemoryEntry, error) {
+	rows, err := s.db.Query(`
+		SELECT id, project_id, category, key, content, metadata, author, confidence, access_count, created_at
+		FROM project_memory
+		WHERE project_id = ?
+		ORDER BY category, key`,
+		projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list project memory: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []MemoryEntry
+	for rows.Next() {
+		var e MemoryEntry
+		var metadata, author sql.NullString
+		if err := rows.Scan(
+			&e.ID, &e.ProjectID, &e.Category, &e.Key, &e.Content, &metadata,
+			&author, &e.Confidence, &e.AccessCount, &e.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		e.Metadata = metadata.String
+		e.Author = author.String
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
 // IncrementAccessCount bumps the access count for a memory entry.
 func (s *Store) IncrementAccessCount(memoryID string) error {
 	_, err := s.db.Exec(`UPDATE project_memory SET access_count = access_count + 1 WHERE id = ?`, memoryID)
