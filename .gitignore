@@ -1,4 +1,5 @@
 bin/
+pylon
 *.db
 *.db-wal
 *.db-shm
