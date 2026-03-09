@@ -73,11 +73,15 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 			// Remove submodule registration if it exists
 			deregCmd := exec.Command("git", "submodule", "deinit", "-f", projectName)
 			deregCmd.Dir = root
-			deregCmd.CombinedOutput() // ignore error: may not be a submodule
+			if out, err := deregCmd.CombinedOutput(); err != nil && flagVerbose {
+				fmt.Printf("  (submodule deinit skipped: %s)\n", strings.TrimSpace(string(out)))
+			}
 
 			rmCmd := exec.Command("git", "rm", "-f", projectName)
 			rmCmd.Dir = root
-			rmCmd.CombinedOutput() // ignore error: may not be tracked
+			if out, err := rmCmd.CombinedOutput(); err != nil && flagVerbose {
+				fmt.Printf("  (git rm skipped: %s)\n", strings.TrimSpace(string(out)))
+			}
 
 			gitModulesDir := filepath.Join(root, ".git", "modules", projectName)
 			os.RemoveAll(gitModulesDir) // clean cached module data
@@ -207,7 +211,10 @@ func excludePylonFromSubmodule(projectDir string) error {
 	excludePath := filepath.Join(gitDir, "info", "exclude")
 
 	// Read existing exclude file if it exists
-	existing, _ := os.ReadFile(excludePath)
+	existing, err := os.ReadFile(excludePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read exclude file: %w", err)
+	}
 	for _, line := range strings.Split(string(existing), "\n") {
 		if strings.TrimSpace(line) == ".pylon/" {
 			return nil // already excluded
