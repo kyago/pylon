@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+// requireGit skips the test if the git binary is not available on PATH.
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found on PATH; skipping test")
+	}
+}
+
 func TestInferProjectName(t *testing.T) {
 	tests := []struct {
 		url  string
@@ -29,6 +37,7 @@ func TestInferProjectName(t *testing.T) {
 }
 
 func TestExcludePylonFromSubmodule(t *testing.T) {
+	requireGit(t)
 	// Create a temporary git repo to act as the "submodule"
 	tmpDir := t.TempDir()
 	cmd := exec.Command("git", "init", tmpDir)
@@ -53,6 +62,7 @@ func TestExcludePylonFromSubmodule(t *testing.T) {
 }
 
 func TestExcludePylonFromSubmodule_Idempotent(t *testing.T) {
+	requireGit(t)
 	tmpDir := t.TempDir()
 	cmd := exec.Command("git", "init", tmpDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -80,6 +90,7 @@ func TestExcludePylonFromSubmodule_Idempotent(t *testing.T) {
 }
 
 func TestExcludePylonFromSubmodule_NotGitRepo(t *testing.T) {
+	requireGit(t)
 	tmpDir := t.TempDir()
 	err := excludePylonFromSubmodule(tmpDir)
 	if err == nil {
@@ -196,6 +207,7 @@ func TestRunAddProject_DirExistsNoFlag(t *testing.T) {
 }
 
 func TestRunAddProject_SkipCloneWithExistingDir(t *testing.T) {
+	requireGit(t)
 	// Set up a workspace with an existing project directory containing a git repo
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
@@ -218,19 +230,29 @@ func TestRunAddProject_SkipCloneWithExistingDir(t *testing.T) {
 
 	// Redirect stdin to auto-answer "n" to agent prompt
 	oldStdin := os.Stdin
-	r, w, _ := os.Pipe()
-	w.WriteString("n\n")
-	w.Close()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdin pipe: %v", err)
+	}
+	if _, err := w.WriteString("n\n"); err != nil {
+		t.Fatalf("failed to write to stdin pipe: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close write end of stdin pipe: %v", err)
+	}
 	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
+	defer func() {
+		os.Stdin = oldStdin
+		_ = r.Close()
+	}()
 
 	oldWorkspace := flagWorkspace
 	flagWorkspace = tmpDir
 	defer func() { flagWorkspace = oldWorkspace }()
 
-	err := addCmd.Execute()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	execErr := addCmd.Execute()
+	if execErr != nil {
+		t.Fatalf("unexpected error: %v", execErr)
 	}
 
 	// Verify .pylon/ was created inside project
@@ -249,5 +271,85 @@ func TestRunAddProject_SkipCloneWithExistingDir(t *testing.T) {
 	}
 	if !strings.Contains(string(data), ".pylon/") {
 		t.Error("expected .pylon/ to be in git exclude file")
+	}
+}
+
+func TestValidateProjectName(t *testing.T) {
+	valid := []string{"my-project", "repo123", "a"}
+	for _, name := range valid {
+		if err := validateProjectName(name); err != nil {
+			t.Errorf("validateProjectName(%q) unexpected error: %v", name, err)
+		}
+	}
+
+	invalid := []struct {
+		name    string
+		wantErr string
+	}{
+		{"", "cannot be empty"},
+		{".", "invalid project name"},
+		{"..", "invalid project name"},
+		{"a/b", "path separators"},
+		{"a\\b", "path separators"},
+		{"/abs", "path separators"},
+	}
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateProjectName(tt.name)
+			if err == nil {
+				t.Fatalf("validateProjectName(%q) expected error, got nil", tt.name)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("validateProjectName(%q) = %v, want error containing %q", tt.name, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRunAddProject_DirExistsAsFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create a file (not a directory) with the project name
+	if err := os.WriteFile(filepath.Join(tmpDir, "myproject"), []byte("not a dir"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newAddProjectCmd()
+	cmd.SetArgs([]string{"https://github.com/user/myproject.git", "--name", "myproject"})
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for file at project path, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRunAddProject_PathTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newAddProjectCmd()
+	cmd.SetArgs([]string{"https://github.com/user/repo.git", "--name", "../escape", "--force"})
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for path traversal, got nil")
+	}
+	if !strings.Contains(err.Error(), "path separators") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

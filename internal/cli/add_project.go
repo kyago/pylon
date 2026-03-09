@@ -62,10 +62,20 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--force and --skip-clone are mutually exclusive")
 	}
 
+	// Validate project name to prevent path traversal
+	if err := validateProjectName(projectName); err != nil {
+		return err
+	}
+
 	projectDir := filepath.Join(root, projectName)
 
 	// Check if project already exists
-	if _, err := os.Stat(projectDir); err == nil {
+	info, statErr := os.Stat(projectDir)
+	switch {
+	case statErr == nil:
+		if !info.IsDir() {
+			return fmt.Errorf("%s exists but is not a directory", projectName)
+		}
 		switch {
 		case force:
 			fmt.Printf("Removing existing directory: %s\n", projectName)
@@ -93,8 +103,13 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		default:
 			return fmt.Errorf("directory %s already exists (use --force to re-clone or --skip-clone to use existing)", projectName)
 		}
-	} else if skipClone {
-		return fmt.Errorf("directory %s does not exist; cannot use --skip-clone", projectName)
+	case !os.IsNotExist(statErr):
+		return fmt.Errorf("cannot access %s: %w", projectName, statErr)
+	default:
+		// Path does not exist
+		if skipClone {
+			return fmt.Errorf("directory %s does not exist; cannot use --skip-clone", projectName)
+		}
 	}
 
 	// Step 1: Add git submodule (skipped when --skip-clone)
@@ -177,6 +192,24 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  2. Customize agents: %s\n", agentsDir)
 	fmt.Printf("  3. Start working: pylon request \"<requirement>\"\n")
 
+	return nil
+}
+
+// validateProjectName ensures the project name is a safe single directory name
+// without path separators or traversal components.
+func validateProjectName(name string) error {
+	if name == "" {
+		return fmt.Errorf("project name cannot be empty")
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("invalid project name: %q", name)
+	}
+	if strings.ContainsAny(name, `/\`) || filepath.IsAbs(name) {
+		return fmt.Errorf("project name must not contain path separators: %q", name)
+	}
+	if filepath.Clean(name) != name {
+		return fmt.Errorf("invalid project name: %q", name)
+	}
 	return nil
 }
 
