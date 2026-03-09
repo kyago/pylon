@@ -21,12 +21,17 @@ func newAddProjectCmd() *cobra.Command {
 Analyzes the codebase and creates project-level .pylon/ configuration
 including context.md and default agent definitions.
 
+If the project directory already exists, use --force to re-clone or
+--skip-clone to keep the existing directory and only generate .pylon/ config.
+
 Spec Reference: Section 7 "pylon add-project", Section 12`,
 		Args: cobra.ExactArgs(1),
 		RunE: runAddProject,
 	}
 
 	cmd.Flags().String("name", "", "project directory name (default: inferred from URL)")
+	cmd.Flags().Bool("force", false, "remove existing directory and re-clone")
+	cmd.Flags().Bool("skip-clone", false, "skip git submodule add; use existing directory for .pylon/ setup only")
 
 	return cmd
 }
@@ -50,21 +55,73 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		projectName = inferProjectName(repoURL)
 	}
 
+	force, _ := cmd.Flags().GetBool("force")
+	skipClone, _ := cmd.Flags().GetBool("skip-clone")
+
+	if force && skipClone {
+		return fmt.Errorf("--force and --skip-clone are mutually exclusive")
+	}
+
+	// Validate project name to prevent path traversal
+	if err := validateProjectName(projectName); err != nil {
+		return err
+	}
+
 	projectDir := filepath.Join(root, projectName)
 
 	// Check if project already exists
-	if _, err := os.Stat(projectDir); err == nil {
-		return fmt.Errorf("directory %s already exists", projectName)
+	info, statErr := os.Stat(projectDir)
+	switch {
+	case statErr == nil:
+		if !info.IsDir() {
+			return fmt.Errorf("%s exists but is not a directory", projectName)
+		}
+		switch {
+		case force:
+			fmt.Printf("Removing existing directory: %s\n", projectName)
+			// Remove submodule registration if it exists
+			deregCmd := exec.Command("git", "submodule", "deinit", "-f", projectName)
+			deregCmd.Dir = root
+			if out, err := deregCmd.CombinedOutput(); err != nil && flagVerbose {
+				fmt.Printf("  (submodule deinit skipped: %s)\n", strings.TrimSpace(string(out)))
+			}
+
+			rmCmd := exec.Command("git", "rm", "-f", projectName)
+			rmCmd.Dir = root
+			if out, err := rmCmd.CombinedOutput(); err != nil && flagVerbose {
+				fmt.Printf("  (git rm skipped: %s)\n", strings.TrimSpace(string(out)))
+			}
+
+			gitModulesDir := filepath.Join(root, ".git", "modules", projectName)
+			os.RemoveAll(gitModulesDir) // clean cached module data
+
+			if err := os.RemoveAll(projectDir); err != nil {
+				return fmt.Errorf("failed to remove existing directory: %w", err)
+			}
+		case skipClone:
+			fmt.Printf("Using existing directory: %s\n", projectName)
+		default:
+			return fmt.Errorf("directory %s already exists (use --force to re-clone or --skip-clone to use existing)", projectName)
+		}
+	case !os.IsNotExist(statErr):
+		return fmt.Errorf("cannot access %s: %w", projectName, statErr)
+	default:
+		// Path does not exist
+		if skipClone {
+			return fmt.Errorf("directory %s does not exist; cannot use --skip-clone", projectName)
+		}
 	}
 
-	// Step 1: Add git submodule
-	fmt.Printf("Adding git submodule: %s\n", repoURL)
-	gitCmd := exec.Command("git", "submodule", "add", repoURL, projectName)
-	gitCmd.Dir = root
-	if output, err := gitCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to add submodule: %w\n%s", err, output)
+	// Step 1: Add git submodule (skipped when --skip-clone)
+	if !skipClone {
+		fmt.Printf("Adding git submodule: %s\n", repoURL)
+		gitCmd := exec.Command("git", "submodule", "add", repoURL, projectName)
+		gitCmd.Dir = root
+		if output, err := gitCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to add submodule: %w\n%s", err, output)
+		}
+		fmt.Printf("✓ Submodule added: %s\n", projectName)
 	}
-	fmt.Printf("✓ Submodule added: %s\n", projectName)
 
 	// Step 2: Create project .pylon/ structure
 	pylonDir := filepath.Join(projectDir, ".pylon")
@@ -120,12 +177,39 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	fmt.Printf("Project %s added successfully.\n", projectName)
+
+	// Exclude .pylon/ from submodule git tracking via .git/info/exclude
+	if err := excludePylonFromSubmodule(projectDir); err != nil {
+		fmt.Printf("⚠ Could not auto-exclude .pylon/ from git tracking: %v\n", err)
+		fmt.Println("  Manually add '.pylon/' to the submodule's .git/info/exclude")
+	} else {
+		fmt.Println("✓ .pylon/ excluded from submodule git tracking")
+	}
+
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Printf("  1. Review: %s\n", contextPath)
 	fmt.Printf("  2. Customize agents: %s\n", agentsDir)
 	fmt.Printf("  3. Start working: pylon request \"<requirement>\"\n")
 
+	return nil
+}
+
+// validateProjectName ensures the project name is a safe single directory name
+// without path separators or traversal components.
+func validateProjectName(name string) error {
+	if name == "" {
+		return fmt.Errorf("project name cannot be empty")
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("invalid project name: %q", name)
+	}
+	if strings.ContainsAny(name, `/\`) || filepath.IsAbs(name) {
+		return fmt.Errorf("project name must not contain path separators: %q", name)
+	}
+	if filepath.Clean(name) != name {
+		return fmt.Errorf("invalid project name: %q", name)
+	}
 	return nil
 }
 
@@ -141,6 +225,58 @@ func inferProjectName(repoURL string) string {
 	}
 	name = strings.TrimSuffix(name, ".git")
 	return name
+}
+
+// excludePylonFromSubmodule adds ".pylon/" to the submodule's git exclude file
+// so that generated .pylon/ files do not show up as untracked changes.
+func excludePylonFromSubmodule(projectDir string) error {
+	gitDirCmd := exec.Command("git", "rev-parse", "--git-dir")
+	gitDirCmd.Dir = projectDir
+	out, err := gitDirCmd.Output()
+	if err != nil {
+		return fmt.Errorf("not a git repository: %w", err)
+	}
+
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(projectDir, gitDir)
+	}
+
+	excludePath := filepath.Join(gitDir, "info", "exclude")
+
+	// Read existing exclude file if it exists
+	existing, err := os.ReadFile(excludePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read exclude file: %w", err)
+	}
+	for _, line := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(line) == ".pylon/" {
+			return nil // already excluded
+		}
+	}
+
+	// Ensure info/ directory exists
+	if err := os.MkdirAll(filepath.Join(gitDir, "info"), 0755); err != nil {
+		return fmt.Errorf("failed to create git info directory: %w", err)
+	}
+
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open exclude file: %w", err)
+	}
+	defer f.Close()
+
+	// Add newline before entry if file doesn't end with one
+	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
+		if _, err := f.WriteString("\n"); err != nil {
+			return err
+		}
+	}
+	if _, err := f.WriteString(".pylon/\n"); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // techStack holds detected technology information.
