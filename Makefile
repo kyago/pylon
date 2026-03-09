@@ -12,8 +12,8 @@ test:
 lint:
 	golangci-lint run ./...
 
-install: build
-	cp bin/pylon $(GOPATH)/bin/
+install:
+	go install $(LDFLAGS) ./cmd/pylon
 
 clean:
 	rm -rf bin/
