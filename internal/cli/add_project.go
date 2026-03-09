@@ -21,9 +21,8 @@ func newAddProjectCmd() *cobra.Command {
 Analyzes the codebase and creates project-level .pylon/ configuration
 including context.md and default agent definitions.
 
-Flags:
-  --force       Remove existing directory and re-clone
-  --skip-clone  Skip git submodule add; use existing directory for .pylon/ setup only
+If the project directory already exists, use --force to re-clone or
+--skip-clone to keep the existing directory and only generate .pylon/ config.
 
 Spec Reference: Section 7 "pylon add-project", Section 12`,
 		Args: cobra.ExactArgs(1),
@@ -86,7 +85,9 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 			gitModulesDir := filepath.Join(root, ".git", "modules", projectName)
 			os.RemoveAll(gitModulesDir) // clean cached module data
 
-			os.RemoveAll(projectDir) // ensure directory is gone
+			if err := os.RemoveAll(projectDir); err != nil {
+				return fmt.Errorf("failed to remove existing directory: %w", err)
+			}
 		case skipClone:
 			fmt.Printf("Using existing directory: %s\n", projectName)
 		default:
