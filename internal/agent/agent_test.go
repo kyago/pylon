@@ -249,6 +249,9 @@ func TestRunner_BuildArgs_NonInteractive(t *testing.T) {
 	if !strings.Contains(joined, "--prompt") {
 		t.Error("non-interactive should have --prompt")
 	}
+	if !strings.Contains(joined, "--append-system-prompt test rules") {
+		t.Error("should append system prompt from ClaudeMD")
+	}
 }
 
 func TestRunner_BuildArgs_Interactive(t *testing.T) {

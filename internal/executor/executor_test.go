@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -86,6 +87,45 @@ func TestDirectExecutor_RunHeadless_Env(t *testing.T) {
 	expected := "hello_pylon"
 	if got := strings.TrimSpace(result.Stdout); got != expected {
 		t.Errorf("stdout = %q, want %q", got, expected)
+	}
+}
+
+func TestDirectExecutor_RunHeadless_StdoutStream(t *testing.T) {
+	exec := NewDirectExecutor()
+
+	var buf bytes.Buffer
+	result, err := exec.RunHeadless(ExecConfig{
+		Command: "echo",
+		Args:    []string{"streamed"},
+		Stdout:  &buf,
+	})
+	if err != nil {
+		t.Fatalf("RunHeadless failed: %v", err)
+	}
+
+	// Output should go to the provided writer, not result.Stdout.
+	if got := strings.TrimSpace(buf.String()); got != "streamed" {
+		t.Errorf("writer got %q, want %q", got, "streamed")
+	}
+	if result.Stdout != "" {
+		t.Errorf("result.Stdout = %q, want empty when streaming", result.Stdout)
+	}
+}
+
+func TestDirectExecutor_RunHeadless_EnvOverride(t *testing.T) {
+	exec := NewDirectExecutor()
+
+	result, err := exec.RunHeadless(ExecConfig{
+		Command: "sh",
+		Args:    []string{"-c", "echo $HOME"},
+		Env:     map[string]string{"HOME": "/override/home"},
+	})
+	if err != nil {
+		t.Fatalf("RunHeadless failed: %v", err)
+	}
+
+	if got := strings.TrimSpace(result.Stdout); got != "/override/home" {
+		t.Errorf("HOME = %q, want %q (env override should take precedence)", got, "/override/home")
 	}
 }
 

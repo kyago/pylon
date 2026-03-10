@@ -5,8 +5,33 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 )
+
+// buildEnv merges os.Environ() with cfg.Env, ensuring cfg.Env values
+// take precedence over inherited environment variables.
+func buildEnv(extra map[string]string) []string {
+	if len(extra) == 0 {
+		return nil
+	}
+	override := make(map[string]bool, len(extra))
+	for k := range extra {
+		override[k] = true
+	}
+	// Keep inherited vars except those being overridden.
+	var env []string
+	for _, entry := range os.Environ() {
+		if k, _, ok := strings.Cut(entry, "="); ok && override[k] {
+			continue
+		}
+		env = append(env, entry)
+	}
+	for k, v := range extra {
+		env = append(env, k+"="+v)
+	}
+	return env
+}
 
 // DirectExecutor implements ProcessExecutor using OS-level process operations.
 type DirectExecutor struct{}
@@ -42,10 +67,10 @@ func (d *DirectExecutor) ExecInteractive(cfg ExecConfig) error {
 	// Build argv: argv[0] is the command name
 	argv := append([]string{cfg.Command}, cfg.Args...)
 
-	// Build environment: inherit current + overlay extras
-	env := os.Environ()
-	for k, v := range cfg.Env {
-		env = append(env, k+"="+v)
+	// Build environment: cfg.Env values override inherited vars.
+	env := buildEnv(cfg.Env)
+	if env == nil {
+		env = os.Environ()
 	}
 
 	return syscall.Exec(binPath, argv, env)
@@ -64,12 +89,9 @@ func (d *DirectExecutor) RunHeadless(cfg ExecConfig) (*ExecResult, error) {
 		cmd.Dir = cfg.WorkDir
 	}
 
-	// Set environment
-	if len(cfg.Env) > 0 {
-		cmd.Env = os.Environ()
-		for k, v := range cfg.Env {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
+	// Set environment: cfg.Env values override inherited vars.
+	if env := buildEnv(cfg.Env); env != nil {
+		cmd.Env = env
 	}
 
 	// If callers provide writers, stream directly; otherwise capture into buffers.

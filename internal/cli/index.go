@@ -181,9 +181,6 @@ func runIndex(cmd *cobra.Command, args []string) error {
 
 	if result.ExitCode != 0 {
 		fmt.Printf("⚠ 에이전트가 종료 코드 %d로 완료되었습니다\n", result.ExitCode)
-		if result.Stderr != "" {
-			fmt.Printf("  stderr: %s\n", result.Stderr)
-		}
 	} else {
 		fmt.Println("✓ Tech Writer 에이전트가 완료되었습니다.")
 	}
