@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -166,6 +167,8 @@ func runIndex(cmd *cobra.Command, args []string) error {
 		TaskPrompt: taskPrompt,
 		WorkDir:    root,
 		ClaudeMD:   claudeMD,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
 	}
 
 	fmt.Println()

@@ -24,11 +24,19 @@ func (d *DirectExecutor) ExecInteractive(cfg ExecConfig) error {
 		return fmt.Errorf("command not found: %s: %w", cfg.Command, err)
 	}
 
-	// Change working directory before exec
+	// Change working directory before exec, restoring on failure.
 	if cfg.WorkDir != "" {
+		origDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
 		if err := os.Chdir(cfg.WorkDir); err != nil {
 			return fmt.Errorf("failed to change directory to %s: %w", cfg.WorkDir, err)
 		}
+		defer func() {
+			// Restore cwd if syscall.Exec fails and control returns.
+			_ = os.Chdir(origDir)
+		}()
 	}
 
 	// Build argv: argv[0] is the command name
@@ -64,9 +72,18 @@ func (d *DirectExecutor) RunHeadless(cfg ExecConfig) (*ExecResult, error) {
 		}
 	}
 
+	// If callers provide writers, stream directly; otherwise capture into buffers.
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	if cfg.Stdout != nil {
+		cmd.Stdout = cfg.Stdout
+	} else {
+		cmd.Stdout = &stdout
+	}
+	if cfg.Stderr != nil {
+		cmd.Stderr = cfg.Stderr
+	} else {
+		cmd.Stderr = &stderr
+	}
 
 	err = cmd.Run()
 

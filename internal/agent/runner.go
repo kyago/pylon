@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/kyago/pylon/internal/config"
@@ -13,9 +14,11 @@ type RunConfig struct {
 	Agent       *config.AgentConfig
 	Global      *config.Config
 	TaskPrompt  string
-	WorkDir     string // worktree path or project directory
-	ClaudeMD    string // dynamically generated CLAUDE.md content
-	Interactive bool   // true for PO (interactive mode)
+	WorkDir     string    // worktree path or project directory
+	ClaudeMD    string    // dynamically generated CLAUDE.md content
+	Interactive bool      // true for PO (interactive mode)
+	Stdout      io.Writer // if set, stream stdout instead of capturing
+	Stderr      io.Writer // if set, stream stderr instead of capturing
 }
 
 // Runner manages Claude Code agent execution.
@@ -94,6 +97,8 @@ func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
 		Args:    args,
 		WorkDir: cfg.WorkDir,
 		Env:     env,
+		Stdout:  cfg.Stdout,
+		Stderr:  cfg.Stderr,
 	})
 }
 

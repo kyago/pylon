@@ -2,6 +2,8 @@
 // It provides direct process execution for agent management.
 package executor
 
+import "io"
+
 // ExecConfig holds parameters for launching a process.
 type ExecConfig struct {
 	Name    string            // descriptive name for logging
@@ -9,6 +11,8 @@ type ExecConfig struct {
 	Args    []string          // command-line arguments (not including argv[0])
 	WorkDir string            // working directory
 	Env     map[string]string // additional environment variables
+	Stdout  io.Writer         // if set, stdout is streamed here instead of captured
+	Stderr  io.Writer         // if set, stderr is streamed here instead of captured
 }
 
 // ExecResult holds the output from a headless process execution.
