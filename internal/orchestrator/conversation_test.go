@@ -101,6 +101,122 @@ func TestConversationManager_Load_NotFound(t *testing.T) {
 	}
 }
 
+func TestComputeAmbiguity_Greenfield_AllClear(t *testing.T) {
+	scores := ClarityScores{Goal: 1.0, Constraints: 1.0, Criteria: 1.0}
+	got := ComputeAmbiguity(scores, false)
+	if got != 0.0 {
+		t.Errorf("all clear greenfield: got %f, want 0.0", got)
+	}
+}
+
+func TestComputeAmbiguity_Greenfield_AllUnclear(t *testing.T) {
+	scores := ClarityScores{Goal: 0.0, Constraints: 0.0, Criteria: 0.0}
+	got := ComputeAmbiguity(scores, false)
+	if got != 1.0 {
+		t.Errorf("all unclear greenfield: got %f, want 1.0", got)
+	}
+}
+
+func TestComputeAmbiguity_Greenfield_Partial(t *testing.T) {
+	scores := ClarityScores{Goal: 0.8, Constraints: 0.6, Criteria: 0.4}
+	got := ComputeAmbiguity(scores, false)
+	// 1 - (0.8*0.40 + 0.6*0.30 + 0.4*0.30) = 1 - (0.32 + 0.18 + 0.12) = 1 - 0.62 = 0.38
+	want := 0.38
+	if diff := got - want; diff > 0.001 || diff < -0.001 {
+		t.Errorf("partial greenfield: got %f, want %f", got, want)
+	}
+}
+
+func TestComputeAmbiguity_Brownfield_AllClear(t *testing.T) {
+	scores := ClarityScores{Goal: 1.0, Constraints: 1.0, Criteria: 1.0, Context: 1.0}
+	got := ComputeAmbiguity(scores, true)
+	if got != 0.0 {
+		t.Errorf("all clear brownfield: got %f, want 0.0", got)
+	}
+}
+
+func TestComputeAmbiguity_Brownfield_Partial(t *testing.T) {
+	scores := ClarityScores{Goal: 0.8, Constraints: 0.6, Criteria: 0.4, Context: 0.5}
+	got := ComputeAmbiguity(scores, true)
+	// 1 - (0.8*0.35 + 0.6*0.25 + 0.4*0.25 + 0.5*0.15) = 1 - (0.28 + 0.15 + 0.10 + 0.075) = 1 - 0.605 = 0.395
+	want := 0.395
+	if diff := got - want; diff > 0.001 || diff < -0.001 {
+		t.Errorf("partial brownfield: got %f, want %f", got, want)
+	}
+}
+
+func TestComputeAmbiguity_Clamps(t *testing.T) {
+	// Values outside [0,1] should be clamped
+	scores := ClarityScores{Goal: 1.5, Constraints: -0.2, Criteria: 0.5}
+	got := ComputeAmbiguity(scores, false)
+	// clamped: goal=1.0, constraints=0.0, criteria=0.5
+	// 1 - (1.0*0.40 + 0.0*0.30 + 0.5*0.30) = 1 - (0.40 + 0.00 + 0.15) = 0.45
+	want := 0.45
+	if diff := got - want; diff > 0.001 || diff < -0.001 {
+		t.Errorf("clamped: got %f, want %f", got, want)
+	}
+}
+
+func TestIsReadyForExecution(t *testing.T) {
+	tests := []struct {
+		name      string
+		ambiguity float64
+		threshold float64
+		want      bool
+	}{
+		{"clear enough", 0.2, 0.3, true},
+		{"exactly at threshold", 0.3, 0.3, true},
+		{"too ambiguous", 0.5, 0.3, false},
+		{"zero ambiguity", 0.0, 0.3, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conv := &Conversation{
+				Meta: ConversationMeta{AmbiguityScore: tt.ambiguity},
+			}
+			got := conv.IsReadyForExecution(tt.threshold)
+			if got != tt.want {
+				t.Errorf("IsReadyForExecution(%f): got %v, want %v", tt.threshold, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConversationManager_SaveMeta_WithAmbiguity(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewConversationManager(dir)
+
+	mgr.Create("conv-amb", "모호성 테스트")
+
+	meta := ConversationMeta{
+		Status:         "active",
+		AmbiguityScore: 0.35,
+		ClarityScores: &ClarityScores{
+			Goal:        0.8,
+			Constraints: 0.6,
+			Criteria:    0.5,
+		},
+	}
+	if err := mgr.SaveMeta("conv-amb", meta); err != nil {
+		t.Fatalf("SaveMeta failed: %v", err)
+	}
+
+	conv, err := mgr.Load("conv-amb")
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if conv.Meta.AmbiguityScore != 0.35 {
+		t.Errorf("ambiguity_score = %f, want 0.35", conv.Meta.AmbiguityScore)
+	}
+	if conv.Meta.ClarityScores == nil {
+		t.Fatal("clarity_scores should not be nil")
+	}
+	if conv.Meta.ClarityScores.Goal != 0.8 {
+		t.Errorf("goal = %f, want 0.8", conv.Meta.ClarityScores.Goal)
+	}
+}
+
 func TestConversationManager_SaveMeta(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewConversationManager(dir)

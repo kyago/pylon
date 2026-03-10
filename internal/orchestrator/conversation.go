@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,12 +16,22 @@ type ConversationManager struct {
 	BaseDir string // .pylon/conversations/
 }
 
+// ClarityScores holds per-dimension clarity scores (0.0–1.0).
+type ClarityScores struct {
+	Goal        float64 `yaml:"goal"`
+	Constraints float64 `yaml:"constraints"`
+	Criteria    float64 `yaml:"criteria"`
+	Context     float64 `yaml:"context,omitempty"`
+}
+
 // ConversationMeta holds metadata for a conversation.
 type ConversationMeta struct {
-	Status    string   `yaml:"status"`
-	StartedAt string   `yaml:"started_at"`
-	Projects  []string `yaml:"projects,omitempty"`
-	TaskID    string   `yaml:"task_id,omitempty"`
+	Status         string         `yaml:"status"`
+	StartedAt      string         `yaml:"started_at"`
+	Projects       []string       `yaml:"projects,omitempty"`
+	TaskID         string         `yaml:"task_id,omitempty"`
+	AmbiguityScore float64        `yaml:"ambiguity_score,omitempty"`
+	ClarityScores  *ClarityScores `yaml:"clarity_scores,omitempty"`
 }
 
 // Conversation represents a single conversation thread.
@@ -123,4 +134,34 @@ func (c *ConversationManager) Load(id string) (*Conversation, error) {
 	}
 
 	return &Conversation{ID: id, Dir: dir, Meta: meta}, nil
+}
+
+// ComputeAmbiguity calculates the ambiguity score from clarity dimensions.
+// Greenfield (brownfield=false): 1 - (goal*0.40 + constraints*0.30 + criteria*0.30)
+// Brownfield (brownfield=true):  1 - (goal*0.35 + constraints*0.25 + criteria*0.25 + context*0.15)
+// Each dimension is clamped to [0, 1]. Result is clamped to [0, 1].
+func ComputeAmbiguity(scores ClarityScores, brownfield bool) float64 {
+	clamp := func(v float64) float64 {
+		return math.Max(0, math.Min(1, v))
+	}
+
+	var clarity float64
+	if brownfield {
+		clarity = clamp(scores.Goal)*0.35 +
+			clamp(scores.Constraints)*0.25 +
+			clamp(scores.Criteria)*0.25 +
+			clamp(scores.Context)*0.15
+	} else {
+		clarity = clamp(scores.Goal)*0.40 +
+			clamp(scores.Constraints)*0.30 +
+			clamp(scores.Criteria)*0.30
+	}
+
+	return clamp(1 - clarity)
+}
+
+// IsReadyForExecution returns true if the conversation's ambiguity score
+// is at or below the given threshold, meaning requirements are clear enough.
+func (conv *Conversation) IsReadyForExecution(threshold float64) bool {
+	return conv.Meta.AmbiguityScore <= threshold
 }
