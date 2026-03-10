@@ -17,7 +17,7 @@ type AgentConfig struct {
 	Backend        string            `yaml:"backend"`
 	Scope          []string          `yaml:"scope"`
 	Tools          []string          `yaml:"tools"`
-	DisallowedTools []string         `yaml:"disallowedTools"`
+	DisallowedTools []string          `yaml:"disallowedTools"`
 	MaxTurns       int               `yaml:"maxTurns"`
 	PermissionMode string            `yaml:"permissionMode"`
 	Isolation      string            `yaml:"isolation"`

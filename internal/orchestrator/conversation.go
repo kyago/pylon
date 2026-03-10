@@ -30,7 +30,7 @@ type ConversationMeta struct {
 	StartedAt      string         `yaml:"started_at"`
 	Projects       []string       `yaml:"projects,omitempty"`
 	TaskID         string         `yaml:"task_id,omitempty"`
-	AmbiguityScore float64        `yaml:"ambiguity_score,omitempty"`
+	AmbiguityScore float64        `yaml:"ambiguity_score"`
 	ClarityScores  *ClarityScores `yaml:"clarity_scores,omitempty"`
 }
 
@@ -162,6 +162,10 @@ func ComputeAmbiguity(scores ClarityScores, brownfield bool) float64 {
 
 // IsReadyForExecution returns true if the conversation's ambiguity score
 // is at or below the given threshold, meaning requirements are clear enough.
+// Returns false if ClarityScores has never been computed (nil).
 func (conv *Conversation) IsReadyForExecution(threshold float64) bool {
+	if conv.Meta.ClarityScores == nil {
+		return false
+	}
 	return conv.Meta.AmbiguityScore <= threshold
 }

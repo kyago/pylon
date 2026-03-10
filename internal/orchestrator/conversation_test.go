@@ -158,22 +158,29 @@ func TestComputeAmbiguity_Clamps(t *testing.T) {
 }
 
 func TestIsReadyForExecution(t *testing.T) {
+	scores := &ClarityScores{Goal: 1.0, Constraints: 1.0, Criteria: 1.0}
+
 	tests := []struct {
 		name      string
 		ambiguity float64
+		scores    *ClarityScores
 		threshold float64
 		want      bool
 	}{
-		{"clear enough", 0.2, 0.3, true},
-		{"exactly at threshold", 0.3, 0.3, true},
-		{"too ambiguous", 0.5, 0.3, false},
-		{"zero ambiguity", 0.0, 0.3, true},
+		{"clear enough", 0.2, scores, 0.3, true},
+		{"exactly at threshold", 0.3, scores, 0.3, true},
+		{"too ambiguous", 0.5, scores, 0.3, false},
+		{"zero ambiguity", 0.0, scores, 0.3, true},
+		{"nil clarity scores", 0.0, nil, 0.3, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			conv := &Conversation{
-				Meta: ConversationMeta{AmbiguityScore: tt.ambiguity},
+				Meta: ConversationMeta{
+					AmbiguityScore: tt.ambiguity,
+					ClarityScores:  tt.scores,
+				},
 			}
 			got := conv.IsReadyForExecution(tt.threshold)
 			if got != tt.want {
