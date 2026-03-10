@@ -1,12 +1,30 @@
 package agent
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/executor"
 )
+
+// mockExecutor records calls to RunHeadless for testing.
+type mockExecutor struct {
+	lastCfg executor.ExecConfig
+	result  *executor.ExecResult
+	err     error
+}
+
+func (m *mockExecutor) ExecInteractive(cfg executor.ExecConfig) error {
+	return fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockExecutor) RunHeadless(cfg executor.ExecConfig) (*executor.ExecResult, error) {
+	m.lastCfg = cfg
+	return m.result, m.err
+}
 
 // --- Env Tests ---
 
@@ -371,5 +389,81 @@ func TestRunner_BuildArgs_NoModel(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "--model") {
 		t.Error("should not have --model when not specified")
+	}
+}
+
+// --- Runner.Start Tests ---
+
+func TestRunner_Start_Success(t *testing.T) {
+	mock := &mockExecutor{
+		result: &executor.ExecResult{ExitCode: 0, Stdout: "ok"},
+	}
+	r := NewRunner(mock)
+
+	result, err := r.Start(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:           "dev",
+			MaxTurns:       30,
+			PermissionMode: "acceptEdits",
+		},
+		Global:  &config.Config{},
+		WorkDir: "/tmp",
+	})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0", result.ExitCode)
+	}
+
+	// Verify executor received correct config.
+	if mock.lastCfg.Command != "claude" {
+		t.Errorf("command = %q, want %q", mock.lastCfg.Command, "claude")
+	}
+	if mock.lastCfg.WorkDir != "/tmp" {
+		t.Errorf("workdir = %q, want %q", mock.lastCfg.WorkDir, "/tmp")
+	}
+	joined := strings.Join(mock.lastCfg.Args, " ")
+	if !strings.Contains(joined, "--print") {
+		t.Error("headless agent should have --print")
+	}
+	if !strings.Contains(joined, "--max-turns 30") {
+		t.Error("should pass max-turns")
+	}
+}
+
+func TestRunner_Start_NilAgent(t *testing.T) {
+	r := NewRunner(&mockExecutor{})
+
+	_, err := r.Start(RunConfig{
+		Global:  &config.Config{},
+		WorkDir: "/tmp",
+	})
+	if err == nil {
+		t.Fatal("expected error for nil agent")
+	}
+}
+
+func TestRunner_Start_NilGlobal(t *testing.T) {
+	r := NewRunner(&mockExecutor{})
+
+	_, err := r.Start(RunConfig{
+		Agent:   &config.AgentConfig{Name: "dev", PermissionMode: "default"},
+		WorkDir: "/tmp",
+	})
+	if err == nil {
+		t.Fatal("expected error for nil global config")
+	}
+}
+
+func TestRunner_Start_EmptyWorkDir(t *testing.T) {
+	r := NewRunner(&mockExecutor{})
+
+	_, err := r.Start(RunConfig{
+		Agent:  &config.AgentConfig{Name: "dev", PermissionMode: "default"},
+		Global: &config.Config{},
+	})
+	if err == nil {
+		t.Fatal("expected error for empty work directory")
 	}
 }

@@ -180,11 +180,10 @@ func runIndex(cmd *cobra.Command, args []string) error {
 	}
 
 	if result.ExitCode != 0 {
-		fmt.Printf("⚠ 에이전트가 종료 코드 %d로 완료되었습니다\n", result.ExitCode)
-	} else {
-		fmt.Println("✓ Tech Writer 에이전트가 완료되었습니다.")
+		return fmt.Errorf("에이전트가 종료 코드 %d로 실패했습니다", result.ExitCode)
 	}
 
+	fmt.Println("✓ Tech Writer 에이전트가 완료되었습니다.")
 	return nil
 }
 

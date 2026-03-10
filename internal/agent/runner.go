@@ -84,6 +84,9 @@ func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
 	if cfg.Agent == nil {
 		return nil, fmt.Errorf("agent config is required")
 	}
+	if cfg.Global == nil {
+		return nil, fmt.Errorf("global config is required")
+	}
 	if cfg.WorkDir == "" {
 		return nil, fmt.Errorf("work directory is required")
 	}
