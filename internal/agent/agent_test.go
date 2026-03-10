@@ -274,6 +274,80 @@ func TestRunner_BuildCommand_Interactive(t *testing.T) {
 	}
 }
 
+func TestRunner_BuildCommand_AllowedTools(t *testing.T) {
+	r := NewRunner(nil)
+
+	cmd := r.BuildCommand(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:           "dev",
+			PermissionMode: "acceptEdits",
+			Tools:          []string{"git", "gh", "docker"},
+		},
+		Global: &config.Config{},
+	})
+
+	if !strings.Contains(cmd, "--allowedTools git,gh,docker") {
+		t.Errorf("should have --allowedTools, got: %s", cmd)
+	}
+}
+
+func TestRunner_BuildCommand_DisallowedTools(t *testing.T) {
+	r := NewRunner(nil)
+
+	cmd := r.BuildCommand(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:            "architect",
+			PermissionMode:  "default",
+			DisallowedTools: []string{"Edit", "Write", "Bash"},
+		},
+		Global: &config.Config{},
+	})
+
+	if !strings.Contains(cmd, "--disallowedTools Edit,Write,Bash") {
+		t.Errorf("should have --disallowedTools, got: %s", cmd)
+	}
+}
+
+func TestRunner_BuildCommand_BothToolFlags(t *testing.T) {
+	r := NewRunner(nil)
+
+	cmd := r.BuildCommand(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:            "architect",
+			PermissionMode:  "default",
+			Tools:           []string{"git", "gh"},
+			DisallowedTools: []string{"Edit", "Write"},
+		},
+		Global: &config.Config{},
+	})
+
+	if !strings.Contains(cmd, "--allowedTools git,gh") {
+		t.Errorf("should have --allowedTools, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "--disallowedTools Edit,Write") {
+		t.Errorf("should have --disallowedTools, got: %s", cmd)
+	}
+}
+
+func TestRunner_BuildCommand_NoToolFlags(t *testing.T) {
+	r := NewRunner(nil)
+
+	cmd := r.BuildCommand(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:           "dev",
+			PermissionMode: "acceptEdits",
+		},
+		Global: &config.Config{},
+	})
+
+	if strings.Contains(cmd, "--allowedTools") {
+		t.Error("should not have --allowedTools when tools is empty")
+	}
+	if strings.Contains(cmd, "--disallowedTools") {
+		t.Error("should not have --disallowedTools when disallowedTools is empty")
+	}
+}
+
 func TestRunner_BuildCommand_NoModel(t *testing.T) {
 	r := NewRunner(nil)
 

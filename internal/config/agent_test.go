@@ -68,6 +68,71 @@ func TestParseAgentFile_FullAgent(t *testing.T) {
 	}
 }
 
+func TestParseAgentFile_ArchitectAgent(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "agents", "architect.md")
+	agent, err := ParseAgentFile(path)
+	if err != nil {
+		t.Fatalf("ParseAgentFile failed: %v", err)
+	}
+
+	if agent.Name != "architect" {
+		t.Errorf("name: got %q, expected %q", agent.Name, "architect")
+	}
+	if agent.Role != "Solution Architect" {
+		t.Errorf("role: got %q, expected %q", agent.Role, "Solution Architect")
+	}
+
+	// Check tools (allowedTools)
+	expectedTools := []string{"git", "gh"}
+	if len(agent.Tools) != len(expectedTools) {
+		t.Fatalf("expected %d tools, got %d", len(expectedTools), len(agent.Tools))
+	}
+	for i, tool := range expectedTools {
+		if agent.Tools[i] != tool {
+			t.Errorf("tool[%d]: got %q, expected %q", i, agent.Tools[i], tool)
+		}
+	}
+
+	// Check disallowedTools
+	expectedDisallowed := []string{"Edit", "Write", "Bash"}
+	if len(agent.DisallowedTools) != len(expectedDisallowed) {
+		t.Fatalf("expected %d disallowedTools, got %d", len(expectedDisallowed), len(agent.DisallowedTools))
+	}
+	for i, tool := range expectedDisallowed {
+		if agent.DisallowedTools[i] != tool {
+			t.Errorf("disallowedTools[%d]: got %q, expected %q", i, agent.DisallowedTools[i], tool)
+		}
+	}
+}
+
+func TestParseAgentData_DisallowedTools(t *testing.T) {
+	data := []byte(`---
+name: readonly-agent
+role: Read Only Agent
+disallowedTools:
+  - Edit
+  - Write
+---
+Read-only agent body.
+`)
+	agent, err := ParseAgentData(data)
+	if err != nil {
+		t.Fatalf("ParseAgentData failed: %v", err)
+	}
+
+	if len(agent.DisallowedTools) != 2 {
+		t.Fatalf("expected 2 disallowedTools, got %d", len(agent.DisallowedTools))
+	}
+	if agent.DisallowedTools[0] != "Edit" || agent.DisallowedTools[1] != "Write" {
+		t.Errorf("unexpected disallowedTools: %v", agent.DisallowedTools)
+	}
+
+	// Tools (allowed) should be empty
+	if len(agent.Tools) != 0 {
+		t.Errorf("expected empty tools, got %v", agent.Tools)
+	}
+}
+
 func TestParseAgentFile_MinimalAgent(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "agents", "minimal-agent.md")
 	agent, err := ParseAgentFile(path)

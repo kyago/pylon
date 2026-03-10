@@ -55,6 +55,16 @@ func (r *Runner) BuildCommand(cfg RunConfig) string {
 		parts = append(parts, "--model", cfg.Agent.Model)
 	}
 
+	// Allowed tools
+	if len(cfg.Agent.Tools) > 0 {
+		parts = append(parts, "--allowedTools", strings.Join(cfg.Agent.Tools, ","))
+	}
+
+	// Disallowed tools
+	if len(cfg.Agent.DisallowedTools) > 0 {
+		parts = append(parts, "--disallowedTools", strings.Join(cfg.Agent.DisallowedTools, ","))
+	}
+
 	// System prompt with CLAUDE.md content
 	if cfg.ClaudeMD != "" {
 		// Write CLAUDE.md as system prompt appendage
