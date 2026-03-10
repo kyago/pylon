@@ -9,25 +9,22 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/store"
-	"github.com/kyago/pylon/internal/tmux"
 )
 
 // Orchestrator coordinates the pylon pipeline execution.
 // Spec Reference: Section 8 "Orchestrator Core"
 type Orchestrator struct {
-	Config    *config.Config
-	Store     *store.Store
-	Tmux      tmux.SessionManager
-	WorkDir   string // workspace root
-	Pipeline  *Pipeline
+	Config   *config.Config
+	Store    *store.Store
+	WorkDir  string // workspace root
+	Pipeline *Pipeline
 }
 
 // NewOrchestrator creates a new orchestrator instance.
-func NewOrchestrator(cfg *config.Config, s *store.Store, mgr tmux.SessionManager, workDir string) *Orchestrator {
+func NewOrchestrator(cfg *config.Config, s *store.Store, workDir string) *Orchestrator {
 	return &Orchestrator{
 		Config:  cfg,
 		Store:   s,
-		Tmux:    mgr,
 		WorkDir: workDir,
 	}
 }
@@ -104,25 +101,6 @@ func (o *Orchestrator) Recover() error {
 	}
 
 	o.Pipeline = pipeline
-
-	// Check surviving tmux sessions
-	sessions, err := o.Tmux.List()
-	if err != nil {
-		return fmt.Errorf("failed to list sessions: %w", err)
-	}
-
-	sessionMap := make(map[string]bool)
-	for _, s := range sessions {
-		sessionMap[s.Name] = true
-	}
-
-	// Update agent statuses
-	for name, status := range o.Pipeline.Agents {
-		if !sessionMap[status.TmuxSession] {
-			status.Status = "crashed"
-			o.Pipeline.Agents[name] = status
-		}
-	}
 
 	// Scan for unprocessed outbox results
 	outboxDir := filepath.Join(o.WorkDir, ".pylon", "runtime", "outbox")

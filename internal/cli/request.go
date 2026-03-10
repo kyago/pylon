@@ -12,7 +12,6 @@ import (
 	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/slug"
 	"github.com/kyago/pylon/internal/store"
-	"github.com/kyago/pylon/internal/tmux"
 )
 
 func newRequestCmd() *cobra.Command {
@@ -61,11 +60,8 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	// Create tmux manager
-	tmuxMgr := tmux.NewManager(cfg.Tmux.SessionPrefix)
-
 	// Create orchestrator
-	orch := orchestrator.NewOrchestrator(cfg, s, tmuxMgr, root)
+	orch := orchestrator.NewOrchestrator(cfg, s, root)
 
 	// Attempt recovery of previous state
 	if err := orch.Recover(); err != nil {
@@ -109,7 +105,6 @@ func runRequest(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Printf("  Monitor: pylon status\n")
 	fmt.Printf("  Cancel:  pylon cancel %s\n", pipelineID)
-	fmt.Printf("  Resume:  pylon resume %s\n", pipelineID)
 
 	return nil
 }

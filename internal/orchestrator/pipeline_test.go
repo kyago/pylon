@@ -113,7 +113,7 @@ func TestPipeline_Snapshot_Load(t *testing.T) {
 	p.Transition(StagePOConversation)
 	p.Agents["backend-dev"] = AgentStatus{
 		TaskID:      "task-1",
-		TmuxSession: "pylon-backend-dev",
+		AgentID:     "backend-dev",
 		Status:      "running",
 	}
 
@@ -133,7 +133,7 @@ func TestPipeline_Snapshot_Load(t *testing.T) {
 	if len(loaded.History) != 1 {
 		t.Errorf("expected 1 history entry, got %d", len(loaded.History))
 	}
-	if loaded.Agents["backend-dev"].TmuxSession != "pylon-backend-dev" {
+	if loaded.Agents["backend-dev"].AgentID != "backend-dev" {
 		t.Error("agent status not preserved")
 	}
 }

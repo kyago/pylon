@@ -10,7 +10,6 @@ import (
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
-	"github.com/kyago/pylon/internal/tmux"
 )
 
 func newStageCmd() *cobra.Command {
@@ -120,8 +119,7 @@ func runStageTransition(pipelineID, toStage string) error {
 	}
 	defer s.Close()
 
-	tmuxMgr := tmux.NewManager(cfg.Tmux.SessionPrefix)
-	orch := orchestrator.NewOrchestrator(cfg, s, tmuxMgr, root)
+	orch := orchestrator.NewOrchestrator(cfg, s, root)
 
 	// Load existing pipeline
 	rec, err := s.GetPipeline(pipelineID)
@@ -186,7 +184,7 @@ func runStageStatus(pipelineID string) error {
 		if len(pipeline.Agents) > 0 {
 			fmt.Println("Agents:")
 			for name, agent := range pipeline.Agents {
-				fmt.Printf("  - %s: %s (%s)\n", name, agent.Status, agent.TmuxSession)
+				fmt.Printf("  - %s: %s (%s)\n", name, agent.Status, agent.AgentID)
 			}
 		}
 		if len(pipeline.History) > 0 {

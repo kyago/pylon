@@ -29,8 +29,6 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		{"runtime.max_attempts", cfg.Runtime.MaxAttempts, 2},
 		{"runtime.max_turns", cfg.Runtime.MaxTurns, 50},
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "acceptEdits"},
-		{"tmux.session_prefix", cfg.Tmux.SessionPrefix, "pylon"},
-		{"tmux.history_limit", cfg.Tmux.HistoryLimit, 10000},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "task"},
 		{"git.default_base", cfg.Git.DefaultBase, "main"},
 		{"git.auto_push", cfg.Git.AutoPush, true},
@@ -110,8 +108,6 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 	}{
 		{"runtime.task_timeout (default)", cfg.Runtime.TaskTimeout, "30m"},
 		{"runtime.max_attempts (default)", cfg.Runtime.MaxAttempts, 2},
-		{"tmux.session_prefix (default)", cfg.Tmux.SessionPrefix, "pylon"},
-		{"tmux.history_limit (default)", cfg.Tmux.HistoryLimit, 10000},
 		{"git.branch_prefix (default)", cfg.Git.BranchPrefix, "task"},
 		{"git.default_base (default)", cfg.Git.DefaultBase, "main"},
 		{"git.auto_push (default)", cfg.Git.AutoPush, true},
@@ -181,9 +177,6 @@ func TestParseConfig_VersionOnly(t *testing.T) {
 	if cfg.Runtime.MaxConcurrent != 5 {
 		t.Errorf("expected default max_concurrent 5, got %d", cfg.Runtime.MaxConcurrent)
 	}
-	if cfg.Tmux.SessionPrefix != "pylon" {
-		t.Errorf("expected default session_prefix pylon, got %q", cfg.Tmux.SessionPrefix)
-	}
 }
 
 func TestLoadConfig_FileNotFound(t *testing.T) {
@@ -203,9 +196,6 @@ runtime:
   max_attempts: 3
   max_turns: 100
   permission_mode: bypassPermissions
-tmux:
-  session_prefix: myapp
-  history_limit: 5000
 git:
   branch_prefix: feature
   default_base: develop
@@ -236,8 +226,6 @@ conversation:
 		{"runtime.max_attempts", cfg.Runtime.MaxAttempts, 3},
 		{"runtime.max_turns", cfg.Runtime.MaxTurns, 100},
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "bypassPermissions"},
-		{"tmux.session_prefix", cfg.Tmux.SessionPrefix, "myapp"},
-		{"tmux.history_limit", cfg.Tmux.HistoryLimit, 5000},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "feature"},
 		{"git.default_base", cfg.Git.DefaultBase, "develop"},
 		{"dashboard.host", cfg.Dashboard.Host, "0.0.0.0"},

@@ -40,9 +40,9 @@ var validTransitions = map[Stage][]Stage{
 
 // AgentStatus tracks the state of an agent within a pipeline.
 type AgentStatus struct {
-	TaskID      string `json:"task_id"`
-	TmuxSession string `json:"tmux_session"`
-	Status      string `json:"status"` // running, completed, failed
+	TaskID  string `json:"task_id"`
+	AgentID string `json:"agent_id"`
+	Status  string `json:"status"` // running, completed, failed
 }
 
 // StageTransition records a stage change event.
