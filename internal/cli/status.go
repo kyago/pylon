@@ -8,15 +8,13 @@ import (
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
-	"github.com/kyago/pylon/internal/tmux"
 )
 
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show current work status",
-		Long: `Display the status of active tmux sessions, running tasks,
-and queued work items.
+		Long: `Display the status of running tasks and queued work items.
 
 Spec Reference: Section 7 "pylon status"`,
 		RunE: runStatus,
@@ -34,30 +32,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a pylon workspace: %w", err)
 	}
 
-	// Load config for tmux prefix
+	// Load config
 	cfg, err := config.LoadConfig(root + "/.pylon/config.yml")
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	mgr := tmux.NewManager(cfg.Tmux.SessionPrefix)
-	sessions, err := mgr.List()
-	if err != nil {
-		return fmt.Errorf("failed to list tmux sessions: %w", err)
-	}
-
 	fmt.Println("Pylon Status")
 	fmt.Println("─────────────────────────")
-
-	if len(sessions) == 0 {
-		fmt.Println("No active sessions.")
-	} else {
-		fmt.Println("Active Sessions:")
-		for _, s := range sessions {
-			ago := formatDuration(time.Since(s.Created))
-			fmt.Printf("  ● %-20s alive     (created %s ago)\n", s.Name, ago)
-		}
-	}
 
 	// Show pipeline status from store
 	dbPath := root + "/.pylon/pylon.db"
@@ -66,11 +48,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		defer s.Close()
 		s.Migrate()
 
-		tmuxMgr := tmux.NewManager(cfg.Tmux.SessionPrefix)
-		orch := orchestrator.NewOrchestrator(cfg, s, tmuxMgr, root)
+		orch := orchestrator.NewOrchestrator(cfg, s, root)
 		orch.Recover()
 
-		fmt.Println()
 		if orch.Pipeline != nil {
 			fmt.Printf("Pipeline: %s\n", orch.Pipeline.ID)
 			fmt.Printf("  Stage:    %s\n", orch.Pipeline.CurrentStage)
@@ -85,7 +65,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			fmt.Println("No active pipeline.")
 		}
 	} else {
-		fmt.Println()
 		fmt.Println("No active pipeline.")
 	}
 

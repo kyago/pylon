@@ -8,46 +8,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/store"
-	"github.com/kyago/pylon/internal/tmux"
 )
-
-// mockTmux implements tmux.SessionManager for testing.
-type mockTmux struct {
-	sessions map[string]tmux.SessionInfo
-}
-
-func newMockTmux() *mockTmux {
-	return &mockTmux{sessions: make(map[string]tmux.SessionInfo)}
-}
-
-func (m *mockTmux) Create(cfg tmux.SessionConfig) error {
-	m.sessions[cfg.Name] = tmux.SessionInfo{Name: cfg.Name, Alive: true}
-	return nil
-}
-
-func (m *mockTmux) Kill(name string) error {
-	delete(m.sessions, name)
-	return nil
-}
-
-func (m *mockTmux) IsAlive(name string) bool {
-	_, ok := m.sessions[name]
-	return ok
-}
-
-func (m *mockTmux) List() ([]tmux.SessionInfo, error) {
-	var list []tmux.SessionInfo
-	for _, s := range m.sessions {
-		list = append(list, s)
-	}
-	return list, nil
-}
-
-func (m *mockTmux) SendKeys(name, keys string) error { return nil }
-func (m *mockTmux) CapturePane(name string, lines int) (string, error) {
-	return "", nil
-}
-func (m *mockTmux) KillAllWithPrefix(prefix string) (int, error) { return 0, nil }
 
 func setupTestOrchestrator(t *testing.T) (*Orchestrator, string) {
 	t.Helper()
@@ -68,7 +29,7 @@ func setupTestOrchestrator(t *testing.T) (*Orchestrator, string) {
 		},
 	}
 
-	orch := NewOrchestrator(cfg, s, newMockTmux(), dir)
+	orch := NewOrchestrator(cfg, s, dir)
 	return orch, dir
 }
 
@@ -157,15 +118,15 @@ func TestRecover_WithState(t *testing.T) {
 
 	// Add a mock agent status
 	orch.Pipeline.Agents["test-agent"] = AgentStatus{
-		TmuxSession: "pylon-test-agent",
-		Status:      "running",
+		AgentID: "test-agent",
+		Status:  "running",
 	}
 	if err := orch.savePipelineState(); err != nil {
 		t.Fatalf("savePipelineState failed: %v", err)
 	}
 
 	// Create a new orchestrator and recover
-	orch2 := NewOrchestrator(orch.Config, orch.Store, newMockTmux(), dir)
+	orch2 := NewOrchestrator(orch.Config, orch.Store, dir)
 	if err := orch2.Recover(); err != nil {
 		t.Fatalf("Recover failed: %v", err)
 	}
@@ -178,13 +139,6 @@ func TestRecover_WithState(t *testing.T) {
 	}
 	if orch2.Pipeline.CurrentStage != StagePOConversation {
 		t.Errorf("stage = %s, want %s", orch2.Pipeline.CurrentStage, StagePOConversation)
-	}
-
-	// The mock tmux has no sessions, so agent should be marked as crashed
-	if status, ok := orch2.Pipeline.Agents["test-agent"]; ok {
-		if status.Status != "crashed" {
-			t.Errorf("agent status = %s, want crashed", status.Status)
-		}
 	}
 }
 

@@ -19,12 +19,6 @@ type Check struct {
 
 var checks = []Check{
 	{
-		Name:       "tmux",
-		Required:   true,
-		Verify:     verifyTmux,
-		InstallURL: "https://github.com/tmux/tmux/wiki/Installing",
-	},
-	{
 		Name:       "git",
 		Required:   true,
 		Verify:     verifyGit,
@@ -48,7 +42,7 @@ func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Check required tool installations and versions",
-		Long:  "Verify that all required tools (tmux, git, gh, claude) are installed and configured.",
+		Long:  "Verify that all required tools (git, gh, claude) are installed and configured.",
 		RunE:  runDoctor,
 	}
 }
@@ -109,17 +103,6 @@ func RunDoctorChecks() (bool, error) {
 	}
 
 	return allPassed, nil
-}
-
-func verifyTmux() (string, error) {
-	out, err := exec.Command("tmux", "-V").CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("tmux not found: %w", err)
-	}
-	// tmux -V outputs "tmux 3.4" or similar
-	ver := strings.TrimSpace(string(out))
-	ver = strings.TrimPrefix(ver, "tmux ")
-	return ver, nil
 }
 
 func verifyGit() (string, error) {

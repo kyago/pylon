@@ -9,15 +9,14 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/tmux"
 )
 
 func newDestroyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "destroy",
 		Short: "Remove pylon workspace",
-		Long: `Remove the .pylon/ directory and clean up all pylon-related
-resources including tmux sessions. Git submodules are preserved.
+		Long: `Remove the .pylon/ directory and clean up all pylon-related resources.
+Git submodules are preserved.
 
 Spec Reference: Section 7 "pylon destroy"`,
 		RunE: runDestroy,
@@ -46,9 +45,8 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 	// Confirm unless --force
 	if !force {
 		fmt.Printf("This will:\n")
-		fmt.Printf("  1. Terminate all active pylon tmux sessions\n")
-		fmt.Printf("  2. Remove %s/\n", pylonDir)
-		fmt.Printf("  3. Clean .gitignore of pylon entries\n")
+		fmt.Printf("  1. Remove %s/\n", pylonDir)
+		fmt.Printf("  2. Clean .gitignore of pylon entries\n")
 		fmt.Print("\nAre you sure? (y/N): ")
 
 		reader := bufio.NewReader(os.Stdin)
@@ -60,27 +58,13 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 1: Kill all tmux sessions
-	// Try to load config for prefix; if config is broken, use default prefix
-	prefix := "pylon"
-	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
-	if err == nil {
-		prefix = cfg.Tmux.SessionPrefix
-	}
-
-	mgr := tmux.NewManager(prefix)
-	killed, _ := mgr.KillAllWithPrefix()
-	if killed > 0 {
-		fmt.Printf("Terminated %d tmux session(s).\n", killed)
-	}
-
-	// Step 2: Remove .pylon/ directory
+	// Step 1: Remove .pylon/ directory
 	if err := os.RemoveAll(pylonDir); err != nil {
 		return fmt.Errorf("failed to remove %s: %w", pylonDir, err)
 	}
 	fmt.Printf("Removed %s/\n", pylonDir)
 
-	// Step 3: Clean .gitignore
+	// Step 2: Clean .gitignore
 	gitignorePath := filepath.Join(root, ".gitignore")
 	if err := cleanGitignore(gitignorePath); err != nil {
 		// Non-fatal: warn but don't fail

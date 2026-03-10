@@ -4,22 +4,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/executor"
 	"github.com/kyago/pylon/internal/store"
-	"github.com/kyago/pylon/internal/tmux"
 )
-
-const pylonTmuxSession = "pylon-root"
 
 // runLaunch is the main entry point when `pylon` is invoked without subcommands.
 // It generates .claude/ artifacts from .pylon/ (source of truth) and launches
-// Claude Code TUI inside a tmux session.
+// Claude Code TUI directly via syscall.Exec.
 func runLaunch() error {
 	// Step 1: Find workspace
 	startDir := flagWorkspace
@@ -64,52 +60,23 @@ func runLaunch() error {
 	// Ensure .claude/ and CLAUDE.md are in .gitignore
 	ensureGitignore(root)
 
-	// Step 6: Check for existing tmux session → reattach or create new
-	prefix := cfg.Tmux.SessionPrefix
-	if prefix == "" {
-		prefix = "pylon"
-	}
-	sessionName := prefix + "-root"
-
-	mgr := tmux.NewManager(prefix)
-
-	if mgr.IsAlive(sessionName) {
-		fmt.Printf("기존 세션에 재연결합니다: %s\n", sessionName)
-		return tmuxAttach(sessionName)
-	}
-
-	// Step 7: Select permission mode
+	// Step 6: Select permission mode
 	permMode, err := selectPermissionMode(cfg.Runtime.PermissionMode)
 	if err != nil {
 		return err
 	}
 
-	// Step 8: Build claude command
-	claudeCmd := buildClaudeCommand(cfg, permMode)
+	// Step 7: Launch Claude Code directly
+	exec := executor.NewDirectExecutor()
 
-	// Step 9: Create tmux session with claude
-	err = mgr.Create(tmux.SessionConfig{
-		Name:         sessionName,
-		WorkDir:      root,
-		Command:      claudeCmd,
-		Env:          cfg.Runtime.Env,
-		HistoryLimit: cfg.Tmux.HistoryLimit,
+	fmt.Println("Claude Code를 시작합니다...")
+	return exec.ExecInteractive(executor.ExecConfig{
+		Name:    "claude",
+		Command: "claude",
+		Args:    buildClaudeArgs(cfg, permMode),
+		WorkDir: root,
+		Env:     cfg.Runtime.Env,
 	})
-	if err != nil {
-		return fmt.Errorf("tmux 세션 생성 실패: %w", err)
-	}
-
-	fmt.Printf("Pylon 세션을 시작합니다: %s\n", sessionName)
-	return tmuxAttach(sessionName)
-}
-
-// tmuxAttach attaches to an existing tmux session, replacing the current process.
-func tmuxAttach(sessionName string) error {
-	tmuxPath, err := exec.LookPath("tmux")
-	if err != nil {
-		return fmt.Errorf("tmux를 찾을 수 없습니다: %w", err)
-	}
-	return syscall.Exec(tmuxPath, []string{"tmux", "attach-session", "-t", sessionName}, os.Environ())
 }
 
 // selectPermissionMode presents an interactive selector for Claude Code permission mode.
@@ -150,16 +117,16 @@ func selectPermissionMode(defaultMode string) (string, error) {
 	return selected, nil
 }
 
-// buildClaudeCommand constructs the claude CLI invocation string.
-func buildClaudeCommand(cfg *config.Config, permMode string) string {
-	parts := []string{"claude"}
+// buildClaudeArgs constructs the claude CLI arguments as a string slice.
+func buildClaudeArgs(cfg *config.Config, permMode string) []string {
+	var args []string
 
 	if cfg.Runtime.MaxTurns > 0 {
-		parts = append(parts, fmt.Sprintf("--max-turns %d", cfg.Runtime.MaxTurns))
+		args = append(args, "--max-turns", fmt.Sprintf("%d", cfg.Runtime.MaxTurns))
 	}
-	parts = append(parts, "--permission-mode", permMode)
+	args = append(args, "--permission-mode", permMode)
 
-	return strings.Join(parts, " ")
+	return args
 }
 
 // generateClaudeDir creates/updates the .claude/ directory from .pylon/ source of truth.
@@ -343,12 +310,7 @@ func buildSlashCommands(root string) map[string]string {
    pylon stage status --pipeline <id>
    ` + "```" + `
 
-3. tmux 세션 목록을 확인하여 실행 중인 에이전트를 파악합니다:
-   ` + "```" + `bash
-   tmux list-sessions 2>/dev/null | grep pylon || echo "활성 에이전트 없음"
-   ` + "```" + `
-
-4. 결과를 사용자에게 요약하여 보고합니다
+3. 결과를 사용자에게 요약하여 보고합니다
 `,
 		"verify": `# /verify — 교차 검증 실행
 
@@ -402,15 +364,11 @@ func buildSlashCommands(root string) map[string]string {
    pylon stage list
    ` + "```" + `
 2. 취소할 파이프라인을 사용자에게 확인합니다
-3. 관련 tmux 세션(서브 에이전트)을 종료합니다:
-   ` + "```" + `bash
-   tmux kill-session -t <session-name>
-   ` + "```" + `
-4. 파이프라인 상태를 failed로 전이합니다:
+3. 파이프라인 상태를 failed로 전이합니다:
    ` + "```" + `bash
    pylon stage transition --pipeline <id> --to failed
    ` + "```" + `
-5. 사용자에게 취소 완료를 알립니다
+4. 사용자에게 취소 완료를 알립니다
 `,
 		"review": `# /review — PR 코드 리뷰
 

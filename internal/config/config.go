@@ -14,7 +14,6 @@ import (
 type Config struct {
 	Version      string                   `yaml:"version"`
 	Runtime      RuntimeConfig            `yaml:"runtime"`
-	Tmux         TmuxConfig               `yaml:"tmux"`
 	Git          GitConfig                `yaml:"git"`
 	Projects     map[string]ProjectConfig `yaml:"projects"`
 	Wiki         WikiConfig               `yaml:"wiki"`
@@ -33,13 +32,6 @@ type RuntimeConfig struct {
 	MaxTurns       int               `yaml:"max_turns"`
 	PermissionMode string            `yaml:"permission_mode"`
 	Env            map[string]string `yaml:"env"`
-}
-
-// TmuxConfig defines tmux session settings.
-// Spec Reference: Section 16 "tmux"
-type TmuxConfig struct {
-	SessionPrefix string `yaml:"session_prefix"`
-	HistoryLimit  int    `yaml:"history_limit"`
 }
 
 // GitConfig defines git integration settings.
@@ -177,14 +169,6 @@ func applyDefaults(cfg *Config) {
 			"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
 			"CLAUDE_CODE_EFFORT_LEVEL":        "high",
 		}
-	}
-
-	// Tmux defaults
-	if cfg.Tmux.SessionPrefix == "" {
-		cfg.Tmux.SessionPrefix = "pylon"
-	}
-	if cfg.Tmux.HistoryLimit == 0 {
-		cfg.Tmux.HistoryLimit = 10000
 	}
 
 	// Git defaults

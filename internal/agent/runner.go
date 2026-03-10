@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/tmux"
+	"github.com/kyago/pylon/internal/executor"
 )
 
 // RunConfig holds parameters for running a Claude Code agent.
@@ -18,96 +18,82 @@ type RunConfig struct {
 	Interactive bool   // true for PO (interactive mode)
 }
 
-// Runner manages Claude Code agent execution via tmux.
+// Runner manages Claude Code agent execution.
 type Runner struct {
-	Tmux tmux.SessionManager
+	Executor executor.ProcessExecutor
 }
 
-// NewRunner creates a new Runner with the given tmux manager.
-func NewRunner(mgr tmux.SessionManager) *Runner {
-	return &Runner{Tmux: mgr}
+// NewRunner creates a new Runner with the given executor.
+func NewRunner(exec executor.ProcessExecutor) *Runner {
+	return &Runner{Executor: exec}
 }
 
-// BuildCommand constructs the claude CLI command and arguments.
-// Spec Reference: Section 8 "Claude Code CLI Execution Spec"
-func (r *Runner) BuildCommand(cfg RunConfig) string {
-	var parts []string
-	parts = append(parts, "claude")
+// BuildArgs constructs the claude CLI arguments as a string slice.
+func (r *Runner) BuildArgs(cfg RunConfig) []string {
+	var args []string
 
 	if cfg.Interactive {
 		// Interactive agent (PO): no --print, no --prompt
 		if cfg.Agent.MaxTurns > 0 {
-			parts = append(parts, fmt.Sprintf("--max-turns %d", cfg.Agent.MaxTurns))
+			args = append(args, "--max-turns", fmt.Sprintf("%d", cfg.Agent.MaxTurns))
 		}
-		parts = append(parts, "--permission-mode", cfg.Agent.PermissionMode)
+		args = append(args, "--permission-mode", cfg.Agent.PermissionMode)
 	} else {
 		// Non-interactive agent: --print with stream-json output
-		parts = append(parts, "--print")
-		parts = append(parts, "--output-format", "stream-json")
+		args = append(args, "--print")
+		args = append(args, "--output-format", "stream-json")
 		if cfg.Agent.MaxTurns > 0 {
-			parts = append(parts, fmt.Sprintf("--max-turns %d", cfg.Agent.MaxTurns))
+			args = append(args, "--max-turns", fmt.Sprintf("%d", cfg.Agent.MaxTurns))
 		}
-		parts = append(parts, "--permission-mode", cfg.Agent.PermissionMode)
+		args = append(args, "--permission-mode", cfg.Agent.PermissionMode)
 	}
 
 	// Model
 	if cfg.Agent.Model != "" {
-		parts = append(parts, "--model", cfg.Agent.Model)
+		args = append(args, "--model", cfg.Agent.Model)
 	}
 
 	// Allowed tools
 	if len(cfg.Agent.Tools) > 0 {
-		parts = append(parts, "--allowedTools", strings.Join(cfg.Agent.Tools, ","))
+		args = append(args, "--allowedTools", strings.Join(cfg.Agent.Tools, ","))
 	}
 
 	// Disallowed tools
 	if len(cfg.Agent.DisallowedTools) > 0 {
-		parts = append(parts, "--disallowedTools", strings.Join(cfg.Agent.DisallowedTools, ","))
+		args = append(args, "--disallowedTools", strings.Join(cfg.Agent.DisallowedTools, ","))
 	}
 
 	// System prompt with CLAUDE.md content
 	if cfg.ClaudeMD != "" {
-		// Write CLAUDE.md as system prompt appendage
-		// Use single quotes to prevent shell expansion
-		escaped := strings.ReplaceAll(cfg.ClaudeMD, "'", "'\\''")
-		parts = append(parts, fmt.Sprintf("--append-system-prompt '%s'", escaped))
+		args = append(args, "--append-system-prompt", cfg.ClaudeMD)
 	}
 
 	// Task prompt (non-interactive only)
 	if !cfg.Interactive && cfg.TaskPrompt != "" {
-		escaped := strings.ReplaceAll(cfg.TaskPrompt, "'", "'\\''")
-		parts = append(parts, fmt.Sprintf("--prompt '%s'", escaped))
+		args = append(args, "--prompt", cfg.TaskPrompt)
 	}
 
-	return strings.Join(parts, " ")
+	return args
 }
 
-// Start launches the agent in a tmux session.
-func (r *Runner) Start(cfg RunConfig) error {
+// Start launches the agent as a headless process.
+func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
 	if cfg.Agent == nil {
-		return fmt.Errorf("agent config is required")
+		return nil, fmt.Errorf("agent config is required")
 	}
 	if cfg.WorkDir == "" {
-		return fmt.Errorf("work directory is required")
+		return nil, fmt.Errorf("work directory is required")
 	}
 
-	command := r.BuildCommand(cfg)
+	args := r.BuildArgs(cfg)
 	env := ResolveEnv(cfg.Global.Runtime.Env, cfg.Agent.Env)
 
-	// Build tmux session name
-	prefix := cfg.Global.Tmux.SessionPrefix
-	if prefix == "" {
-		prefix = "pylon"
-	}
-	sessionName := prefix + "-" + cfg.Agent.Name
-
-	// Create tmux session with the command
-	return r.Tmux.Create(tmux.SessionConfig{
-		Name:         sessionName,
-		WorkDir:      cfg.WorkDir,
-		Command:      command,
-		Env:          env,
-		HistoryLimit: cfg.Global.Tmux.HistoryLimit,
+	return r.Executor.RunHeadless(executor.ExecConfig{
+		Name:    cfg.Agent.Name,
+		Command: "claude",
+		Args:    args,
+		WorkDir: cfg.WorkDir,
+		Env:     env,
 	})
 }
 

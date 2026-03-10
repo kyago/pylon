@@ -11,10 +11,6 @@ runtime:
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
     CLAUDE_CODE_EFFORT_LEVEL: "high"
 
-tmux:
-  session_prefix: pylon
-  history_limit: 10000
-
 git:
   branch_prefix: task
   default_base: main

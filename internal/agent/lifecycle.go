@@ -26,22 +26,22 @@ var validLifecycleTransitions = map[State][]State{
 
 // Lifecycle tracks the execution state of an agent.
 type Lifecycle struct {
-	AgentName   string
-	State       State
-	TaskID      string
-	TmuxSession string
-	StartedAt   time.Time
-	Timeout     time.Duration
+	AgentName  string
+	State      State
+	TaskID     string
+	ProcessRef string
+	StartedAt  time.Time
+	Timeout    time.Duration
 }
 
 // NewLifecycle creates a new agent lifecycle in idle state.
-func NewLifecycle(agentName, taskID, tmuxSession string, timeout time.Duration) *Lifecycle {
+func NewLifecycle(agentName, taskID, processRef string, timeout time.Duration) *Lifecycle {
 	return &Lifecycle{
-		AgentName:   agentName,
-		State:       StateIdle,
-		TaskID:      taskID,
-		TmuxSession: tmuxSession,
-		Timeout:     timeout,
+		AgentName:  agentName,
+		State:      StateIdle,
+		TaskID:     taskID,
+		ProcessRef: processRef,
+		Timeout:    timeout,
 	}
 }
 

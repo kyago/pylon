@@ -10,8 +10,8 @@ import (
 
 	"github.com/kyago/pylon/internal/agent"
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/executor"
 	"github.com/kyago/pylon/internal/store"
-	"github.com/kyago/pylon/internal/tmux"
 )
 
 func newIndexCmd() *cobra.Command {
@@ -20,7 +20,7 @@ func newIndexCmd() *cobra.Command {
 		Short: "Index project codebases for agent context",
 		Long: `Analyze project codebases and update domain wiki and project context.
 
-Launches a Tech Writer agent in a tmux session to scan selected projects,
+Launches a Tech Writer agent to scan selected projects,
 update domain knowledge documents, and refresh project context.
 
 Spec Reference: Section 12 "Domain Knowledge"`,
@@ -156,9 +156,9 @@ func runIndex(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to build CLAUDE.md: %w", err)
 	}
 
-	// Step 8: Launch agent in tmux
-	tmuxMgr := tmux.NewManager(cfg.Tmux.SessionPrefix)
-	runner := agent.NewRunner(tmuxMgr)
+	// Step 8: Launch agent
+	exec := executor.NewDirectExecutor()
+	runner := agent.NewRunner(exec)
 
 	runCfg := agent.RunConfig{
 		Agent:      agentCfg,
@@ -168,23 +168,22 @@ func runIndex(cmd *cobra.Command, args []string) error {
 		ClaudeMD:   claudeMD,
 	}
 
-	if err := runner.Start(runCfg); err != nil {
+	fmt.Println()
+	fmt.Println("🚀 Tech Writer 에이전트를 실행합니다...")
+
+	result, err := runner.Start(runCfg)
+	if err != nil {
 		return fmt.Errorf("failed to start tech-writer agent: %w", err)
 	}
 
-	// Step 9: Output monitoring instructions
-	prefix := cfg.Tmux.SessionPrefix
-	if prefix == "" {
-		prefix = "pylon"
+	if result.ExitCode != 0 {
+		fmt.Printf("⚠ 에이전트가 종료 코드 %d로 완료되었습니다\n", result.ExitCode)
+		if result.Stderr != "" {
+			fmt.Printf("  stderr: %s\n", result.Stderr)
+		}
+	} else {
+		fmt.Println("✓ Tech Writer 에이전트가 완료되었습니다.")
 	}
-	sessionName := prefix + "-" + agentCfg.Name
-
-	fmt.Println()
-	fmt.Println("🚀 Tech Writer 에이전트가 시작되었습니다.")
-	fmt.Println()
-	fmt.Printf("  모니터링: tmux attach -t %s\n", sessionName)
-	fmt.Printf("  상태 확인: pylon status\n")
-	fmt.Printf("  중단:     pylon cancel\n")
 
 	return nil
 }

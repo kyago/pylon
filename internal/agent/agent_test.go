@@ -43,7 +43,7 @@ func TestResolveEnv_NilMaps(t *testing.T) {
 // --- Lifecycle Tests ---
 
 func TestLifecycle_ValidTransitions(t *testing.T) {
-	l := NewLifecycle("dev", "t1", "pylon-dev", 30*time.Minute)
+	l := NewLifecycle("dev", "t1", "dev-proc", 30*time.Minute)
 
 	if l.State != StateIdle {
 		t.Errorf("expected idle, got %q", l.State)
@@ -62,7 +62,7 @@ func TestLifecycle_ValidTransitions(t *testing.T) {
 }
 
 func TestLifecycle_InvalidTransition(t *testing.T) {
-	l := NewLifecycle("dev", "t1", "pylon-dev", 0)
+	l := NewLifecycle("dev", "t1", "dev-proc", 0)
 
 	// Can't go from idle to running directly
 	err := l.Transition(StateRunning)
@@ -72,7 +72,7 @@ func TestLifecycle_InvalidTransition(t *testing.T) {
 }
 
 func TestLifecycle_FailFromStarting(t *testing.T) {
-	l := NewLifecycle("dev", "t1", "pylon-dev", 0)
+	l := NewLifecycle("dev", "t1", "dev-proc", 0)
 	l.Transition(StateStarting)
 
 	if err := l.Transition(StateFailed); err != nil {
@@ -81,7 +81,7 @@ func TestLifecycle_FailFromStarting(t *testing.T) {
 }
 
 func TestLifecycle_CancelFromRunning(t *testing.T) {
-	l := NewLifecycle("dev", "t1", "pylon-dev", 0)
+	l := NewLifecycle("dev", "t1", "dev-proc", 0)
 	l.Transition(StateStarting)
 	l.Transition(StateRunning)
 
@@ -91,7 +91,7 @@ func TestLifecycle_CancelFromRunning(t *testing.T) {
 }
 
 func TestLifecycle_NoTransitionFromTerminal(t *testing.T) {
-	l := NewLifecycle("dev", "t1", "pylon-dev", 0)
+	l := NewLifecycle("dev", "t1", "dev-proc", 0)
 	l.Transition(StateStarting)
 	l.Transition(StateRunning)
 	l.Transition(StateCompleted)
@@ -103,7 +103,7 @@ func TestLifecycle_NoTransitionFromTerminal(t *testing.T) {
 }
 
 func TestLifecycle_CheckTimeout(t *testing.T) {
-	l := NewLifecycle("dev", "t1", "pylon-dev", 1*time.Millisecond)
+	l := NewLifecycle("dev", "t1", "dev-proc", 1*time.Millisecond)
 	l.Transition(StateStarting)
 	l.Transition(StateRunning)
 
@@ -114,7 +114,7 @@ func TestLifecycle_CheckTimeout(t *testing.T) {
 }
 
 func TestLifecycle_NoTimeout(t *testing.T) {
-	l := NewLifecycle("dev", "t1", "pylon-dev", 10*time.Minute)
+	l := NewLifecycle("dev", "t1", "dev-proc", 10*time.Minute)
 	l.Transition(StateStarting)
 	l.Transition(StateRunning)
 
@@ -124,7 +124,7 @@ func TestLifecycle_NoTimeout(t *testing.T) {
 }
 
 func TestLifecycle_TimeoutDisabled(t *testing.T) {
-	l := NewLifecycle("dev", "t1", "pylon-dev", 0)
+	l := NewLifecycle("dev", "t1", "dev-proc", 0)
 	l.Transition(StateStarting)
 	l.Transition(StateRunning)
 
@@ -215,10 +215,10 @@ func TestClaudeMDBuilder_DefaultMaxLines(t *testing.T) {
 
 // --- Runner Tests ---
 
-func TestRunner_BuildCommand_NonInteractive(t *testing.T) {
+func TestRunner_BuildArgs_NonInteractive(t *testing.T) {
 	r := NewRunner(nil)
 
-	cmd := r.BuildCommand(RunConfig{
+	args := r.BuildArgs(RunConfig{
 		Agent: &config.AgentConfig{
 			Name:           "backend-dev",
 			MaxTurns:       30,
@@ -230,30 +230,31 @@ func TestRunner_BuildCommand_NonInteractive(t *testing.T) {
 		ClaudeMD:   "test rules",
 	})
 
-	if !strings.Contains(cmd, "--print") {
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--print") {
 		t.Error("non-interactive should have --print")
 	}
-	if !strings.Contains(cmd, "--output-format stream-json") {
+	if !strings.Contains(joined, "--output-format stream-json") {
 		t.Error("should have stream-json format")
 	}
-	if !strings.Contains(cmd, "--max-turns 30") {
+	if !strings.Contains(joined, "--max-turns 30") {
 		t.Error("should have max-turns")
 	}
-	if !strings.Contains(cmd, "--permission-mode acceptEdits") {
+	if !strings.Contains(joined, "--permission-mode acceptEdits") {
 		t.Error("should have permission-mode")
 	}
-	if !strings.Contains(cmd, "--model sonnet") {
+	if !strings.Contains(joined, "--model sonnet") {
 		t.Error("should have model")
 	}
-	if !strings.Contains(cmd, "--prompt") {
+	if !strings.Contains(joined, "--prompt") {
 		t.Error("non-interactive should have --prompt")
 	}
 }
 
-func TestRunner_BuildCommand_Interactive(t *testing.T) {
+func TestRunner_BuildArgs_Interactive(t *testing.T) {
 	r := NewRunner(nil)
 
-	cmd := r.BuildCommand(RunConfig{
+	args := r.BuildArgs(RunConfig{
 		Agent: &config.AgentConfig{
 			Name:           "po",
 			MaxTurns:       50,
@@ -263,21 +264,22 @@ func TestRunner_BuildCommand_Interactive(t *testing.T) {
 		Interactive: true,
 	})
 
-	if strings.Contains(cmd, "--print") {
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--print") {
 		t.Error("interactive should NOT have --print")
 	}
-	if strings.Contains(cmd, "--prompt") {
+	if strings.Contains(joined, "--prompt") {
 		t.Error("interactive should NOT have --prompt")
 	}
-	if !strings.Contains(cmd, "--permission-mode default") {
+	if !strings.Contains(joined, "--permission-mode default") {
 		t.Error("should have permission-mode")
 	}
 }
 
-func TestRunner_BuildCommand_AllowedTools(t *testing.T) {
+func TestRunner_BuildArgs_AllowedTools(t *testing.T) {
 	r := NewRunner(nil)
 
-	cmd := r.BuildCommand(RunConfig{
+	args := r.BuildArgs(RunConfig{
 		Agent: &config.AgentConfig{
 			Name:           "dev",
 			PermissionMode: "acceptEdits",
@@ -286,15 +288,16 @@ func TestRunner_BuildCommand_AllowedTools(t *testing.T) {
 		Global: &config.Config{},
 	})
 
-	if !strings.Contains(cmd, "--allowedTools git,gh,docker") {
-		t.Errorf("should have --allowedTools, got: %s", cmd)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--allowedTools git,gh,docker") {
+		t.Errorf("should have --allowedTools, got: %s", joined)
 	}
 }
 
-func TestRunner_BuildCommand_DisallowedTools(t *testing.T) {
+func TestRunner_BuildArgs_DisallowedTools(t *testing.T) {
 	r := NewRunner(nil)
 
-	cmd := r.BuildCommand(RunConfig{
+	args := r.BuildArgs(RunConfig{
 		Agent: &config.AgentConfig{
 			Name:            "architect",
 			PermissionMode:  "default",
@@ -303,15 +306,16 @@ func TestRunner_BuildCommand_DisallowedTools(t *testing.T) {
 		Global: &config.Config{},
 	})
 
-	if !strings.Contains(cmd, "--disallowedTools Edit,Write,Bash") {
-		t.Errorf("should have --disallowedTools, got: %s", cmd)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--disallowedTools Edit,Write,Bash") {
+		t.Errorf("should have --disallowedTools, got: %s", joined)
 	}
 }
 
-func TestRunner_BuildCommand_BothToolFlags(t *testing.T) {
+func TestRunner_BuildArgs_BothToolFlags(t *testing.T) {
 	r := NewRunner(nil)
 
-	cmd := r.BuildCommand(RunConfig{
+	args := r.BuildArgs(RunConfig{
 		Agent: &config.AgentConfig{
 			Name:            "architect",
 			PermissionMode:  "default",
@@ -321,18 +325,19 @@ func TestRunner_BuildCommand_BothToolFlags(t *testing.T) {
 		Global: &config.Config{},
 	})
 
-	if !strings.Contains(cmd, "--allowedTools git,gh") {
-		t.Errorf("should have --allowedTools, got: %s", cmd)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--allowedTools git,gh") {
+		t.Errorf("should have --allowedTools, got: %s", joined)
 	}
-	if !strings.Contains(cmd, "--disallowedTools Edit,Write") {
-		t.Errorf("should have --disallowedTools, got: %s", cmd)
+	if !strings.Contains(joined, "--disallowedTools Edit,Write") {
+		t.Errorf("should have --disallowedTools, got: %s", joined)
 	}
 }
 
-func TestRunner_BuildCommand_NoToolFlags(t *testing.T) {
+func TestRunner_BuildArgs_NoToolFlags(t *testing.T) {
 	r := NewRunner(nil)
 
-	cmd := r.BuildCommand(RunConfig{
+	args := r.BuildArgs(RunConfig{
 		Agent: &config.AgentConfig{
 			Name:           "dev",
 			PermissionMode: "acceptEdits",
@@ -340,18 +345,19 @@ func TestRunner_BuildCommand_NoToolFlags(t *testing.T) {
 		Global: &config.Config{},
 	})
 
-	if strings.Contains(cmd, "--allowedTools") {
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--allowedTools") {
 		t.Error("should not have --allowedTools when tools is empty")
 	}
-	if strings.Contains(cmd, "--disallowedTools") {
+	if strings.Contains(joined, "--disallowedTools") {
 		t.Error("should not have --disallowedTools when disallowedTools is empty")
 	}
 }
 
-func TestRunner_BuildCommand_NoModel(t *testing.T) {
+func TestRunner_BuildArgs_NoModel(t *testing.T) {
 	r := NewRunner(nil)
 
-	cmd := r.BuildCommand(RunConfig{
+	args := r.BuildArgs(RunConfig{
 		Agent: &config.AgentConfig{
 			Name:           "dev",
 			PermissionMode: "acceptEdits",
@@ -359,7 +365,8 @@ func TestRunner_BuildCommand_NoModel(t *testing.T) {
 		Global: &config.Config{},
 	})
 
-	if strings.Contains(cmd, "--model") {
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--model") {
 		t.Error("should not have --model when not specified")
 	}
 }
