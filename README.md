@@ -127,9 +127,9 @@ PO: 몇 가지 확인이 필요합니다.
 ```
 사용자 ←→ Claude Code TUI (루트 에이전트 / PO)
               │
-              ├── /index ─── 코드베이스 인덱싱
-              ├── /status ── 파이프라인 상태 조회
-              ├── /verify ── 빌드/테스트/린트 검증
+              ├── /pl:index ─── 코드베이스 인덱싱
+              ├── /pl:status ── 파이프라인 상태 조회
+              ├── /pl:verify ── 빌드/테스트/린트 검증
               │
               └── 서브 에이전트 (Claude Code Agent 도구)
                    ├── Architect ── 기술 분석
@@ -172,12 +172,12 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
 
 | 커맨드 | 설명 |
 |--------|------|
-| `/index` | 프로젝트 코드베이스를 분석하여 도메인 위키 갱신 |
-| `/status` | 파이프라인 및 에이전트 상태 조회 |
-| `/verify` | 빌드/테스트/린트 교차 검증 실행 |
-| `/add-project` | 새 프로젝트를 git submodule로 추가 |
-| `/cancel` | 진행 중인 파이프라인 취소 |
-| `/review` | PR 코드 리뷰 |
+| `/pl:index` | 프로젝트 코드베이스를 분석하여 도메인 위키 갱신 |
+| `/pl:status` | 파이프라인 및 에이전트 상태 조회 |
+| `/pl:verify` | 빌드/테스트/린트 교차 검증 실행 |
+| `/pl:add-project` | 새 프로젝트를 git submodule로 추가 |
+| `/pl:cancel` | 진행 중인 파이프라인 취소 |
+| `/pl:review` | PR 코드 리뷰 |
 
 ## CLI 명령어
 

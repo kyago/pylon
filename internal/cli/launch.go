@@ -221,12 +221,12 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 
 	// Available skills
 	b.WriteString("## 사용 가능한 스킬 (슬래시 커맨드)\n\n")
-	b.WriteString("- `/index` — 프로젝트 코드베이스 인덱싱 (도메인 위키 갱신)\n")
-	b.WriteString("- `/status` — 파이프라인 및 에이전트 상태 조회\n")
-	b.WriteString("- `/verify` — 교차 검증 실행 (빌드/테스트/린트)\n")
-	b.WriteString("- `/add-project` — 새 프로젝트 추가 (git submodule)\n")
-	b.WriteString("- `/cancel` — 진행 중인 파이프라인 취소\n")
-	b.WriteString("- `/review` — PR 코드 리뷰 요청\n\n")
+	b.WriteString("- `/pl:index` — 프로젝트 코드베이스 인덱싱 (도메인 위키 갱신)\n")
+	b.WriteString("- `/pl:status` — 파이프라인 및 에이전트 상태 조회\n")
+	b.WriteString("- `/pl:verify` — 교차 검증 실행 (빌드/테스트/린트)\n")
+	b.WriteString("- `/pl:add-project` — 새 프로젝트 추가 (git submodule)\n")
+	b.WriteString("- `/pl:cancel` — 진행 중인 파이프라인 취소\n")
+	b.WriteString("- `/pl:review` — PR 코드 리뷰 요청\n\n")
 
 	// Sub-agent orchestration
 	b.WriteString("## 서브 에이전트 오케스트레이션\n\n")
@@ -260,7 +260,7 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 	b.WriteString("- 요구사항이 모호하면 역질문으로 구체화합니다\n")
 	b.WriteString("- 코드를 직접 작성하지 말고, 서브 에이전트에게 위임합니다\n")
 	b.WriteString("- 모든 파이프라인 상태 전이는 `pylon stage transition`을 사용합니다\n")
-	b.WriteString("- 교차 검증은 `/verify` 또는 `pylon verify`를 사용합니다\n")
+	b.WriteString("- 교차 검증은 `/pl:verify` 또는 `pylon verify`를 사용합니다\n")
 	b.WriteString("- 작업 완료 후 도메인 지식 갱신을 잊지 마세요\n")
 	b.WriteString("- 추측이 아닌 코드에서 확인된 사실만 기록합니다\n")
 
@@ -270,7 +270,7 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 // buildSlashCommands generates .claude/commands/ markdown files.
 func buildSlashCommands(root string) map[string]string {
 	commands := map[string]string{
-		"index": `# /index — 프로젝트 코드베이스 인덱싱
+		"pl:index": `# /pl:index — 프로젝트 코드베이스 인덱싱
 
 프로젝트 코드베이스를 분석하여 도메인 위키와 프로젝트 컨텍스트를 갱신합니다.
 
@@ -294,7 +294,7 @@ func buildSlashCommands(root string) map[string]string {
 - 추측이 아닌 코드에서 확인된 사실만 기록
 - 위키 문서는 마크다운 형식으로 작성
 `,
-		"status": `# /status — 상태 조회
+		"pl:status": `# /pl:status — 상태 조회
 
 현재 파이프라인과 에이전트의 상태를 조회합니다.
 
@@ -312,7 +312,7 @@ func buildSlashCommands(root string) map[string]string {
 
 3. 결과를 사용자에게 요약하여 보고합니다
 `,
-		"verify": `# /verify — 교차 검증 실행
+		"pl:verify": `# /pl:verify — 교차 검증 실행
 
 프로젝트의 빌드/테스트/린트를 실행하여 코드 품질을 검증합니다.
 
@@ -334,7 +334,7 @@ func buildSlashCommands(root string) map[string]string {
    pylon stage transition --pipeline <id> --to pr_creation
    ` + "```" + `
 `,
-		"add-project": `# /add-project — 프로젝트 추가
+		"pl:add-project": `# /pl:add-project — 프로젝트 추가
 
 새 프로젝트를 워크스페이스에 git submodule로 추가합니다.
 
@@ -353,7 +353,7 @@ func buildSlashCommands(root string) map[string]string {
 5. 코드베이스를 분석하여 기본 컨텍스트를 생성합니다
 6. 사용자에게 결과를 보고합니다
 `,
-		"cancel": `# /cancel — 파이프라인 취소
+		"pl:cancel": `# /pl:cancel — 파이프라인 취소
 
 진행 중인 파이프라인을 취소합니다.
 
@@ -370,7 +370,7 @@ func buildSlashCommands(root string) map[string]string {
    ` + "```" + `
 4. 사용자에게 취소 완료를 알립니다
 `,
-		"review": `# /review — PR 코드 리뷰
+		"pl:review": `# /pl:review — PR 코드 리뷰
 
 생성된 PR의 코드를 리뷰합니다.
 
