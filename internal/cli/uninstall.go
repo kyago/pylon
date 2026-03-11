@@ -62,31 +62,31 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	}
 	root, err := config.FindWorkspaceRoot(startDir)
 	if err != nil {
-		return fmt.Errorf("pylon 워크스페이스가 아닙니다: %w", err)
+		return fmt.Errorf("not in a pylon workspace: %w", err)
 	}
 
 	// Build uninstall plan
 	plan, err := buildUninstallPlan(root, removeProjects, removeBinary)
 	if err != nil {
-		return fmt.Errorf("언인스톨 계획 생성 실패: %w", err)
+		return fmt.Errorf("failed to build uninstall plan: %w", err)
 	}
 
 	// Show plan
 	printUninstallPlan(plan)
 
 	if dryRun {
-		fmt.Println("\n(dry-run 모드: 실제 삭제하지 않습니다)")
+		fmt.Println("\n(dry-run mode: no changes were made)")
 		return nil
 	}
 
 	// Confirm
 	if !force {
-		fmt.Print("\n정말 진행하시겠습니까? (y/N): ")
+		fmt.Print("\nAre you sure? (y/N): ")
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')
 		answer = strings.TrimSpace(strings.ToLower(answer))
 		if answer != "y" && answer != "yes" {
-			fmt.Println("언인스톨이 취소되었습니다.")
+			fmt.Println("Uninstall cancelled.")
 			return nil
 		}
 	}
@@ -109,7 +109,10 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 	}
 
 	// 2. Discover projects and their .pylon/ directories
-	projects, _ := config.DiscoverProjects(root)
+	projects, err := config.DiscoverProjects(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover projects: %w", err)
+	}
 	for _, p := range projects {
 		projectPylon := filepath.Join(p.Path, ".pylon")
 		if dirExists(projectPylon) {
@@ -144,42 +147,42 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 }
 
 func printUninstallPlan(plan *uninstallPlan) {
-	fmt.Println("다음 항목이 제거됩니다:")
+	fmt.Println("The following items will be removed:")
 	fmt.Println()
 
 	if len(plan.runtimeFiles) > 0 {
-		fmt.Println("  [런타임 아티팩트]")
+		fmt.Println("  [Runtime artifacts]")
 		for _, f := range plan.runtimeFiles {
 			fmt.Printf("    - %s\n", f)
 		}
 	}
 
 	if len(plan.projectPylons) > 0 {
-		fmt.Println("  [프로젝트 .pylon/ 디렉토리]")
+		fmt.Println("  [Project .pylon/ directories]")
 		for _, p := range plan.projectPylons {
 			fmt.Printf("    - %s\n", p)
 		}
 	}
 
 	if len(plan.submodules) > 0 {
-		fmt.Println("  [Git 서브모듈 등록 해제]")
+		fmt.Println("  [Git submodule deregistration]")
 		for _, s := range plan.submodules {
 			fmt.Printf("    - %s\n", s)
 		}
 	}
 
 	if plan.workspacePylon != "" {
-		fmt.Println("  [워크스페이스]")
+		fmt.Println("  [Workspace]")
 		fmt.Printf("    - %s\n", plan.workspacePylon)
 	}
 
 	if plan.gitignorePath != "" {
-		fmt.Println("  [.gitignore 정리]")
-		fmt.Printf("    - %s (pylon 관련 엔트리 제거)\n", plan.gitignorePath)
+		fmt.Println("  [.gitignore cleanup]")
+		fmt.Printf("    - %s (remove pylon-related entries)\n", plan.gitignorePath)
 	}
 
 	if plan.binaryPath != "" {
-		fmt.Println("  [바이너리]")
+		fmt.Println("  [Binary]")
 		fmt.Printf("    - %s\n", plan.binaryPath)
 	}
 }
@@ -190,69 +193,70 @@ func executeUninstall(root string, plan *uninstallPlan, removeProjects bool) err
 	// Step 1: Remove runtime artifacts
 	for _, f := range plan.runtimeFiles {
 		if err := os.RemoveAll(f); err != nil {
-			errors = append(errors, fmt.Sprintf("런타임 아티팩트 제거 실패 (%s): %v", f, err))
+			errors = append(errors, fmt.Sprintf("failed to remove runtime artifact (%s): %v", f, err))
 		} else {
-			fmt.Printf("✓ 제거: %s\n", f)
+			fmt.Printf("✓ Removed: %s\n", f)
 		}
 	}
 
 	// Step 2: Remove project-level .pylon/ directories
 	for _, p := range plan.projectPylons {
 		if err := os.RemoveAll(p); err != nil {
-			errors = append(errors, fmt.Sprintf("프로젝트 .pylon/ 제거 실패 (%s): %v", p, err))
+			errors = append(errors, fmt.Sprintf("failed to remove project .pylon/ (%s): %v", p, err))
 		} else {
-			fmt.Printf("✓ 제거: %s\n", p)
+			fmt.Printf("✓ Removed: %s\n", p)
 		}
 	}
 
 	// Step 3: Remove git submodules (if requested)
-	if removeProjects {
+	if removeProjects && len(plan.submodules) > 0 {
 		for _, name := range plan.submodules {
 			if err := removeSubmodule(root, name); err != nil {
-				errors = append(errors, fmt.Sprintf("서브모듈 제거 실패 (%s): %v", name, err))
+				errors = append(errors, fmt.Sprintf("failed to remove submodule (%s): %v", name, err))
 			} else {
-				fmt.Printf("✓ 서브모듈 제거: %s\n", name)
+				fmt.Printf("✓ Removed submodule: %s\n", name)
 			}
 		}
+		fmt.Println("\n  Note: Submodule removal modified .gitmodules. Please commit the changes manually.")
 	}
 
 	// Step 4: Remove workspace .pylon/
 	if plan.workspacePylon != "" {
 		if err := os.RemoveAll(plan.workspacePylon); err != nil {
-			errors = append(errors, fmt.Sprintf("워크스페이스 .pylon/ 제거 실패: %v", err))
+			errors = append(errors, fmt.Sprintf("failed to remove workspace .pylon/: %v", err))
 		} else {
-			fmt.Printf("✓ 제거: %s\n", plan.workspacePylon)
+			fmt.Printf("✓ Removed: %s\n", plan.workspacePylon)
 		}
 	}
 
 	// Step 5: Clean .gitignore
 	if plan.gitignorePath != "" {
 		if err := cleanGitignoreFull(plan.gitignorePath); err != nil {
-			errors = append(errors, fmt.Sprintf(".gitignore 정리 실패: %v", err))
+			errors = append(errors, fmt.Sprintf("failed to clean .gitignore: %v", err))
 		} else {
-			fmt.Printf("✓ .gitignore 정리 완료\n")
+			fmt.Printf("✓ Cleaned .gitignore\n")
 		}
 	}
 
 	// Step 6: Remove binary
 	if plan.binaryPath != "" {
 		if err := os.Remove(plan.binaryPath); err != nil {
-			errors = append(errors, fmt.Sprintf("바이너리 제거 실패 (%s): %v", plan.binaryPath, err))
+			errors = append(errors, fmt.Sprintf("failed to remove binary (%s): %v", plan.binaryPath, err))
 		} else {
-			fmt.Printf("✓ 바이너리 제거: %s\n", plan.binaryPath)
+			fmt.Printf("✓ Removed binary: %s\n", plan.binaryPath)
 		}
 	}
 
 	fmt.Println()
 	if len(errors) > 0 {
-		fmt.Println("일부 항목 제거에 실패했습니다:")
+		fmt.Println("Some items could not be removed:")
 		for _, e := range errors {
 			fmt.Printf("  ⚠ %s\n", e)
 		}
-		return fmt.Errorf("%d개 항목 제거 실패", len(errors))
+		return fmt.Errorf("failed to remove %d item(s)", len(errors))
 	}
 
-	fmt.Println("Pylon이 완전히 제거되었습니다.")
+	fmt.Println("Pylon has been completely removed.")
 	return nil
 }
 
@@ -262,19 +266,21 @@ func removeSubmodule(root, name string) error {
 	deinitCmd := exec.Command("git", "submodule", "deinit", "-f", name)
 	deinitCmd.Dir = root
 	if output, err := deinitCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("deinit 실패: %w\n%s", err, output)
+		return fmt.Errorf("deinit failed: %w\n%s", err, output)
 	}
 
 	// git rm
 	rmCmd := exec.Command("git", "rm", "-f", name)
 	rmCmd.Dir = root
 	if output, err := rmCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git rm 실패: %w\n%s", err, output)
+		return fmt.Errorf("git rm failed: %w\n%s", err, output)
 	}
 
 	// Remove cached module data
 	gitModulesDir := filepath.Join(root, ".git", "modules", name)
-	os.RemoveAll(gitModulesDir)
+	if err := os.RemoveAll(gitModulesDir); err != nil {
+		return fmt.Errorf("failed to remove cached module data %s: %w", gitModulesDir, err)
+	}
 
 	return nil
 }
@@ -282,11 +288,17 @@ func removeSubmodule(root, name string) error {
 // cleanGitignoreFull removes all pylon-related entries from .gitignore,
 // including both workspace and Claude Code generated entries.
 func cleanGitignoreFull(path string) error {
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return err
+	}
+	perm := info.Mode().Perm()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return err
 	}
 
@@ -331,7 +343,7 @@ func cleanGitignoreFull(path string) error {
 		cleaned = append(cleaned, "") // ensure final newline
 	}
 
-	return os.WriteFile(path, []byte(strings.Join(cleaned, "\n")), 0644)
+	return os.WriteFile(path, []byte(strings.Join(cleaned, "\n")), perm)
 }
 
 // findPylonBinary locates the pylon binary in $GOPATH/bin.
@@ -352,7 +364,8 @@ func findPylonBinary() (string, error) {
 	// Fallback: check if pylon is in PATH
 	path, err := exec.LookPath("pylon")
 	if err != nil {
-		return "", fmt.Errorf("pylon 바이너리를 찾을 수 없습니다")
+		return "", fmt.Errorf("pylon binary not found")
 	}
+	fmt.Printf("  Warning: pylon binary found at %s (not in $GOPATH/bin, may be system-installed)\n", path)
 	return path, nil
 }
