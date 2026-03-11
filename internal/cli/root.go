@@ -67,6 +67,7 @@ func init() {
 	rootCmd.AddCommand(newCancelCmd())
 	rootCmd.AddCommand(newReviewCmd())
 	rootCmd.AddCommand(newDestroyCmd())
+	rootCmd.AddCommand(newUninstallCmd())
 	rootCmd.AddCommand(newAddProjectCmd())
 	rootCmd.AddCommand(newDashboardCmd())
 	rootCmd.AddCommand(newIndexCmd())

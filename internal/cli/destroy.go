@@ -13,13 +13,17 @@ import (
 
 func newDestroyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "destroy",
-		Short: "Remove pylon workspace",
+		Use:        "destroy",
+		Short:      "Remove pylon workspace (deprecated: use 'pylon uninstall')",
 		Long: `Remove the .pylon/ directory and clean up all pylon-related resources.
 Git submodules are preserved.
 
+DEPRECATED: Use 'pylon uninstall' for comprehensive cleanup including
+runtime artifacts, project-level configs, and optional binary removal.
+
 Spec Reference: Section 7 "pylon destroy"`,
-		RunE: runDestroy,
+		Deprecated: "use 'pylon uninstall' instead for comprehensive cleanup",
+		RunE:       runDestroy,
 	}
 
 	cmd.Flags().BoolP("force", "f", false, "skip confirmation prompt")
