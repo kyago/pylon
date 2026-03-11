@@ -13,7 +13,10 @@ type ProjectInfo struct {
 	Path string
 }
 
-// FindWorkspaceRoot walks up from startDir looking for a .pylon/ directory.
+// FindWorkspaceRoot walks up from startDir looking for a .pylon/ directory
+// that contains a config.yml file (indicating a workspace root, not a sub-project).
+// Sub-project .pylon/ directories may exist without config.yml, so the search
+// continues upward until a proper workspace root is found.
 // Returns the workspace root path or an error if not found.
 func FindWorkspaceRoot(startDir string) (string, error) {
 	dir, err := filepath.Abs(startDir)
@@ -25,7 +28,10 @@ func FindWorkspaceRoot(startDir string) (string, error) {
 		pylonDir := filepath.Join(dir, ".pylon")
 		info, err := os.Stat(pylonDir)
 		if err == nil && info.IsDir() {
-			return dir, nil
+			configPath := filepath.Join(pylonDir, "config.yml")
+			if _, err := os.Stat(configPath); err == nil {
+				return dir, nil
+			}
 		}
 
 		parent := filepath.Dir(dir)

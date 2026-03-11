@@ -7,11 +7,14 @@ import (
 )
 
 func TestFindWorkspaceRoot_Found(t *testing.T) {
-	// Create a temp directory structure with .pylon/
+	// Create a temp directory structure with .pylon/ containing config.yml
 	tmpDir := t.TempDir()
 	pylonDir := filepath.Join(tmpDir, ".pylon")
 	if err := os.MkdirAll(pylonDir, 0755); err != nil {
 		t.Fatalf("failed to create .pylon/: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatalf("failed to create config.yml: %v", err)
 	}
 
 	// Create a nested subdirectory
@@ -37,8 +40,47 @@ func TestFindWorkspaceRoot_SameDir(t *testing.T) {
 	if err := os.MkdirAll(pylonDir, 0755); err != nil {
 		t.Fatalf("failed to create .pylon/: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatalf("failed to create config.yml: %v", err)
+	}
 
 	root, err := FindWorkspaceRoot(tmpDir)
+	if err != nil {
+		t.Fatalf("FindWorkspaceRoot failed: %v", err)
+	}
+
+	if root != tmpDir {
+		t.Errorf("expected root %q, got %q", tmpDir, root)
+	}
+}
+
+func TestFindWorkspaceRoot_SubProjectFallback(t *testing.T) {
+	// Create workspace root with .pylon/config.yml
+	tmpDir := t.TempDir()
+	rootPylonDir := filepath.Join(tmpDir, ".pylon")
+	if err := os.MkdirAll(rootPylonDir, 0755); err != nil {
+		t.Fatalf("failed to create root .pylon/: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rootPylonDir, "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatalf("failed to create config.yml: %v", err)
+	}
+
+	// Create sub-project with .pylon/ but WITHOUT config.yml
+	subProjectDir := filepath.Join(tmpDir, "santa-backoffice")
+	subPylonDir := filepath.Join(subProjectDir, ".pylon")
+	if err := os.MkdirAll(subPylonDir, 0755); err != nil {
+		t.Fatalf("failed to create sub-project .pylon/: %v", err)
+	}
+	// Sub-project has context.md and agents/ but no config.yml
+	if err := os.WriteFile(filepath.Join(subPylonDir, "context.md"), []byte("# Context"), 0644); err != nil {
+		t.Fatalf("failed to create context.md: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(subPylonDir, "agents"), 0755); err != nil {
+		t.Fatalf("failed to create agents/: %v", err)
+	}
+
+	// Search from sub-project directory should find root workspace
+	root, err := FindWorkspaceRoot(subProjectDir)
 	if err != nil {
 		t.Fatalf("FindWorkspaceRoot failed: %v", err)
 	}
