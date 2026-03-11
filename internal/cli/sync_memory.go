@@ -16,6 +16,13 @@ import (
 	"github.com/kyago/pylon/internal/store"
 )
 
+const (
+	// maxWriteContentLen is the maximum length of Write tool content stored in memory.
+	maxWriteContentLen = 500
+	// maxEditStringLen is the maximum length of Edit tool old/new strings stored in memory.
+	maxEditStringLen = 200
+)
+
 func newSyncMemoryCmd() *cobra.Command {
 	var (
 		fromSession bool
@@ -335,8 +342,8 @@ func tryParseToolUsePayload(data string) (filePath, content string) {
 		if payload.ToolInput.Content != "" {
 			// For large file writes, store a truncated summary
 			c := payload.ToolInput.Content
-			if len(c) > 500 {
-				c = c[:500] + "... (truncated)"
+			if len(c) > maxWriteContentLen {
+				c = c[:maxWriteContentLen] + "... (truncated)"
 			}
 			content = fmt.Sprintf("[Write] %s: %s", filePath, c)
 		} else {
@@ -345,12 +352,12 @@ func tryParseToolUsePayload(data string) (filePath, content string) {
 	case "Edit":
 		if payload.ToolInput.OldString != "" && payload.ToolInput.NewString != "" {
 			old := payload.ToolInput.OldString
-			if len(old) > 200 {
-				old = old[:200] + "..."
+			if len(old) > maxEditStringLen {
+				old = old[:maxEditStringLen] + "..."
 			}
 			new := payload.ToolInput.NewString
-			if len(new) > 200 {
-				new = new[:200] + "..."
+			if len(new) > maxEditStringLen {
+				new = new[:maxEditStringLen] + "..."
 			}
 			content = fmt.Sprintf("[Edit] %s: %q → %q", filePath, old, new)
 		} else {
