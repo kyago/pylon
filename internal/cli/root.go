@@ -30,8 +30,7 @@ var rootCmd = &cobra.Command{
 	Short: "AI multi-agent development team orchestrator",
 	Long: `Pylon - AI multi-agent development team orchestrator.
 
-Like the Protoss Pylon in StarCraft, Pylon is the energy source
-that powers your AI agent team to build and ship software.
+Pylon powers your AI agent team to build and ship software.
 
 Users provide requirements, and the AI agent team handles
 analysis, design, implementation, and PR creation.
