@@ -148,8 +148,12 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 	// Generate slash commands
 	commands := buildSlashCommands(root)
 	for name, content := range commands {
-		path := filepath.Join(commandsDir, name+".md")
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		cmdPath := filepath.Join(commandsDir, name+".md")
+		// Ensure parent directory exists for namespaced commands (e.g., pl/index)
+		if err := os.MkdirAll(filepath.Dir(cmdPath), 0755); err != nil {
+			return fmt.Errorf("커맨드 디렉토리 생성 실패: %w", err)
+		}
+		if err := os.WriteFile(cmdPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("커맨드 %s 생성 실패: %w", name, err)
 		}
 	}
@@ -270,7 +274,7 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 // buildSlashCommands generates .claude/commands/ markdown files.
 func buildSlashCommands(root string) map[string]string {
 	commands := map[string]string{
-		"pl:index": `# /pl:index — 프로젝트 코드베이스 인덱싱
+		"pl/index": `# /pl:index — 프로젝트 코드베이스 인덱싱
 
 프로젝트 코드베이스를 분석하여 도메인 위키와 프로젝트 컨텍스트를 갱신합니다.
 
@@ -294,7 +298,7 @@ func buildSlashCommands(root string) map[string]string {
 - 추측이 아닌 코드에서 확인된 사실만 기록
 - 위키 문서는 마크다운 형식으로 작성
 `,
-		"pl:status": `# /pl:status — 상태 조회
+		"pl/status": `# /pl:status — 상태 조회
 
 현재 파이프라인과 에이전트의 상태를 조회합니다.
 
@@ -312,7 +316,7 @@ func buildSlashCommands(root string) map[string]string {
 
 3. 결과를 사용자에게 요약하여 보고합니다
 `,
-		"pl:verify": `# /pl:verify — 교차 검증 실행
+		"pl/verify": `# /pl:verify — 교차 검증 실행
 
 프로젝트의 빌드/테스트/린트를 실행하여 코드 품질을 검증합니다.
 
@@ -334,7 +338,7 @@ func buildSlashCommands(root string) map[string]string {
    pylon stage transition --pipeline <id> --to pr_creation
    ` + "```" + `
 `,
-		"pl:add-project": `# /pl:add-project — 프로젝트 추가
+		"pl/add-project": `# /pl:add-project — 프로젝트 추가
 
 새 프로젝트를 워크스페이스에 git submodule로 추가합니다.
 
@@ -353,7 +357,7 @@ func buildSlashCommands(root string) map[string]string {
 5. 코드베이스를 분석하여 기본 컨텍스트를 생성합니다
 6. 사용자에게 결과를 보고합니다
 `,
-		"pl:cancel": `# /pl:cancel — 파이프라인 취소
+		"pl/cancel": `# /pl:cancel — 파이프라인 취소
 
 진행 중인 파이프라인을 취소합니다.
 
@@ -370,7 +374,7 @@ func buildSlashCommands(root string) map[string]string {
    ` + "```" + `
 4. 사용자에게 취소 완료를 알립니다
 `,
-		"pl:review": `# /pl:review — PR 코드 리뷰
+		"pl/review": `# /pl:review — PR 코드 리뷰
 
 생성된 PR의 코드를 리뷰합니다.
 

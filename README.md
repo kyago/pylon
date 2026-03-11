@@ -229,7 +229,7 @@ workspace/
 │   └── pylon.db               # SQLite (파이프라인 상태 + 프로젝트 메모리)
 │
 ├── .claude/                   # 동적 생성 (git 무시)
-│   ├── commands/              # 슬래시 커맨드 (index, status, verify ...)
+│   ├── commands/pl/           # 슬래시 커맨드 (pl:index, pl:status, pl:verify ...)
 │   └── ...
 │
 ├── CLAUDE.md                  # 루트 에이전트 시스템 프롬프트 (동적 생성)
