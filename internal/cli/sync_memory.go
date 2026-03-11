@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,7 +116,7 @@ func runSyncFromSession(project, agent, content string) error {
 
 // runSyncIncremental handles --incremental: records file change context to memory.
 func runSyncIncremental(project, agent, filePath, content string) error {
-	root, cfg, s, err := openWorkspaceStore()
+	root, _, s, err := openWorkspaceStore()
 	if err != nil {
 		return err
 	}
@@ -135,8 +136,6 @@ func runSyncIncremental(project, agent, filePath, content string) error {
 		}
 		return nil
 	}
-
-	_ = cfg // cfg used for memory manager creation if needed in future
 
 	// Build memory key from file path or timestamp
 	key := buildIncrementalKey(filePath)
@@ -191,7 +190,7 @@ func parseLearnings(content string) ([]string, error) {
 		// Try reading from stdin (non-blocking check)
 		stat, _ := os.Stdin.Stat()
 		if stat != nil && (stat.Mode()&os.ModeCharDevice) == 0 {
-			data, err := os.ReadFile("/dev/stdin")
+			data, err := io.ReadAll(os.Stdin)
 			if err != nil {
 				return nil, fmt.Errorf("stdin 읽기 실패: %w", err)
 			}

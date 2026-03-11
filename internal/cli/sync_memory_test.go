@@ -58,8 +58,10 @@ func TestNewSyncMemoryCmd_MutuallyExclusive(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when both --from-session and --incremental are set")
 	}
-	if !strings.Contains(err.Error(), "동시에") {
-		t.Errorf("error should mention mutual exclusion: %v", err)
+	// Verify the error mentions both flags
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "--from-session") || !strings.Contains(errMsg, "--incremental") {
+		t.Errorf("error should mention both flags: %v", err)
 	}
 }
 
