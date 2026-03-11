@@ -9,7 +9,7 @@
 
 **목표**: 사람은 요구사항만 전달 → AI 에이전트 팀이 분석/설계/구현/PR까지 수행
 
-**플랫폼**: macOS / Linux (tmux + TUI + Web Dashboard 기반)
+**플랫폼**: macOS / Linux (TUI + Web Dashboard 기반)
 
 **구현 언어**: Go
 
@@ -20,8 +20,8 @@
 | **언어** | Go | 단일 바이너리 배포, 크로스 플랫폼 |
 | **TUI** | Bubble Tea + Lipgloss | Charm 생태계 |
 | **Web Dashboard** | Templ + HTMX + SSE | Go 바이너리에 임베드, Node 불필요, CLI 동등 기능 제공 |
-| **에이전트 프로세스** | tmux 세션 | 격리 + 디버깅 + PTY 지원 |
-| **에이전트 백엔드 (MVP)** | Claude Code CLI | tmux 세션에서 실행 |
+| **에이전트 프로세스** | 직접 실행 (syscall.Exec / exec.Command) | 프로세스 격리 + git worktree 파일시스템 격리 |
+| **에이전트 백엔드 (MVP)** | Claude Code CLI | 오케스트레이터가 직접 프로세스로 실행 |
 | **테스트** | Unit + 통합 테스트 | E2E는 추후 |
 
 ## 3. 용어 정의
@@ -167,7 +167,7 @@ project-api의 백엔드 기능을 구현하는 개발자.
 ### `pylon init`
 
 - 현재 디렉토리를 워크스페이스로 초기화
-- **필수 도구 검증**: tmux, git, gh, claude CLI 설치 여부 확인. 미설치 시 안내 후 중단
+- **필수 도구 검증**: git, gh, claude CLI 설치 여부 확인. 미설치 시 안내 후 중단
 - 대화형으로 입력받는 것:
   - 에이전트 백엔드 선택 (MVP: Claude Code)
   - 루트 에이전트 구성 (기본 4종 제공, 커스텀 가능)
@@ -211,12 +211,12 @@ project-api의 백엔드 기능을 구현하는 개발자.
 ### `pylon status`
 
 - 현재 진행 중인 작업 현황 조회
-- 활성 tmux 세션, 태스크 진행 상태, 큐 대기 중인 작업 표시
+- 활성 에이전트 프로세스, 태스크 진행 상태, 큐 대기 중인 작업 표시
 
 ### `pylon cancel <task-id>`
 
 - 진행 중인 작업 취소
-- 관련 tmux 세션 종료 + 작업 브랜치 정리
+- 관련 에이전트 프로세스 종료 + 작업 브랜치 정리
 
 ### `pylon resume <conversation-id>`
 
@@ -225,8 +225,8 @@ project-api의 백엔드 기능을 구현하는 개발자.
 
 ### `pylon cleanup`
 
-- 좀비 tmux 세션 정리
-- 비정상 종료된 에이전트 세션 일괄 제거
+- 좀비 에이전트 프로세스 정리
+- 비정상 종료된 에이전트 프로세스 일괄 제거
 
 ### `pylon destroy`
 
@@ -235,7 +235,7 @@ project-api의 백엔드 기능을 구현하는 개발자.
 
 ### `pylon doctor`
 
-- 필수 도구 설치 여부 검증 (tmux, git, gh, claude CLI)
+- 필수 도구 설치 여부 검증 (git, gh, claude CLI)
 - 버전 호환성 확인
 - 워크스페이스 상태 진단
 
@@ -249,30 +249,29 @@ project-api의 백엔드 기능을 구현하는 개발자.
 
 ## 8. 에이전트 실행 모델
 
-### 아키텍처: Go 오케스트레이터 + tmux 세션
+### 아키텍처: Go 오케스트레이터 + 직접 프로세스 실행
 
 ```
-사용자 ↔ [Go 오케스트레이터] ↔ tmux(PO)
-                              ↔ tmux(PM)
-                              ↔ tmux(Architect)
-                              ↔ tmux(Tech Writer)
-                              ↔ tmux(backend-dev)
-                              ↔ tmux(frontend-dev)
+사용자 ↔ [Go 오케스트레이터] ↔ 프로세스(PO)
+                              ↔ 프로세스(PM)
+                              ↔ 프로세스(Architect)
+                              ↔ 프로세스(Tech Writer)
+                              ↔ 프로세스(backend-dev)
+                              ↔ 프로세스(frontend-dev)
 ```
 
 - **Go 오케스트레이터**: 모든 에이전트의 생명주기 관리, 에이전트 간 통신 중재, 상태 감시
-- **tmux 세션**: 각 에이전트의 실행 환경. 격리 + 디버깅 + PTY 지원
+- **직접 프로세스 실행**: 각 에이전트를 `syscall.Exec` (인터랙티브) 또는 `exec.Command` (헤드리스)로 실행. git worktree로 파일시스템 격리
 - 에이전트의 outbox 결과 파일을 오케스트레이터가 읽어 다음 단계 결정
 - 모든 태스크 지시/결과는 `.pylon/tasks/`에 파일로도 기록 (디버깅 + 영속성)
 
-### 프로세스 관리: tmux 세션
+### 프로세스 관리: 직접 실행
 
-- 각 에이전트 = tmux 세션 1개
-- 세션 네이밍: `pylon-{에이전트명}` (예: `pylon-po`, `pylon-pm`, `pylon-api-backend-dev`)
-- Go에서 `exec.Command("tmux", ...)` 로 생성/관리
-- 디버깅: `tmux attach -t pylon-api-backend-dev`로 실시간 확인
-- 크래시 시 tmux 로그 보존 → PM이 에러 분석 가능
-- Dashboard에서 `tmux capture-pane`으로 실시간 로그 표시
+- 각 에이전트 = 독립 프로세스 1개
+- 인터랙티브 에이전트 (PO): `syscall.Exec`로 현재 프로세스를 대체하여 실행
+- 비인터랙티브 에이전트: `exec.Command`로 자식 프로세스 실행, stdout/stderr 캡처
+- 디버깅: Claude Code 자체 로그 / `--output-format stream-json`으로 실시간 확인
+- 크래시 시 캡처된 출력 보존 → PM이 에러 분석 가능
 
 ### 동시 실행
 
@@ -286,31 +285,31 @@ project-api의 백엔드 기능을 구현하는 개발자.
 ```
 [pylon request "로그인 기능 구현해줘"]
     ↓
-[Go 오케스트레이터] → tmux 세션 생성
+[Go 오케스트레이터] → 에이전트 프로세스 생성
     ↓
-[tmux: pylon-po] ← 위키 + 요구사항
+[프로세스: PO] ← 위키 + 요구사항
     ↓ "소셜 로그인도 포함? 세션 방식은?" (역질문)
     ↑ 사용자 응답 (TUI/Dashboard 인터랙션)
     ↓ 요구사항 + 수용 기준 확정
     ↓
 [Go 오케스트레이터] → conversations/ 기록 + tasks/ 생성
     ↓
-[tmux: pylon-architect] ← 기술 방향성 + 의존성 분석
+[프로세스: Architect] ← 기술 방향성 + 의존성 분석
     ↓
-[tmux: pylon-pm] ← 태스크 분해 + 에이전트 지정 + 직렬/병렬 결정
+[프로세스: PM] ← 태스크 분해 + 에이전트 지정 + 직렬/병렬 결정
     ↓
-[tmux: pylon-api-backend-dev] → task/20260305-user-login 브랜치 → 구현
-[tmux: pylon-web-frontend-dev] → (의존성 있으면 대기 후) 브랜치 → 구현
+[프로세스: api-backend-dev] → task/20260305-user-login 브랜치 → 구현
+[프로세스: web-frontend-dev] → (의존성 있으면 대기 후) 브랜치 → 구현
     ↓ (에이전트 완료 시)
 [Go 오케스트레이터] → 교차 검증 (빌드/테스트/린트)
     ↓ (검증 실패 시) → 에이전트에게 수정 요청
     ↓ (검증 통과 시) → PR 생성
     ↓ (에러 시)
-[tmux: pylon-pm] ← 에러 분석 → 재시도 or 사람 에스컬레이션
+[프로세스: PM] ← 에러 분석 → 재시도 or 사람 에스컬레이션
     ↓ (완료 시)
-[tmux: pylon-po] ← 수용 기준 대비 검증
+[프로세스: PO] ← 수용 기준 대비 검증
     ↓
-[tmux: pylon-tech-writer] ← 위키 + context.md 자동 업데이트
+[프로세스: Tech Writer] ← 위키 + context.md 자동 업데이트
 ```
 
 ### Claude Code CLI 실행 명세
@@ -343,7 +342,7 @@ claude \
 
 #### 환경변수 설정
 
-오케스트레이터가 tmux 세션 생성 시 다음 환경변수를 설정한다. `config.yml`의 `runtime.env`를 기본값으로, 에이전트 frontmatter의 `env`로 override한다.
+오케스트레이터가 에이전트 프로세스 생성 시 다음 환경변수를 설정한다. `config.yml`의 `runtime.env`를 기본값으로, 에이전트 frontmatter의 `env`로 override한다.
 
 ```bash
 export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80     # 자동 컴팩트 임계값
@@ -358,7 +357,7 @@ export CLAUDE_CODE_MAX_TURNS={maxTurns}       # 최대 턴 수 (이중 안전장
 ```
 에이전트 태스크 할당 시 (isolation: worktree):
 1. git worktree add {project}/.git/pylon-worktrees/{agent}-{task} -b {branch}
-2. tmux 세션의 작업 디렉토리를 worktree 경로로 설정
+2. 에이전트 프로세스의 작업 디렉토리를 worktree 경로로 설정
 3. 에이전트 실행 (worktree 내에서 독립 작업)
 4. 태스크 완료 후:
    a. 변경사항 커밋 + push
@@ -372,7 +371,7 @@ export CLAUDE_CODE_MAX_TURNS={maxTurns}       # 최대 턴 수 (이중 안전장
 | `worktree` (기본) | 에이전트별 독립 git worktree 생성 | 같은 프로젝트의 병렬 에이전트 |
 | `none` | worktree 없이 프로젝트 디렉토리에서 직접 작업 | 단일 에이전트 또는 루트 에이전트 |
 
-**핵심**: tmux 세션이 프로세스 격리를, git worktree가 파일시스템 격리를 담당한다. 두 격리가 결합되어 에이전트 간 간섭을 완전히 방지한다.
+**핵심**: 직접 프로세스 실행이 프로세스 격리를, git worktree가 파일시스템 격리를 담당한다. 두 격리가 결합되어 에이전트 간 간섭을 완전히 방지한다.
 
 ### 하이브리드 통신 프로토콜
 
@@ -500,7 +499,7 @@ MessageEnvelope
   "active_agents": {
     "backend-dev": {
       "task_id": "20260305-user-login",
-      "tmux_session": "pylon-api-backend-dev",
+      "pid": 12345,
       "status": "running"
     }
   }
@@ -520,7 +519,7 @@ MessageEnvelope
 
 #### 에이전트 CLAUDE.md 주입 규칙
 
-각 에이전트의 tmux 세션 실행 시, 오케스트레이터가 `--append-system-prompt`로 규칙을 주입한다.
+각 에이전트 프로세스 실행 시, 오케스트레이터가 `--append-system-prompt`로 규칙을 주입한다.
 
 **크기 제한**: 주입되는 CLAUDE.md는 **200줄 이하**를 유지한다. 200줄을 초과하면 에이전트의 규칙 준수율이 저하된다.
 
@@ -672,23 +671,23 @@ state.json 갱신 + pipeline_state UPDATE
 
 #### SPOF 복구 (오케스트레이터 장애 복구)
 
-오케스트레이터가 비정상 종료되더라도, 통신 히스토리와 tmux 세션을 기반으로 파이프라인을 복구할 수 있다.
+오케스트레이터가 비정상 종료되더라도, 통신 히스토리와 에이전트 프로세스 상태를 기반으로 파이프라인을 복구할 수 있다.
 
 **복구 알고리즘**:
 
 ```
 1. state.json 로드 → 마지막 파이프라인 상태 확인
-2. 살아있는 tmux 세션 목록 확인 (tmux list-sessions)
+2. 에이전트 프로세스 생존 여부 확인 (PID 기반)
 3. runtime/outbox/ 스캔 → 오케스트레이터 종료 중 도착한 결과 수집
 4. SQLite 히스토리와 교차 검증 → 누락된 메시지 복원
 5. 각 에이전트의 현재 상태 판단:
    - outbox에 result 있음 → 완료 처리 진행
-   - tmux 세션 살아있음 + result 없음 → 작업 진행 중, 감시 재개
-   - tmux 세션 없음 + result 없음 → 비정상 종료, PM에게 에스컬레이션
+   - 프로세스 살아있음 + result 없음 → 작업 진행 중, 감시 재개
+   - 프로세스 없음 + result 없음 → 비정상 종료, PM에게 에스컬레이션
 6. 파이프라인 재개
 ```
 
-**핵심**: tmux 세션은 오케스트레이터 프로세스와 독립적으로 생존하므로, 에이전트의 작업은 오케스트레이터 크래시에 영향받지 않는다.
+**핵심**: 에이전트 프로세스의 상태와 outbox 결과 파일을 교차 검증하여, 오케스트레이터 크래시 이후에도 파이프라인을 안전하게 복구한다.
 
 #### 블랙보드 (프로젝트 공유 지식 저장소)
 
@@ -924,7 +923,7 @@ wiki.updated              -- 위키 갱신
 ```
 에이전트 세션 종료
     ↓
-오케스트레이터가 세션 내용 수집 (tmux capture-pane 또는 outbox 기록)
+오케스트레이터가 세션 내용 수집 (에이전트 출력 캡처 또는 outbox 기록)
     ↓
 핵심 정보 추출:
     ├── 내린 결정들 → project_memory (decision)
@@ -1097,11 +1096,6 @@ runtime:
   env:                          # 에이전트 환경변수 기본값 (에이전트별 override 가능)
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
     CLAUDE_CODE_EFFORT_LEVEL: "high"
-
-# ─── tmux ─────────────────────────────────────
-tmux:
-  session_prefix: pylon         # 세션 이름 prefix (pylon-pm, pylon-api-dev 등)
-  history_limit: 10000          # 스크롤백 버퍼 (에러 분석용)
 
 # ─── Git ──────────────────────────────────────
 git:
