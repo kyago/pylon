@@ -135,6 +135,9 @@ func TestRunAddProject_ForceAndSkipCloneMutuallyExclusive(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := newAddProjectCmd()
 	cmd.SetArgs([]string{"https://github.com/user/repo.git", "--force", "--skip-clone"})
@@ -159,6 +162,9 @@ func TestRunAddProject_SkipCloneNoDir(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := newAddProjectCmd()
 	cmd.SetArgs([]string{"https://github.com/user/repo.git", "--skip-clone", "--name", "nonexistent"})
@@ -180,6 +186,9 @@ func TestRunAddProject_DirExistsNoFlag(t *testing.T) {
 	// Set up a minimal workspace with existing project dir
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(tmpDir, "myproject"), 0755); err != nil {
@@ -211,6 +220,9 @@ func TestRunAddProject_SkipCloneWithExistingDir(t *testing.T) {
 	// Set up a workspace with an existing project directory containing a git repo
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -311,6 +323,9 @@ func TestRunAddProject_DirExistsAsFile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	// Create a file (not a directory) with the project name
 	if err := os.WriteFile(filepath.Join(tmpDir, "myproject"), []byte("not a dir"), 0644); err != nil {
 		t.Fatal(err)
@@ -335,6 +350,9 @@ func TestRunAddProject_DirExistsAsFile(t *testing.T) {
 func TestRunAddProject_PathTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 

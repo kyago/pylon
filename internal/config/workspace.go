@@ -13,7 +13,10 @@ type ProjectInfo struct {
 	Path string
 }
 
-// FindWorkspaceRoot walks up from startDir looking for a .pylon/ directory.
+// FindWorkspaceRoot walks up from startDir looking for a .pylon/ directory
+// that contains a config.yml file (indicating a workspace root, not a sub-project).
+// Sub-project .pylon/ directories may exist without config.yml, so the search
+// continues upward until a proper workspace root is found.
 // Returns the workspace root path or an error if not found.
 func FindWorkspaceRoot(startDir string) (string, error) {
 	dir, err := filepath.Abs(startDir)
@@ -24,14 +27,27 @@ func FindWorkspaceRoot(startDir string) (string, error) {
 	for {
 		pylonDir := filepath.Join(dir, ".pylon")
 		info, err := os.Stat(pylonDir)
+		if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to stat %s: %w", pylonDir, err)
+		}
 		if err == nil && info.IsDir() {
-			return dir, nil
+			configPath := filepath.Join(pylonDir, "config.yml")
+			configInfo, err := os.Stat(configPath)
+			if err != nil && !os.IsNotExist(err) {
+				return "", fmt.Errorf("failed to stat %s: %w", configPath, err)
+			}
+			if err == nil {
+				if configInfo.Mode().IsRegular() {
+					return dir, nil
+				}
+				return "", fmt.Errorf("invalid workspace config: %s exists but is not a regular file", configPath)
+			}
 		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			// Reached filesystem root
-			return "", fmt.Errorf("no .pylon/ workspace found (searched from %s to /)", startDir)
+			return "", fmt.Errorf("no .pylon/config.yml found (searched from %s to filesystem root)", startDir)
 		}
 		dir = parent
 	}
