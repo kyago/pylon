@@ -133,6 +133,19 @@ func runSyncIncremental(project, agent, filePath, content string) error {
 		content = readStdin()
 	}
 
+	// Try to parse Claude Code hook payload from stdin content
+	// PostToolUse hooks receive JSON like:
+	//   {"tool_name": "Write", "tool_input": {"file_path": "...", "content": "..."}, ...}
+	if content != "" {
+		parsedFile, parsedContent := tryParseToolUsePayload(content)
+		if parsedContent != "" {
+			content = parsedContent
+		}
+		if parsedFile != "" && filePath == "" {
+			filePath = parsedFile
+		}
+	}
+
 	if content == "" {
 		if flagJSON {
 			fmt.Println(`{"status":"skip","reason":"no content provided"}`)
@@ -194,8 +207,10 @@ func resolveProject(root, project string) (string, error) {
 		// Single project discovered: use its name
 		return projects[0].Name, nil
 	default:
-		// Multiple projects discovered: require explicit project selection
-		return "", fmt.Errorf("여러 프로젝트가 감지되었습니다. --project 플래그로 저장할 프로젝트를 지정하세요")
+		// Multiple projects: fall back to workspace directory name.
+		// Hooks cannot pass --project dynamically, so erroring here would
+		// cause all hook invocations to fail in multi-project workspaces.
+		return filepath.Base(root), nil
 	}
 }
 
@@ -285,6 +300,69 @@ func tryParseJSONLearnings(data string) []string {
 	}
 
 	return learnings
+}
+
+// tryParseToolUsePayload attempts to extract file path and content from a
+// Claude Code PostToolUse hook JSON payload. The payload looks like:
+//
+//	{"tool_name": "Write", "tool_input": {"file_path": "...", "content": "..."}, ...}
+//
+// Returns the extracted file path and a content summary. If the payload cannot
+// be parsed, returns empty strings so the caller can fall through.
+func tryParseToolUsePayload(data string) (filePath, content string) {
+	type toolInput struct {
+		FilePath string `json:"file_path"`
+		Content  string `json:"content"`
+		// Edit tool may use different fields
+		OldString string `json:"old_string"`
+		NewString string `json:"new_string"`
+	}
+	type toolUsePayload struct {
+		ToolName  string    `json:"tool_name"`
+		ToolInput toolInput `json:"tool_input"`
+	}
+
+	var payload toolUsePayload
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return "", ""
+	}
+
+	filePath = payload.ToolInput.FilePath
+
+	// Build a meaningful content description based on the tool
+	switch payload.ToolName {
+	case "Write":
+		if payload.ToolInput.Content != "" {
+			// For large file writes, store a truncated summary
+			c := payload.ToolInput.Content
+			if len(c) > 500 {
+				c = c[:500] + "... (truncated)"
+			}
+			content = fmt.Sprintf("[Write] %s: %s", filePath, c)
+		} else {
+			content = fmt.Sprintf("[Write] %s", filePath)
+		}
+	case "Edit":
+		if payload.ToolInput.OldString != "" && payload.ToolInput.NewString != "" {
+			old := payload.ToolInput.OldString
+			if len(old) > 200 {
+				old = old[:200] + "..."
+			}
+			new := payload.ToolInput.NewString
+			if len(new) > 200 {
+				new = new[:200] + "..."
+			}
+			content = fmt.Sprintf("[Edit] %s: %q → %q", filePath, old, new)
+		} else {
+			content = fmt.Sprintf("[Edit] %s", filePath)
+		}
+	default:
+		if filePath != "" {
+			content = fmt.Sprintf("[%s] %s", payload.ToolName, filePath)
+		}
+	}
+
+	return filePath, content
 }
 
 // buildIncrementalKey creates a memory key for incremental file change tracking.

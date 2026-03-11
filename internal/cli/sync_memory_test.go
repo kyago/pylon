@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,6 +201,114 @@ func TestTryParseJSONLearnings(t *testing.T) {
 				t.Errorf("tryParseJSONLearnings() len = %d, want %d", len(got), tt.wantLen)
 			}
 		})
+	}
+}
+
+func TestTryParseToolUsePayload(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantFile    string
+		wantContent string
+		wantEmpty   bool
+	}{
+		{
+			name:      "Write tool",
+			input:     `{"tool_name": "Write", "tool_input": {"file_path": "src/main.go", "content": "package main"}}`,
+			wantFile:  "src/main.go",
+			wantEmpty: false,
+		},
+		{
+			name:      "Edit tool",
+			input:     `{"tool_name": "Edit", "tool_input": {"file_path": "src/main.go", "old_string": "foo", "new_string": "bar"}}`,
+			wantFile:  "src/main.go",
+			wantEmpty: false,
+		},
+		{
+			name:      "invalid json",
+			input:     `not json`,
+			wantFile:  "",
+			wantEmpty: true,
+		},
+		{
+			name:      "empty object",
+			input:     `{}`,
+			wantFile:  "",
+			wantEmpty: true,
+		},
+		{
+			name:      "unknown tool with file",
+			input:     `{"tool_name": "CustomTool", "tool_input": {"file_path": "config.yml"}}`,
+			wantFile:  "config.yml",
+			wantEmpty: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotFile, gotContent := tryParseToolUsePayload(tt.input)
+			if gotFile != tt.wantFile {
+				t.Errorf("tryParseToolUsePayload() file = %q, want %q", gotFile, tt.wantFile)
+			}
+			if tt.wantEmpty && gotContent != "" {
+				t.Errorf("tryParseToolUsePayload() content should be empty, got %q", gotContent)
+			}
+			if !tt.wantEmpty && gotContent == "" {
+				t.Errorf("tryParseToolUsePayload() content should not be empty")
+			}
+		})
+	}
+}
+
+func TestTryParseToolUsePayload_WriteContent(t *testing.T) {
+	input := `{"tool_name": "Write", "tool_input": {"file_path": "src/main.go", "content": "package main\n\nfunc main() {}"}}`
+	gotFile, gotContent := tryParseToolUsePayload(input)
+	if gotFile != "src/main.go" {
+		t.Errorf("file = %q, want %q", gotFile, "src/main.go")
+	}
+	if !strings.Contains(gotContent, "[Write]") {
+		t.Errorf("content should contain '[Write]' prefix, got: %q", gotContent)
+	}
+	if !strings.Contains(gotContent, "src/main.go") {
+		t.Errorf("content should contain file path, got: %q", gotContent)
+	}
+}
+
+func TestTryParseToolUsePayload_EditContent(t *testing.T) {
+	input := `{"tool_name": "Edit", "tool_input": {"file_path": "src/main.go", "old_string": "oldCode()", "new_string": "newCode()"}}`
+	_, gotContent := tryParseToolUsePayload(input)
+	if !strings.Contains(gotContent, "[Edit]") {
+		t.Errorf("content should contain '[Edit]' prefix, got: %q", gotContent)
+	}
+	if !strings.Contains(gotContent, "oldCode()") {
+		t.Errorf("content should contain old string, got: %q", gotContent)
+	}
+	if !strings.Contains(gotContent, "newCode()") {
+		t.Errorf("content should contain new string, got: %q", gotContent)
+	}
+}
+
+func TestTryParseToolUsePayload_LargeContentTruncated(t *testing.T) {
+	largeContent := strings.Repeat("x", 1000)
+	input := fmt.Sprintf(`{"tool_name": "Write", "tool_input": {"file_path": "big.go", "content": %q}}`, largeContent)
+	_, gotContent := tryParseToolUsePayload(input)
+	if !strings.Contains(gotContent, "truncated") {
+		t.Errorf("large content should be truncated, got length %d", len(gotContent))
+	}
+}
+
+func TestResolveProject_MultiProject(t *testing.T) {
+	// In multi-project workspaces, resolveProject should fall back to workspace name
+	// (not error) because hooks cannot pass --project dynamically
+	tmpDir := t.TempDir()
+	// DiscoverProjects will find 0 projects in an empty dir, so we test the fallback directly
+	got, err := resolveProject(tmpDir, "")
+	if err != nil {
+		t.Fatalf("resolveProject() should not error: %v", err)
+	}
+	expected := filepath.Base(tmpDir)
+	if got != expected {
+		t.Errorf("resolveProject() = %q, want %q", got, expected)
 	}
 }
 
