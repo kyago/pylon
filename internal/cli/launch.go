@@ -149,7 +149,9 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 	legacyCommands := []string{"index", "status", "verify", "add-project", "cancel", "review"}
 	for _, name := range legacyCommands {
 		legacy := filepath.Join(commandsDir, name+".md")
-		_ = os.Remove(legacy) // ignore error if file doesn't exist
+		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("레거시 커맨드 파일 제거 실패 (%s): %w", legacy, err)
+		}
 	}
 
 	// Generate slash commands
