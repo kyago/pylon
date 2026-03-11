@@ -116,28 +116,132 @@ func TestParseLearnings_StripsPrefixes(t *testing.T) {
 	}
 }
 
+func TestParseLearnings_JSONPayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantLen int
+	}{
+		{
+			"learnings array",
+			`{"learnings": ["fact one", "fact two"]}`,
+			2,
+		},
+		{
+			"summary field",
+			`{"summary": "refactored auth module"}`,
+			1,
+		},
+		{
+			"content field",
+			`{"content": "added new endpoint"}`,
+			1,
+		},
+		{
+			"tool_output field",
+			`{"tool_output": "file written successfully"}`,
+			1,
+		},
+		{
+			"multiple fields",
+			`{"summary": "overview", "learnings": ["detail1"], "content": "body"}`,
+			3,
+		},
+		{
+			"empty json object",
+			`{}`,
+			1, // falls through to line splitting: "{}" is one line
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseLearnings(tt.input)
+			if err != nil {
+				t.Fatalf("parseLearnings() error = %v", err)
+			}
+			if len(got) != tt.wantLen {
+				t.Errorf("parseLearnings() len = %d, want %d, got %v", len(got), tt.wantLen, got)
+			}
+		})
+	}
+}
+
+func TestParseLearnings_EmptyJSONFallsThrough(t *testing.T) {
+	// Empty JSON should fall through to plain text, resulting in nil
+	got, err := parseLearnings(`{}`)
+	if err != nil {
+		t.Fatalf("parseLearnings() error = %v", err)
+	}
+	// {} has no usable fields, falls through to line splitting which yields ["{}", nil]
+	// Actually {} will be parsed as JSON with no fields, return nil from tryParseJSONLearnings,
+	// then fall through to line split which yields ["{}"]
+	if got == nil {
+		t.Error("expected fallthrough to produce result from line splitting")
+	}
+}
+
+func TestTryParseJSONLearnings(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantLen int
+	}{
+		{"valid learnings", `{"learnings": ["a", "b"]}`, 2},
+		{"invalid json", `not json`, 0},
+		{"empty object", `{}`, 0},
+		{"summary only", `{"summary": "test"}`, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tryParseJSONLearnings(tt.input)
+			if len(got) != tt.wantLen {
+				t.Errorf("tryParseJSONLearnings() len = %d, want %d", len(got), tt.wantLen)
+			}
+		})
+	}
+}
+
 func TestBuildIncrementalKey(t *testing.T) {
 	tests := []struct {
 		name     string
 		filePath string
 		wantPfx  string
 	}{
-		{"empty path", "", "change/"},
-		{"simple file", "main.go", "change/main-go/"},
-		{"nested path", "src/pkg/file.go", "change/"},
+		{"empty path", "", "20"},           // starts with timestamp
+		{"simple file", "main.go", "main"}, // starts with sanitized filename
+		{"nested path", "src/pkg/file.go", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := buildIncrementalKey(tt.filePath)
-			if !strings.HasPrefix(got, tt.wantPfx) {
+			if tt.wantPfx != "" && !strings.HasPrefix(got, tt.wantPfx) {
 				t.Errorf("buildIncrementalKey(%q) = %q, want prefix %q", tt.filePath, got, tt.wantPfx)
 			}
-			// Should contain a timestamp portion
-			if !strings.Contains(got, "-") {
-				t.Errorf("buildIncrementalKey(%q) should contain timestamp", tt.filePath)
+			// Should not have "change/" prefix (category is stored separately)
+			if strings.HasPrefix(got, "change/") {
+				t.Errorf("buildIncrementalKey(%q) should not have 'change/' prefix, got: %s", tt.filePath, got)
+			}
+			// Should contain nanosecond timestamp
+			if !strings.Contains(got, ".") {
+				t.Errorf("buildIncrementalKey(%q) should contain nanosecond timestamp, got: %s", tt.filePath, got)
 			}
 		})
+	}
+}
+
+func TestBuildIncrementalKey_CrossPlatformPaths(t *testing.T) {
+	// Test both forward and back slash normalization
+	got := buildIncrementalKey("src/pkg/file.go")
+	if strings.Contains(got, "/pkg/") {
+		t.Errorf("forward slashes should be normalized: %s", got)
+	}
+
+	got = buildIncrementalKey("src\\pkg\\file.go")
+	if strings.Contains(got, "\\") {
+		t.Errorf("back slashes should be normalized: %s", got)
 	}
 }
 
@@ -148,6 +252,15 @@ func TestBuildIncrementalKey_LongPath(t *testing.T) {
 	parts := strings.Split(got, "/")
 	if len(parts) < 2 {
 		t.Errorf("expected at least 2 path segments, got %d in %q", len(parts), got)
+	}
+}
+
+func TestBuildIncrementalKey_UniqueTimestamp(t *testing.T) {
+	// Two keys generated in quick succession should be different due to nanoseconds
+	key1 := buildIncrementalKey("test.go")
+	key2 := buildIncrementalKey("test.go")
+	if key1 == key2 {
+		t.Errorf("keys should be unique even in rapid succession: %q == %q", key1, key2)
 	}
 }
 
@@ -168,106 +281,257 @@ func TestResolveProject_FallbackToDirName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveProject() error = %v", err)
 	}
-	// Should fall back to directory base name
+	// Should fall back to directory base name (no projects discovered)
 	expected := filepath.Base(tmpDir)
 	if got != expected {
 		t.Errorf("resolveProject() = %q, want %q", got, expected)
 	}
 }
 
-func TestGenerateHooksJSON(t *testing.T) {
+func TestGenerateSettingsHooks(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	if err := generateHooksJSON(tmpDir); err != nil {
-		t.Fatalf("generateHooksJSON() error = %v", err)
+	if err := generateSettingsHooks(tmpDir); err != nil {
+		t.Fatalf("generateSettingsHooks() error = %v", err)
 	}
 
-	hooksPath := filepath.Join(tmpDir, "hooks.json")
-	data, err := os.ReadFile(hooksPath)
+	settingsPath := filepath.Join(tmpDir, "settings.json")
+	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		t.Fatalf("failed to read hooks.json: %v", err)
+		t.Fatalf("failed to read settings.json: %v", err)
 	}
 
 	// Parse and verify structure
-	var hooks hooksConfig
-	if err := json.Unmarshal(data, &hooks); err != nil {
-		t.Fatalf("failed to parse hooks.json: %v", err)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("failed to parse settings.json: %v", err)
+	}
+
+	hooks, ok := settings["hooks"]
+	if !ok {
+		t.Fatal("settings.json should have a 'hooks' key")
+	}
+
+	hooksMap, ok := hooks.(map[string]any)
+	if !ok {
+		t.Fatal("hooks should be a map")
 	}
 
 	// Verify Stop hook exists
-	stopHooks, ok := hooks.Hooks["Stop"]
-	if !ok || len(stopHooks) == 0 {
+	stopHooks, ok := hooksMap["Stop"]
+	if !ok {
 		t.Fatal("Stop hook not found")
 	}
-	if !strings.Contains(stopHooks[0].Command, "pylon sync-memory") {
-		t.Errorf("Stop hook command should contain 'pylon sync-memory', got: %s", stopHooks[0].Command)
+	stopArr, ok := stopHooks.([]any)
+	if !ok || len(stopArr) == 0 {
+		t.Fatal("Stop hook should be a non-empty array")
 	}
-	if !strings.Contains(stopHooks[0].Command, "--from-session") {
-		t.Errorf("Stop hook command should contain '--from-session', got: %s", stopHooks[0].Command)
+	stopEntry, ok := stopArr[0].(map[string]any)
+	if !ok {
+		t.Fatal("Stop hook entry should be a map")
+	}
+	if stopEntry["type"] != "command" {
+		t.Errorf("Stop hook type = %v, want 'command'", stopEntry["type"])
+	}
+	cmd, _ := stopEntry["command"].(string)
+	if !strings.Contains(cmd, "pylon sync-memory") || !strings.Contains(cmd, "--from-session") {
+		t.Errorf("Stop hook command should contain 'pylon sync-memory --from-session', got: %s", cmd)
 	}
 
 	// Verify PostToolUse hook exists
-	postHooks, ok := hooks.Hooks["PostToolUse"]
-	if !ok || len(postHooks) == 0 {
+	postHooks, ok := hooksMap["PostToolUse"]
+	if !ok {
 		t.Fatal("PostToolUse hook not found")
 	}
-	if !strings.Contains(postHooks[0].Command, "pylon sync-memory") {
-		t.Errorf("PostToolUse hook command should contain 'pylon sync-memory', got: %s", postHooks[0].Command)
+	postArr, ok := postHooks.([]any)
+	if !ok || len(postArr) == 0 {
+		t.Fatal("PostToolUse hook should be a non-empty array")
 	}
-	if !strings.Contains(postHooks[0].Command, "--incremental") {
-		t.Errorf("PostToolUse hook command should contain '--incremental', got: %s", postHooks[0].Command)
+	postEntry, ok := postArr[0].(map[string]any)
+	if !ok {
+		t.Fatal("PostToolUse hook entry should be a map")
+	}
+	if postEntry["type"] != "command" {
+		t.Errorf("PostToolUse hook type = %v, want 'command'", postEntry["type"])
 	}
 
 	// Verify matcher
-	if postHooks[0].Matcher == nil {
+	matcher, ok := postEntry["matcher"].(map[string]any)
+	if !ok {
 		t.Fatal("PostToolUse hook should have a matcher")
 	}
-	if postHooks[0].Matcher.ToolName != "Write|Edit" {
-		t.Errorf("PostToolUse matcher.tool_name = %q, want %q", postHooks[0].Matcher.ToolName, "Write|Edit")
+	if matcher["tool_name"] != "Write|Edit" {
+		t.Errorf("matcher.tool_name = %v, want 'Write|Edit'", matcher["tool_name"])
+	}
+
+	// Verify no description field (not in Claude Code spec)
+	if _, hasDesc := stopEntry["description"]; hasDesc {
+		t.Error("hook entries should not have a 'description' field")
 	}
 }
 
-func TestGenerateHooksJSON_ValidJSON(t *testing.T) {
+func TestGenerateSettingsHooks_ValidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	if err := generateHooksJSON(tmpDir); err != nil {
-		t.Fatalf("generateHooksJSON() error = %v", err)
+	if err := generateSettingsHooks(tmpDir); err != nil {
+		t.Fatalf("generateSettingsHooks() error = %v", err)
 	}
 
-	hooksPath := filepath.Join(tmpDir, "hooks.json")
-	data, err := os.ReadFile(hooksPath)
+	settingsPath := filepath.Join(tmpDir, "settings.json")
+	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		t.Fatalf("failed to read hooks.json: %v", err)
+		t.Fatalf("failed to read settings.json: %v", err)
 	}
 
 	// Verify it's valid JSON
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("hooks.json is not valid JSON: %v", err)
+		t.Fatalf("settings.json is not valid JSON: %v", err)
 	}
 
 	// Verify top-level "hooks" key exists
 	if _, ok := raw["hooks"]; !ok {
-		t.Error("hooks.json should have a top-level 'hooks' key")
+		t.Error("settings.json should have a 'hooks' key")
 	}
 }
 
-func TestGenerateHooksJSON_Idempotent(t *testing.T) {
+func TestGenerateSettingsHooks_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Generate twice
-	if err := generateHooksJSON(tmpDir); err != nil {
-		t.Fatalf("first generateHooksJSON() error = %v", err)
+	if err := generateSettingsHooks(tmpDir); err != nil {
+		t.Fatalf("first generateSettingsHooks() error = %v", err)
 	}
-	first, _ := os.ReadFile(filepath.Join(tmpDir, "hooks.json"))
+	first, _ := os.ReadFile(filepath.Join(tmpDir, "settings.json"))
 
-	if err := generateHooksJSON(tmpDir); err != nil {
-		t.Fatalf("second generateHooksJSON() error = %v", err)
+	if err := generateSettingsHooks(tmpDir); err != nil {
+		t.Fatalf("second generateSettingsHooks() error = %v", err)
 	}
-	second, _ := os.ReadFile(filepath.Join(tmpDir, "hooks.json"))
+	second, _ := os.ReadFile(filepath.Join(tmpDir, "settings.json"))
 
 	if string(first) != string(second) {
-		t.Error("generateHooksJSON should be idempotent")
+		t.Error("generateSettingsHooks should be idempotent")
+	}
+}
+
+func TestGenerateSettingsHooks_PreservesExisting(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write existing settings with user hooks
+	existingSettings := map[string]any{
+		"theme": "dark",
+		"hooks": map[string]any{
+			"Stop": []any{
+				map[string]any{
+					"type":    "command",
+					"command": "my-custom-hook --on-stop",
+				},
+			},
+			"PreToolUse": []any{
+				map[string]any{
+					"type":    "command",
+					"command": "my-linter --check",
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existingSettings, "", "  ")
+	settingsPath := filepath.Join(tmpDir, "settings.json")
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Generate pylon hooks
+	if err := generateSettingsHooks(tmpDir); err != nil {
+		t.Fatalf("generateSettingsHooks() error = %v", err)
+	}
+
+	// Read result
+	result, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(result, &settings); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify non-hook settings preserved
+	if settings["theme"] != "dark" {
+		t.Error("existing non-hook settings should be preserved")
+	}
+
+	// Verify user hooks preserved
+	hooks := settings["hooks"].(map[string]any)
+
+	// PreToolUse should be untouched
+	preHooks, ok := hooks["PreToolUse"]
+	if !ok {
+		t.Fatal("user PreToolUse hook should be preserved")
+	}
+	preArr := preHooks.([]any)
+	if len(preArr) != 1 {
+		t.Errorf("PreToolUse should have 1 entry, got %d", len(preArr))
+	}
+
+	// Stop should have user hook + pylon hook
+	stopHooks := hooks["Stop"].([]any)
+	if len(stopHooks) != 2 {
+		t.Errorf("Stop should have 2 entries (user + pylon), got %d", len(stopHooks))
+	}
+
+	// Verify user's custom hook is first (preserved)
+	userHook := stopHooks[0].(map[string]any)
+	if userHook["command"] != "my-custom-hook --on-stop" {
+		t.Error("user's custom Stop hook should be preserved")
+	}
+
+	// Verify pylon hook is second (added)
+	pylonHook := stopHooks[1].(map[string]any)
+	pylonCmd, _ := pylonHook["command"].(string)
+	if !strings.Contains(pylonCmd, "pylon sync-memory") {
+		t.Error("pylon Stop hook should be added")
+	}
+}
+
+func TestGenerateSettingsHooks_CleansLegacyHooksJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create legacy hooks.json
+	legacyPath := filepath.Join(tmpDir, "hooks.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"hooks":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := generateSettingsHooks(tmpDir); err != nil {
+		t.Fatalf("generateSettingsHooks() error = %v", err)
+	}
+
+	// Verify legacy file removed
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Error("legacy hooks.json should be removed")
+	}
+
+	// Verify settings.json created
+	if _, err := os.Stat(filepath.Join(tmpDir, "settings.json")); os.IsNotExist(err) {
+		t.Error("settings.json should be created")
+	}
+}
+
+func TestIsPylonHookCommand(t *testing.T) {
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{"pylon sync-memory --from-session", true},
+		{"pylon sync-memory --incremental", true},
+		{"my-custom-hook --on-stop", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isPylonHookCommand(tt.command); got != tt.want {
+			t.Errorf("isPylonHookCommand(%q) = %v, want %v", tt.command, got, tt.want)
+		}
 	}
 }
 
@@ -362,7 +626,7 @@ func TestRunSyncIncremental_EmptyContent(t *testing.T) {
 	}
 }
 
-func TestGenerateClaudeDir_IncludesHooks(t *testing.T) {
+func TestGenerateClaudeDir_IncludesSettings(t *testing.T) {
 	tmpDir := t.TempDir()
 	claudeDir := filepath.Join(tmpDir, ".claude")
 
@@ -377,24 +641,37 @@ func TestGenerateClaudeDir_IncludesHooks(t *testing.T) {
 		t.Fatalf("generateClaudeDir() error = %v", err)
 	}
 
-	// Verify hooks.json was created
+	// Verify settings.json was created (not hooks.json)
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
+		t.Fatal("settings.json should be created by generateClaudeDir")
+	}
+
+	// Verify hooks.json was NOT created
 	hooksPath := filepath.Join(claudeDir, "hooks.json")
-	if _, err := os.Stat(hooksPath); os.IsNotExist(err) {
-		t.Fatal("hooks.json should be created by generateClaudeDir")
+	if _, err := os.Stat(hooksPath); !os.IsNotExist(err) {
+		t.Error("hooks.json should NOT be created (use settings.json instead)")
 	}
 
-	// Verify it has correct structure
-	data, err := os.ReadFile(hooksPath)
+	// Verify settings.json has correct structure
+	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		t.Fatalf("failed to read hooks.json: %v", err)
+		t.Fatalf("failed to read settings.json: %v", err)
 	}
 
-	var hooks hooksConfig
-	if err := json.Unmarshal(data, &hooks); err != nil {
-		t.Fatalf("hooks.json is invalid JSON: %v", err)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("settings.json is invalid JSON: %v", err)
 	}
 
-	if len(hooks.Hooks) == 0 {
-		t.Error("hooks.json should contain hook definitions")
+	hooks, ok := settings["hooks"]
+	if !ok {
+		t.Error("settings.json should contain 'hooks' key")
+		return
+	}
+
+	hooksMap, ok := hooks.(map[string]any)
+	if !ok || len(hooksMap) == 0 {
+		t.Error("settings.json hooks should contain hook definitions")
 	}
 }

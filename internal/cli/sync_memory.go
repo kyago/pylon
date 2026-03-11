@@ -128,6 +128,11 @@ func runSyncIncremental(project, agent, filePath, content string) error {
 		return err
 	}
 
+	// Read content from stdin if not provided via flag
+	if content == "" {
+		content = readStdin()
+	}
+
 	if content == "" {
 		if flagJSON {
 			fmt.Println(`{"status":"skip","reason":"no content provided"}`)
@@ -176,62 +181,126 @@ func resolveProject(root, project string) (string, error) {
 
 	// Try to infer from discovered projects
 	projects, err := config.DiscoverProjects(root)
-	if err == nil && len(projects) == 1 {
-		return projects[0].Name, nil
+	if err != nil {
+		// If project discovery fails, fall back to workspace directory name
+		return filepath.Base(root), nil
 	}
 
-	// Fall back to workspace directory name
-	return filepath.Base(root), nil
+	switch len(projects) {
+	case 0:
+		// No projects discovered: fall back to workspace directory name
+		return filepath.Base(root), nil
+	case 1:
+		// Single project discovered: use its name
+		return projects[0].Name, nil
+	default:
+		// Multiple projects discovered: require explicit project selection
+		return "", fmt.Errorf("여러 프로젝트가 감지되었습니다. --project 플래그로 저장할 프로젝트를 지정하세요")
+	}
+}
+
+// readStdin reads stdin if data is piped (non-interactive).
+func readStdin() string {
+	stat, _ := os.Stdin.Stat()
+	if stat != nil && (stat.Mode()&os.ModeCharDevice) == 0 {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(data))
+	}
+	return ""
 }
 
 // parseLearnings splits content into individual learning entries.
+// Handles both JSON payloads (from Claude Code hooks) and plain text.
 func parseLearnings(content string) ([]string, error) {
 	if content == "" {
 		// Try reading from stdin (non-blocking check)
-		stat, _ := os.Stdin.Stat()
-		if stat != nil && (stat.Mode()&os.ModeCharDevice) == 0 {
-			data, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return nil, fmt.Errorf("stdin 읽기 실패: %w", err)
-			}
-			content = string(data)
-		}
+		content = readStdin()
 	}
 
 	if content == "" {
 		return nil, nil
 	}
 
+	trimmed := strings.TrimSpace(content)
+
+	// If the content looks like JSON (typical for Claude Code hooks), try to decode it
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		learnings := tryParseJSONLearnings(trimmed)
+		if len(learnings) > 0 {
+			return learnings, nil
+		}
+		// If JSON decoding succeeded but yielded no usable fields,
+		// fall through to the plain-text splitting logic below.
+	}
+
 	// Split by newlines, filter empty lines
 	lines := strings.Split(content, "\n")
 	var learnings []string
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
+		t := strings.TrimSpace(line)
+		if t == "" {
 			continue
 		}
 		// Remove common list prefixes
-		trimmed = strings.TrimPrefix(trimmed, "- ")
-		trimmed = strings.TrimPrefix(trimmed, "* ")
-		if trimmed != "" {
-			learnings = append(learnings, trimmed)
+		t = strings.TrimPrefix(t, "- ")
+		t = strings.TrimPrefix(t, "* ")
+		if t != "" {
+			learnings = append(learnings, t)
 		}
 	}
 
 	return learnings, nil
 }
 
+// tryParseJSONLearnings attempts to extract learnings from JSON hook payload.
+func tryParseJSONLearnings(data string) []string {
+	type hookPayload struct {
+		Summary    string   `json:"summary"`
+		Content    string   `json:"content"`
+		Learnings  []string `json:"learnings"`
+		ToolOutput string   `json:"tool_output"`
+	}
+
+	var payload hookPayload
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return nil
+	}
+
+	var learnings []string
+
+	// Prefer explicitly provided learnings array
+	if len(payload.Learnings) > 0 {
+		learnings = append(learnings, payload.Learnings...)
+	}
+
+	// Also consider common text fields that may contain summaries
+	for _, field := range []string{payload.Summary, payload.Content, payload.ToolOutput} {
+		t := strings.TrimSpace(field)
+		if t != "" {
+			learnings = append(learnings, t)
+		}
+	}
+
+	return learnings
+}
+
 // buildIncrementalKey creates a memory key for incremental file change tracking.
+// The key does not include the category prefix since that is stored separately.
 func buildIncrementalKey(filePath string) string {
-	ts := time.Now().Format("20060102-150405")
+	ts := time.Now().Format("20060102-150405.000000000")
 	if filePath != "" {
 		// Use file path as part of key for traceability
-		clean := strings.ReplaceAll(filePath, string(os.PathSeparator), "-")
+		// Normalize both forward and back slashes for cross-platform compatibility
+		clean := strings.ReplaceAll(filePath, "/", "-")
+		clean = strings.ReplaceAll(clean, "\\", "-")
 		clean = strings.ReplaceAll(clean, ".", "-")
 		if len(clean) > 40 {
 			clean = clean[len(clean)-40:]
 		}
-		return fmt.Sprintf("change/%s/%s", clean, ts)
+		return fmt.Sprintf("%s/%s", clean, ts)
 	}
-	return fmt.Sprintf("change/%s", ts)
+	return ts
 }

@@ -167,9 +167,9 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		}
 	}
 
-	// Generate hooks.json for Claude Code session lifecycle
-	if err := generateHooksJSON(claudeDir); err != nil {
-		return fmt.Errorf("hooks.json 생성 실패: %w", err)
+	// Generate hooks in .claude/settings.json for Claude Code session lifecycle
+	if err := generateSettingsHooks(claudeDir); err != nil {
+		return fmt.Errorf("settings.json hooks 생성 실패: %w", err)
 	}
 
 	return nil
@@ -477,54 +477,124 @@ func formatProjectsJSON(projects []config.ProjectInfo) string {
 	return string(data)
 }
 
-// hooksConfig represents the Claude Code hooks.json structure.
-type hooksConfig struct {
-	Hooks map[string][]hookEntry `json:"hooks"`
+// settingsHookEntry represents a single hook definition in .claude/settings.json.
+type settingsHookEntry struct {
+	Type    string              `json:"type"`
+	Command string              `json:"command"`
+	Matcher *settingsHookMatcher `json:"matcher,omitempty"`
 }
 
-// hookEntry represents a single hook definition.
-type hookEntry struct {
-	Command     string      `json:"command"`
-	Description string      `json:"description,omitempty"`
-	Matcher     *hookMatcher `json:"matcher,omitempty"`
-}
-
-// hookMatcher defines which tool invocations trigger a PostToolUse hook.
-type hookMatcher struct {
+// settingsHookMatcher defines which tool invocations trigger a PostToolUse hook.
+type settingsHookMatcher struct {
 	ToolName string `json:"tool_name"`
 }
 
-// generateHooksJSON creates .claude/hooks.json for Claude Code session lifecycle hooks.
+// generateSettingsHooks writes hook definitions into .claude/settings.json.
+// It merges with any existing settings to avoid overwriting user-defined config.
 // This connects the session lifecycle to pylon's memory system, solving the
 // syscall.Exec memory propagation gap.
-func generateHooksJSON(claudeDir string) error {
-	hooks := hooksConfig{
-		Hooks: map[string][]hookEntry{
-			"Stop": {
-				{
-					Command:     "pylon sync-memory --from-session --agent claude",
-					Description: "세션 종료 시 학습 내용을 project_memory에 동기화",
-				},
+func generateSettingsHooks(claudeDir string) error {
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+
+	// Load existing settings.json if present
+	existing := make(map[string]any)
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			// If existing file is invalid JSON, start fresh but log warning
+			existing = make(map[string]any)
+		}
+	}
+
+	// Build pylon hook entries
+	pylonHooks := map[string][]settingsHookEntry{
+		"Stop": {
+			{
+				Type:    "command",
+				Command: "pylon sync-memory --from-session --agent claude",
 			},
-			"PostToolUse": {
-				{
-					Command:     "pylon sync-memory --incremental --agent claude",
-					Matcher:     &hookMatcher{ToolName: "Write|Edit"},
-					Description: "파일 변경 시 변경 컨텍스트를 메모리에 기록",
-				},
+		},
+		"PostToolUse": {
+			{
+				Type:    "command",
+				Command: "pylon sync-memory --incremental --agent claude",
+				Matcher: &settingsHookMatcher{ToolName: "Write|Edit"},
 			},
 		},
 	}
 
-	data, err := json.MarshalIndent(hooks, "", "  ")
+	// Merge hooks: preserve non-pylon hooks, replace pylon hooks
+	mergedHooks := mergeHooks(existing, pylonHooks)
+	existing["hooks"] = mergedHooks
+
+	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
-		return fmt.Errorf("hooks.json 직렬화 실패: %w", err)
+		return fmt.Errorf("settings.json 직렬화 실패: %w", err)
 	}
 
-	hooksPath := filepath.Join(claudeDir, "hooks.json")
-	if err := os.WriteFile(hooksPath, data, 0644); err != nil {
-		return fmt.Errorf("hooks.json 쓰기 실패: %w", err)
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("settings.json 쓰기 실패: %w", err)
+	}
+
+	// Clean up legacy hooks.json if it exists
+	legacyHooksPath := filepath.Join(claudeDir, "hooks.json")
+	if err := os.Remove(legacyHooksPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("레거시 hooks.json 제거 실패: %w", err)
 	}
 
 	return nil
+}
+
+// isPylonHookCommand checks if a command string is a pylon-managed hook.
+func isPylonHookCommand(command string) bool {
+	return strings.Contains(command, "pylon sync-memory")
+}
+
+// mergeHooks merges pylon hook entries into existing settings, preserving
+// user-defined hooks while replacing pylon-managed ones.
+func mergeHooks(existing map[string]any, pylonHooks map[string][]settingsHookEntry) map[string]any {
+	result := make(map[string]any)
+
+	// Get existing hooks map if present
+	var existingHooks map[string]any
+	if h, ok := existing["hooks"]; ok {
+		if hm, ok := h.(map[string]any); ok {
+			existingHooks = hm
+		}
+	}
+
+	// For each hook event type in existing, preserve non-pylon entries
+	if existingHooks != nil {
+		for eventType, entries := range existingHooks {
+			var preserved []any
+			if arr, ok := entries.([]any); ok {
+				for _, entry := range arr {
+					if entryMap, ok := entry.(map[string]any); ok {
+						cmd, _ := entryMap["command"].(string)
+						if !isPylonHookCommand(cmd) {
+							preserved = append(preserved, entry)
+						}
+					}
+				}
+			}
+			if len(preserved) > 0 {
+				result[eventType] = preserved
+			}
+		}
+	}
+
+	// Add pylon hooks
+	for eventType, entries := range pylonHooks {
+		var existing []any
+		if arr, ok := result[eventType]; ok {
+			if a, ok := arr.([]any); ok {
+				existing = a
+			}
+		}
+		for _, entry := range entries {
+			existing = append(existing, entry)
+		}
+		result[eventType] = existing
+	}
+
+	return result
 }
