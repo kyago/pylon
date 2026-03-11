@@ -421,7 +421,7 @@ permissionMode: default
 ```go
 // 인터페이스로 추상화 (테스트 모킹용)
 type ProcessExecutor interface {
-    ExecInteractive(cfg ExecConfig) error          // syscall.Exec로 현재 프로세스 대체 (인터랙티브 에이전트용)
+    ExecInteractive(cfg ExecConfig) error          // syscall.Exec로 현재 프로세스 대체 (인터랙티브 에이전트용, ⚠️ 성공 시 반환하지 않음)
     RunHeadless(ctx context.Context, cfg ExecConfig) (*ExecResult, error)  // exec.Command로 자식 프로세스 실행 (비인터랙티브 에이전트용)
 }
 
