@@ -3,6 +3,8 @@
 > 분석일: 2026-03-07
 > 대상: pylon-spec.md v0.7 vs claude-code-best-practice 리포지토리 조사 결과
 > 참조: research-claude-code-best-practice-repo.md, research-agent-communication-and-memory.md
+>
+> ⚠️ **참고**: 이 문서에서 언급되는 tmux 관련 내용은 더 이상 유효하지 않습니다. tmux 세션 기반 프로세스 격리는 설계에서 제거되었으며, 현재는 `syscall.Exec` / `exec.Command` 기반 직접 프로세스 실행으로 대체되었습니다. 이 문서는 과거 분석 기록으로서 보존됩니다.
 
 ---
 

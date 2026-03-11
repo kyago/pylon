@@ -45,11 +45,9 @@ pylon/
 │   │   ├── agent_test.go
 │   │   ├── verify.go                    # verify.yml 파싱
 │   │   └── workspace.go                # 워크스페이스 탐지/관리
-│   ├── tmux/                            # tmux 세션 관리
-│   │   ├── session.go                   # 세션 CRUD
-│   │   ├── session_test.go
-│   │   ├── capture.go                   # tmux capture-pane 로그 수집
-│   │   └── manager.go                   # 세션 매니저 (복수 세션 관리)
+│   ├── executor/                        # 프로세스 실행
+│   │   ├── executor.go                  # ProcessExecutor 인터페이스
+│   │   └── direct.go                    # 직접 실행 (syscall.Exec / exec.Command)
 │   ├── orchestrator/                    # 오케스트레이터 코어
 │   │   ├── orchestrator.go              # 메인 오케스트레이터 루프
 │   │   ├── orchestrator_test.go
@@ -113,13 +111,13 @@ pylon/
 
 ```
 Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4 ──→ Phase 5
- 부트스트랩    기반 명령어   tmux 관리    오케스트레이터   에이전트 실행   파이프라인
+ 부트스트랩    기반 명령어   프로세스 실행   오케스트레이터   에이전트 실행   파이프라인
                                         코어          엔진
 
 Phase별 핵심 산출물:
   0: go build 성공, pylon --help
   1: pylon doctor, pylon init, config 파싱
-  2: tmux 세션 생성/종료/감시
+  2: 에이전트 프로세스 직접 실행/종료/감시
   3: SQLite, MessageEnvelope, fsnotify, 파이프라인 상태 머신
   4: Claude CLI 래퍼, CLAUDE.md 빌더, worktree 격리
   5: pylon request 전체 파이프라인 (PO→Architect→PM→에이전트→검증→PR)
@@ -208,7 +206,6 @@ github.com/google/uuid          latest
 type Config struct {
     Version      string              `yaml:"version"`
     Runtime      RuntimeConfig       `yaml:"runtime"`
-    Tmux         TmuxConfig          `yaml:"tmux"`
     Git          GitConfig           `yaml:"git"`
     Projects     map[string]ProjectConfig `yaml:"projects"`
     Wiki         WikiConfig          `yaml:"wiki"`
@@ -322,7 +319,6 @@ type Check struct {
 }
 
 var checks = []Check{
-    {"tmux",   true,  verifyTmux},    // tmux -V → "tmux 3.4"
     {"git",    true,  verifyGit},     // git --version
     {"gh",     true,  verifyGH},      // gh --version + gh auth status
     {"claude", true,  verifyClaude},  // claude --version
@@ -333,7 +329,6 @@ var checks = []Check{
 ```
 Pylon Doctor
 ─────────────────────────
-✓ tmux     3.4      [required]
 ✓ git      2.44.0   [required]
 ✓ gh       2.65.0   [required, authenticated]
 ✓ claude   2.3.1    [required]
@@ -414,64 +409,55 @@ permissionMode: default
 
 ---
 
-## Phase 2: tmux 관리 레이어
+## Phase 2: 프로세스 실행 레이어
 
-> 목표: tmux 세션의 생성, 관리, 감시, 종료를 Go에서 안전하게 제어
-> 참조: 스펙 Section 8 "프로세스 관리: tmux 세션"
+> 목표: 에이전트 프로세스의 생성, 관리, 감시, 종료를 Go에서 안전하게 제어
+> 참조: 스펙 Section 8 "프로세스 관리: 직접 실행"
 
 ### 구현 항목
 
-#### 2-1. tmux 세션 관리 인터페이스 (`internal/tmux/session.go`)
+#### 2-1. 프로세스 실행 인터페이스 (`internal/executor/executor.go`)
 
 ```go
 // 인터페이스로 추상화 (테스트 모킹용)
-type SessionManager interface {
-    Create(cfg SessionConfig) error
-    Kill(name string) error
-    IsAlive(name string) bool
-    List() ([]SessionInfo, error)
-    SendKeys(name string, keys string) error
-    CapturePane(name string, lines int) (string, error)
+type ProcessExecutor interface {
+    ExecInteractive(cfg ExecConfig) error          // syscall.Exec로 현재 프로세스 대체 (인터랙티브 에이전트용, ⚠️ 성공 시 반환하지 않음)
+    RunHeadless(ctx context.Context, cfg ExecConfig) (*ExecResult, error)  // exec.Command로 자식 프로세스 실행 (비인터랙티브 에이전트용)
 }
 
-type SessionConfig struct {
-    Name       string            // pylon-{agent-name}
+type ExecConfig struct {
+    Name       string            // 에이전트 이름
+    Command    string            // 실행할 바이너리
+    Args       []string          // CLI 인자
     WorkDir    string            // 작업 디렉토리
-    Command    string            // 실행할 명령어
     Env        map[string]string // 환경변수
-    HistoryLimit int             // config.yml tmux.history_limit
+    Stdout     io.Writer         // 출력 스트림 (선택)
+    Stderr     io.Writer         // 에러 스트림 (선택)
 }
 
-type SessionInfo struct {
-    Name      string
-    Created   time.Time
-    Activity  time.Time
-    Alive     bool
+type ExecResult struct {
+    ExitCode int
+    Output   string
 }
 ```
 
-**구현 (`internal/tmux/manager.go`)**:
-- `exec.Command("tmux", ...)` 래핑
-- 세션 네이밍: `{prefix}-{agent-name}` (예: `pylon-po`, `pylon-api-backend-dev`)
-- `Create`: `tmux new-session -d -s {name} -c {workdir}` → `tmux send-keys {command}`
-- `Kill`: `tmux kill-session -t {name}`
-- `List`: `tmux list-sessions -F "#{session_name}:#{session_created}:#{session_activity}"`
-- `CapturePane`: `tmux capture-pane -t {name} -p -S -{lines}`
+**구현 (`internal/executor/direct.go`)**:
+- `ExecInteractive`: 바이너리 경로 해석 → 작업 디렉토리 변경 → 환경변수 빌드 → `syscall.Exec` 호출
+- `RunHeadless`: `exec.Command` 생성 → stdout/stderr 캡처 또는 스트리밍 → 종료 코드 반환
 
 **에러 처리**:
-- tmux 미설치 → `pylon doctor` 안내
-- 동일 이름 세션 존재 → 에러 반환 (caller가 판단)
-- 세션 생성 실패 → 시스템 에러 전파
+- 바이너리 미설치 → `pylon doctor` 안내
+- 프로세스 생성 실패 → 시스템 에러 전파
 
 #### 2-2. `pylon cleanup` (`internal/cli/cleanup.go`)
 
 > 스펙 참조: Section 7 "pylon cleanup"
 
 ```
-1. tmux.List()로 pylon-* 세션 전체 조회
-2. state.json과 교차 대조 → 좀비 세션 식별
-3. 좀비 목록 표시 + 사용자 확인 (y/n)
-4. 확인 후 tmux.Kill() 일괄 실행
+1. state.json에서 활성 에이전트 목록 조회
+2. PID 기반으로 프로세스 생존 여부 확인
+3. 좀비 프로세스 목록 표시 + 사용자 확인 (y/n)
+4. 확인 후 프로세스 종료 + worktree 정리
 ```
 
 #### 2-3. `pylon status` 기초 (`internal/cli/status.go`)
@@ -482,9 +468,9 @@ type SessionInfo struct {
 출력:
 Pylon Status
 ─────────────────────────
-Active Sessions:
-  ● pylon-po          alive     (created 5m ago)
-  ● pylon-pm          alive     (created 3m ago)
+Active Agents:
+  ● PO              running   (started 5m ago)
+  ● PM              running   (started 3m ago)
 
 No active pipeline.
 ```
@@ -496,22 +482,22 @@ Phase 3에서 파이프라인 정보 추가, Phase 5에서 전체 상태 표시.
 > 스펙 참조: Section 7 "pylon destroy"
 
 ```
-1. 활성 tmux 세션 전체 종료
+1. 활성 에이전트 프로세스 전체 종료
 2. .pylon/ 디렉토리 삭제 (확인 프롬프트)
 3. .gitignore에서 pylon 관련 항목 제거
 ```
 
 ### 테스트 전략
 
-- `SessionManager` 인터페이스 → 모킹으로 단위 테스트
-- 실제 tmux 통합 테스트 → `//go:build integration` 태그 분리
-- `testdata/` 에 mock tmux 출력 데이터
+- `ProcessExecutor` 인터페이스 → 모킹으로 단위 테스트
+- 실제 프로세스 실행 통합 테스트 → `//go:build integration` 태그 분리
+- `testdata/` 에 mock 프로세스 출력 데이터
 
 ### 완료 기준
 
-- tmux 세션 생성/종료/목록 조회 동작
-- `pylon cleanup`이 좀비 세션 정리
-- `pylon status`가 활성 세션 표시
+- 에이전트 프로세스 직접 실행/종료/상태 확인 동작
+- `pylon cleanup`이 좀비 프로세스 정리
+- `pylon status`가 활성 에이전트 표시
 - 인터페이스 모킹 기반 단위 테스트 통과
 
 ---
@@ -714,7 +700,7 @@ func (w *WorktreeManager) Cleanup(projectDir string) error  // 완료된 worktre
 ```go
 func (o *Orchestrator) Recover() error {
     // 1. state.json 로드 → 마지막 파이프라인 상태 복원
-    // 2. tmux list-sessions → 생존 세션 확인
+    // 2. 에이전트 프로세스 생존 여부 확인 (PID 기반)
     // 3. outbox 스캔 → 미처리 결과 수집
     // 4. SQLite 히스토리와 교차 검증
     // 5. 에이전트 상태 재구성 + 파이프라인 재개
@@ -741,7 +727,7 @@ github.com/fsnotify/fsnotify     v1.8+    # 파일시스템 감시
 
 ## Phase 4: 에이전트 실행 엔진
 
-> 목표: Claude Code CLI를 tmux에서 실행하고, 에이전트 생명주기 관리
+> 목표: Claude Code CLI를 직접 프로세스로 실행하고, 에이전트 생명주기 관리
 > 참조: 스펙 Section 5, 8 / `analysis-best-practice-gap.md` / `research-claude-code-best-practice-repo.md`
 
 ### 구현 항목
@@ -761,7 +747,7 @@ type RunConfig struct {
 }
 
 type Runner struct {
-    tmux tmux.SessionManager
+    executor executor.ProcessExecutor
 }
 
 func (r *Runner) BuildCommand(cfg RunConfig) (cmd string, args []string)
@@ -848,7 +834,7 @@ type AgentLifecycle struct {
     AgentName    string
     State        State
     TaskID       string
-    TmuxSession  string
+    PID          int
     StartedAt    time.Time
     Timeout      time.Duration
 }
@@ -871,8 +857,8 @@ idle → starting → running → completed
 // config.yml runtime.env + agent frontmatter env 머지
 func ResolveEnv(globalEnv, agentEnv map[string]string) map[string]string
 
-// tmux 세션에 환경변수 주입
-func InjectEnv(tmuxSession string, env map[string]string) error
+// 에이전트 프로세스에 환경변수 주입
+func InjectEnv(env map[string]string) []string
 ```
 
 #### 4-5. Worktree 격리 통합 (`internal/agent/` 내)
@@ -920,7 +906,7 @@ func PrepareWorkDir(
 [2] 파이프라인 생성: ID = "{YYYYMMDD}-{slug}" (예: 20260305-user-login)
     ↓
 [3] Stage: po_conversation
-    - PO 에이전트 tmux 세션 생성 (인터랙티브 모드)
+    - PO 에이전트 프로세스 생성 (인터랙티브 모드)
     - 위키 기반 요구사항 분석
     - 사용자와 역질문 대화로 구체화
     - 대화 기록 → .pylon/conversations/{id}/thread.md
@@ -1089,7 +1075,7 @@ func BuildHandoffContext(
 #### 5-7. `pylon cancel` / `pylon resume` / `pylon review`
 
 ```go
-// cancel: 진행 중인 파이프라인 중단 + tmux 세션 종료 + worktree 정리
+// cancel: 진행 중인 파이프라인 중단 + 에이전트 프로세스 종료 + worktree 정리
 func cancelPipeline(pipelineID string) error
 
 // resume: 중단된 대화 재개 (conversations/ 로드 → PO 재시작)
@@ -1119,12 +1105,12 @@ func reviewPR(prURL string) error
 |------|------|------|------|
 | 단위 테스트 | config 파싱, 프로토콜, 상태 머신 | 인터페이스 모킹, 테이블 드리븐 | (없음, 기본) |
 | SQLite 테스트 | store CRUD, BM25 검색 | 인메모리 DB (`:memory:`) | (없음, 기본) |
-| 통합 테스트 | tmux 세션, git worktree, CLI | 실제 바이너리 실행 | `//go:build integration` |
+| 통합 테스트 | 프로세스 실행, git worktree, CLI | 실제 바이너리 실행 | `//go:build integration` |
 | E2E 테스트 | 전체 파이프라인 | (Phase 5 이후) | `//go:build e2e` |
 
 ### 테스트 원칙
 
-- **인터페이스 기반 모킹**: tmux, git, claude CLI는 인터페이스로 추상화
+- **인터페이스 기반 모킹**: executor, git, claude CLI는 인터페이스로 추상화
 - **테이블 드리븐 테스트**: Go 관례 `[]struct{ name, input, expected }` 패턴
 - **테스트 픽스처**: `testdata/` 에 샘플 config.yml, agent .md, verify.yml
 - **커버리지 목표**: 핵심 로직 (config 파싱, 프로토콜, 상태 머신) 80%+
@@ -1161,10 +1147,10 @@ func reviewPR(prURL string) error
 - [ ] `pylon init` 워크스페이스 생성 + 파일 구조 검증
 
 ### Phase 2 ✅ 조건
-- [ ] tmux 세션 Create/Kill/List/CapturePane 동작
-- [ ] `pylon cleanup` 좀비 세션 정리
-- [ ] `pylon status` 활성 세션 표시
-- [ ] SessionManager 인터페이스 모킹 테스트 통과
+- [ ] 에이전트 프로세스 직접 실행/종료/상태 확인 동작
+- [ ] `pylon cleanup` 좀비 프로세스 정리
+- [ ] `pylon status` 활성 에이전트 표시
+- [ ] ProcessExecutor 인터페이스 모킹 테스트 통과
 
 ### Phase 3 ✅ 조건
 - [ ] SQLite 마이그레이션 + 7개 테이블 CRUD 테스트 통과

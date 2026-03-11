@@ -3,6 +3,8 @@
 > 소스: https://github.com/shanraisshan/claude-code-best-practice
 > 큐레이션일: 2026-03-07
 > 원본: `claudedocs/collected-skills-and-agents.md`
+>
+> ⚠️ **참고**: 이 문서에서 언급되는 tmux 관련 내용은 더 이상 유효하지 않습니다. tmux 세션 기반 프로세스 격리는 설계에서 제거되었으며, 현재는 직접 프로세스 실행으로 대체되었습니다.
 
 ---
 
