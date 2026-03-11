@@ -129,6 +129,9 @@ func TestFindWorkspaceRoot_PermissionDenied(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission test not reliable on Windows")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("permission test not reliable when running as root")
+	}
 	tmpDir := t.TempDir()
 	pylonDir := filepath.Join(tmpDir, ".pylon")
 	if err := os.MkdirAll(pylonDir, 0755); err != nil {
