@@ -167,6 +167,11 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		}
 	}
 
+	// Generate hooks.json for Claude Code session lifecycle
+	if err := generateHooksJSON(claudeDir); err != nil {
+		return fmt.Errorf("hooks.json 생성 실패: %w", err)
+	}
+
 	return nil
 }
 
@@ -470,4 +475,56 @@ func formatProjectsJSON(projects []config.ProjectInfo) string {
 	}
 	data, _ := json.Marshal(out)
 	return string(data)
+}
+
+// hooksConfig represents the Claude Code hooks.json structure.
+type hooksConfig struct {
+	Hooks map[string][]hookEntry `json:"hooks"`
+}
+
+// hookEntry represents a single hook definition.
+type hookEntry struct {
+	Command     string      `json:"command"`
+	Description string      `json:"description,omitempty"`
+	Matcher     *hookMatcher `json:"matcher,omitempty"`
+}
+
+// hookMatcher defines which tool invocations trigger a PostToolUse hook.
+type hookMatcher struct {
+	ToolName string `json:"tool_name"`
+}
+
+// generateHooksJSON creates .claude/hooks.json for Claude Code session lifecycle hooks.
+// This connects the session lifecycle to pylon's memory system, solving the
+// syscall.Exec memory propagation gap.
+func generateHooksJSON(claudeDir string) error {
+	hooks := hooksConfig{
+		Hooks: map[string][]hookEntry{
+			"Stop": {
+				{
+					Command:     "pylon sync-memory --from-session --agent claude",
+					Description: "세션 종료 시 학습 내용을 project_memory에 동기화",
+				},
+			},
+			"PostToolUse": {
+				{
+					Command:     "pylon sync-memory --incremental --agent claude",
+					Matcher:     &hookMatcher{ToolName: "Write|Edit"},
+					Description: "파일 변경 시 변경 컨텍스트를 메모리에 기록",
+				},
+			},
+		},
+	}
+
+	data, err := json.MarshalIndent(hooks, "", "  ")
+	if err != nil {
+		return fmt.Errorf("hooks.json 직렬화 실패: %w", err)
+	}
+
+	hooksPath := filepath.Join(claudeDir, "hooks.json")
+	if err := os.WriteFile(hooksPath, data, 0644); err != nil {
+		return fmt.Errorf("hooks.json 쓰기 실패: %w", err)
+	}
+
+	return nil
 }
