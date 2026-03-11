@@ -92,7 +92,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Execute uninstall
-	return executeUninstall(root, plan, removeProjects)
+	return executeUninstall(root, plan)
 }
 
 func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninstallPlan, error) {
@@ -187,7 +187,7 @@ func printUninstallPlan(plan *uninstallPlan) {
 	}
 }
 
-func executeUninstall(root string, plan *uninstallPlan, removeProjects bool) error {
+func executeUninstall(root string, plan *uninstallPlan) error {
 	var errors []string
 
 	// Step 1: Remove runtime artifacts
@@ -209,7 +209,7 @@ func executeUninstall(root string, plan *uninstallPlan, removeProjects bool) err
 	}
 
 	// Step 3: Remove git submodules (if requested)
-	if removeProjects && len(plan.submodules) > 0 {
+	if len(plan.submodules) > 0 {
 		for _, name := range plan.submodules {
 			if err := removeSubmodule(root, name); err != nil {
 				errors = append(errors, fmt.Sprintf("failed to remove submodule (%s): %v", name, err))
@@ -263,14 +263,14 @@ func executeUninstall(root string, plan *uninstallPlan, removeProjects bool) err
 // removeSubmodule removes a git submodule registration and its cached data.
 func removeSubmodule(root, name string) error {
 	// git submodule deinit
-	deinitCmd := exec.Command("git", "submodule", "deinit", "-f", name)
+	deinitCmd := exec.Command("git", "submodule", "deinit", "-f", "--", name)
 	deinitCmd.Dir = root
 	if output, err := deinitCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("deinit failed: %w\n%s", err, output)
 	}
 
 	// git rm
-	rmCmd := exec.Command("git", "rm", "-f", name)
+	rmCmd := exec.Command("git", "rm", "-f", "--", name)
 	rmCmd.Dir = root
 	if output, err := rmCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git rm failed: %w\n%s", err, output)

@@ -194,7 +194,7 @@ func TestExecuteUninstall(t *testing.T) {
 		gitignorePath:  gitignorePath,
 	}
 
-	if err := executeUninstall(root, plan, false); err != nil {
+	if err := executeUninstall(root, plan); err != nil {
 		t.Fatalf("executeUninstall() error: %v", err)
 	}
 
