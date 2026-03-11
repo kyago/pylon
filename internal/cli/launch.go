@@ -145,10 +145,17 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		return fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
 	}
 
+	// Clean up legacy command files (pre-namespace) to prevent stale slash commands
+	legacyCommands := []string{"index", "status", "verify", "add-project", "cancel", "review"}
+	for _, name := range legacyCommands {
+		legacy := filepath.Join(commandsDir, name+".md")
+		_ = os.Remove(legacy) // ignore error if file doesn't exist
+	}
+
 	// Generate slash commands
 	commands := buildSlashCommands(root)
 	for name, content := range commands {
-		cmdPath := filepath.Join(commandsDir, name+".md")
+		cmdPath := filepath.Join(commandsDir, filepath.FromSlash(name)+".md")
 		// Ensure parent directory exists for namespaced commands (e.g., pl/index)
 		if err := os.MkdirAll(filepath.Dir(cmdPath), 0755); err != nil {
 			return fmt.Errorf("커맨드 디렉토리 생성 실패: %w", err)
@@ -271,7 +278,7 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 	return b.String()
 }
 
-// buildSlashCommands generates .claude/commands/ markdown files.
+// buildSlashCommands generates .claude/commands/pl/ markdown files.
 func buildSlashCommands(root string) map[string]string {
 	commands := map[string]string{
 		"pl/index": `# /pl:index — 프로젝트 코드베이스 인덱싱
