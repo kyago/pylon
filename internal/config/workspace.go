@@ -27,17 +27,27 @@ func FindWorkspaceRoot(startDir string) (string, error) {
 	for {
 		pylonDir := filepath.Join(dir, ".pylon")
 		info, err := os.Stat(pylonDir)
+		if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to stat %s: %w", pylonDir, err)
+		}
 		if err == nil && info.IsDir() {
 			configPath := filepath.Join(pylonDir, "config.yml")
-			if _, err := os.Stat(configPath); err == nil {
-				return dir, nil
+			configInfo, err := os.Stat(configPath)
+			if err != nil && !os.IsNotExist(err) {
+				return "", fmt.Errorf("failed to stat %s: %w", configPath, err)
+			}
+			if err == nil {
+				if configInfo.Mode().IsRegular() {
+					return dir, nil
+				}
+				return "", fmt.Errorf("invalid workspace config: %s exists but is not a regular file", configPath)
 			}
 		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			// Reached filesystem root
-			return "", fmt.Errorf("no .pylon/ workspace found (searched from %s to /)", startDir)
+			return "", fmt.Errorf("no .pylon/config.yml found (searched from %s to filesystem root)", startDir)
 		}
 		dir = parent
 	}
