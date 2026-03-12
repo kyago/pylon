@@ -13,13 +13,17 @@ import (
 
 func newDestroyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "destroy",
-		Short: "Remove pylon workspace",
+		Use:        "destroy",
+		Short:      "Remove pylon workspace (deprecated: use 'pylon uninstall')",
 		Long: `Remove the .pylon/ directory and clean up all pylon-related resources.
 Git submodules are preserved.
 
+DEPRECATED: Use 'pylon uninstall' for comprehensive cleanup including
+runtime artifacts, project-level configs, and optional binary removal.
+
 Spec Reference: Section 7 "pylon destroy"`,
-		RunE: runDestroy,
+		Deprecated: "use 'pylon uninstall' instead for comprehensive cleanup",
+		RunE:       runDestroy,
 	}
 
 	cmd.Flags().BoolP("force", "f", false, "skip confirmation prompt")
@@ -78,44 +82,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 }
 
 // cleanGitignore removes pylon-related entries from .gitignore.
+// Delegates to cleanGitignoreFull which handles all pylon section markers.
 func cleanGitignore(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // no .gitignore to clean
-		}
-		return err
-	}
-
-	lines := strings.Split(string(data), "\n")
-	var cleaned []string
-	pylonSection := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Detect pylon section markers
-		if trimmed == "# pylon" || trimmed == "# Pylon" {
-			pylonSection = true
-			continue
-		}
-
-		// Skip pylon-specific entries
-		if pylonSection {
-			if trimmed == "" {
-				pylonSection = false
-				continue
-			}
-			if strings.HasPrefix(trimmed, ".pylon/runtime/") ||
-				strings.HasPrefix(trimmed, ".pylon/conversations/") {
-				continue
-			}
-			// End of pylon section if we hit a non-pylon entry
-			pylonSection = false
-		}
-
-		cleaned = append(cleaned, line)
-	}
-
-	return os.WriteFile(path, []byte(strings.Join(cleaned, "\n")), 0644)
+	return cleanGitignoreFull(path)
 }
