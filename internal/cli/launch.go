@@ -1,6 +1,7 @@
 package cli
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"github.com/kyago/pylon/internal/executor"
 	"github.com/kyago/pylon/internal/store"
 )
+
+//go:embed hooks.json
+var defaultHooksJSON []byte
 
 // runLaunch is the main entry point when `pylon` is invoked without subcommands.
 // It generates .claude/ artifacts from .pylon/ (source of truth) and launches
@@ -506,24 +510,10 @@ func generateSettingsHooks(claudeDir string) error {
 		}
 	}
 
-	// Build pylon hook entries
-	pylonHooks := map[string][]settingsHookEntry{
-		"Stop": {
-			{
-				Matcher: "",
-				Hooks: []settingsHookCommand{
-					{Type: "command", Command: "pylon sync-memory --from-session --agent claude"},
-				},
-			},
-		},
-		"PostToolUse": {
-			{
-				Matcher: "Edit|Write",
-				Hooks: []settingsHookCommand{
-					{Type: "command", Command: "pylon sync-memory --incremental --agent claude"},
-				},
-			},
-		},
+	// Load pylon hook entries from embedded hooks.json
+	var pylonHooks map[string][]settingsHookEntry
+	if err := json.Unmarshal(defaultHooksJSON, &pylonHooks); err != nil {
+		return fmt.Errorf("내장 hooks.json 파싱 실패: %w", err)
 	}
 
 	// Merge hooks: preserve non-pylon hooks, replace pylon hooks

@@ -444,8 +444,8 @@ func TestGenerateSettingsHooks(t *testing.T) {
 	if !ok {
 		t.Fatal("Stop hook matcher should be a string")
 	}
-	if stopMatcher != "" {
-		t.Errorf("Stop hook matcher = %q, want empty string", stopMatcher)
+	if stopMatcher != "*" {
+		t.Errorf("Stop hook matcher = %q, want \"*\"", stopMatcher)
 	}
 	// Verify hooks array
 	stopInnerHooks, ok := stopGroup["hooks"].([]any)
