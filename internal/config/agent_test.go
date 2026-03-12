@@ -18,7 +18,7 @@ func TestParseAgentFile_FullAgent(t *testing.T) {
 		expected interface{}
 	}{
 		{"name", agent.Name, "backend-dev"},
-		{"description", agent.Description, "Go 표준 프로젝트 레이아웃을 따르는 백엔드 기능 구현 및 테스트 작성 에이전트"},
+		{"description", agent.Description, "Backend feature implementation and test writing agent following Go standard project layout"},
 		{"role", agent.Role, "Backend Developer"},
 		{"backend", agent.Backend, "claude-code"},
 		{"maxTurns", agent.MaxTurns, 30},
@@ -79,7 +79,7 @@ func TestParseAgentFile_ArchitectAgent(t *testing.T) {
 	if agent.Name != "architect" {
 		t.Errorf("name: got %q, expected %q", agent.Name, "architect")
 	}
-	if agent.Description != "코드베이스 아키텍처 분석, 설계 문서 작성 및 디버깅 어드바이저 역할을 수행하는 읽기 전용 에이전트" {
+	if agent.Description != "Read-only agent that analyzes codebase architecture, produces design documents, and serves as a debugging advisor" {
 		t.Errorf("description: got %q, expected non-empty description", agent.Description)
 	}
 	if agent.Role != "Solution Architect" {

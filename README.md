@@ -291,19 +291,19 @@ conversation:
 
 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 기본값은 `pylon init`이 생성하는 템플릿을 참고하세요.
 
-## 기본 에이전트 팩
+## Default Agent Pack
 
-`pylon init`을 실행하면 `.pylon/agents/`에 다음 에이전트들이 자동 생성됩니다.
+Running `pylon init` automatically creates the following agents in `.pylon/agents/`.
 
-### 에이전트 정의 포맷
+### Agent Definition Format
 
-각 에이전트는 YAML 프론트매터 + Markdown 본문으로 구성됩니다. Claude Code 프론트매터 필드와 호환됩니다.
+Each agent consists of YAML frontmatter + Markdown body. Compatible with Claude Code frontmatter fields.
 
 ```yaml
 ---
-# Claude Code 호환 필드
+# Claude Code compatible fields
 name: analyst
-description: "요구사항 분석 및 수용 기준 도출 전문 에이전트"
+description: "Read-only analysis agent that systematically analyzes requirements and derives clear acceptance criteria"
 model: opus
 tools: [Read, Grep, Glob]
 disallowedTools: [Write, Edit]
@@ -311,29 +311,29 @@ maxTurns: 20
 permissionMode: default
 isolation: worktree
 
-# Pylon 전용 필드
+# Pylon-only fields
 role: Requirements Analyst
 backend: claude-code
 scope: [project-api]
 env:
   CLAUDE_CODE_EFFORT_LEVEL: high
 ---
-(시스템 프롬프트 본문)
+(system prompt body)
 ```
 
-### 에이전트 목록
+### Agent List
 
-| 에이전트 | 역할 | 모델 | 설명 |
-|---------|------|------|------|
-| **po** | Product Owner | — | 사용자 요구사항 분석, 모호성 점수 산출, 수용 기준 정의 |
-| **pm** | Project Manager | — | 태스크 분해, 에이전트 할당, 실행 순서 관리 |
-| **architect** | Architect | — | 크로스 프로젝트 아키텍처 결정, 기술 방향성 분석 |
-| **tech-writer** | Tech Writer | — | 도메인 지식 및 프로젝트 문서 유지 관리 |
-| **analyst** | Requirements Analyst | opus | 요구사항 분석 및 수용 기준 도출 (읽기 전용) |
-| **planner** | Execution Planner | opus | 실행 계획 수립 및 태스크 분해 |
-| **code-reviewer** | Code Reviewer | opus | 심각도 분류 코드 리뷰, SOLID 원칙 검증 (읽기 전용) |
-| **debugger** | Debugger | sonnet | 근본 원인 분석, 빌드 에러 해결 |
-| **critic** | Quality Critic | opus | 계획/코드 최종 품질 게이트 (읽기 전용) |
+| Agent | Role | Model | Description |
+|-------|------|-------|-------------|
+| **po** | Product Owner | — | Analyzes user requirements, computes ambiguity scores, defines acceptance criteria |
+| **pm** | Project Manager | — | Decomposes tasks, assigns agents, manages execution order |
+| **architect** | Architect | — | Cross-project architecture decisions, technical direction analysis |
+| **tech-writer** | Tech Writer | — | Maintains domain knowledge and project documentation |
+| **analyst** | Requirements Analyst | opus | Requirement analysis and acceptance criteria derivation (read-only) |
+| **planner** | Execution Planner | opus | Execution planning and task decomposition |
+| **code-reviewer** | Code Reviewer | opus | Severity-classified code review, SOLID principles validation (read-only) |
+| **debugger** | Debugger | sonnet | Root cause analysis, build error resolution |
+| **critic** | Quality Critic | opus | Final quality gate for plans and code (read-only) |
 
 ## 개발
 

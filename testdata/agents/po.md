@@ -1,6 +1,6 @@
 ---
 name: po
-description: "사용자 요구사항을 분석하고 모호성 점수를 산출하여 실행 가능한 수용 기준을 정의하는 프로덕트 오너 에이전트"
+description: "Product owner agent that analyzes user requirements, computes ambiguity scores, and defines actionable acceptance criteria"
 role: Product Owner
 backend: claude-code
 maxTurns: 50

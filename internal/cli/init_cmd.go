@@ -187,7 +187,7 @@ func writeAgentTemplates(pylonDir string) error {
 	agentTemplates := map[string]string{
 		"po.md": `---
 name: po
-description: "사용자 요구사항을 분석하고 모호성 점수를 산출하여 실행 가능한 수용 기준을 정의하는 프로덕트 오너 에이전트"
+description: "Product owner agent that analyzes user requirements, computes ambiguity scores, and defines actionable acceptance criteria"
 role: Product Owner
 backend: claude-code
 maxTurns: 50
@@ -208,7 +208,7 @@ against business expectations.
 `,
 		"pm.md": `---
 name: pm
-description: "요구사항을 태스크로 분해하고 에이전트 실행 순서를 관리하는 프로젝트 매니저 에이전트"
+description: "Project manager agent that decomposes requirements into tasks and manages agent execution order"
 role: Project Manager
 backend: claude-code
 maxTurns: 50
@@ -231,7 +231,7 @@ and handle error escalation.
 `,
 		"architect.md": `---
 name: architect
-description: "코드베이스 아키텍처 분석, 설계 문서 작성 및 디버깅 어드바이저 역할을 수행하는 읽기 전용 에이전트"
+description: "Read-only agent that analyzes codebase architecture, produces design documents, and serves as a debugging advisor"
 role: Architect
 backend: claude-code
 maxTurns: 50
@@ -253,7 +253,7 @@ ensure consistency across the codebase.
 `,
 		"tech-writer.md": `---
 name: tech-writer
-description: "도메인 지식과 프로젝트 문서를 최신 상태로 유지하는 기술 문서 관리 에이전트"
+description: "Technical documentation agent that keeps domain knowledge and project documents up to date"
 role: Tech Writer
 backend: claude-code
 maxTurns: 50
@@ -285,7 +285,7 @@ _Findings from previous executions are recorded here._
 `,
 		"analyst.md": `---
 name: analyst
-description: "요구사항을 분석하고 수용 기준을 도출하는 읽기 전용 분석 에이전트"
+description: "Read-only analysis agent that systematically analyzes requirements and derives clear acceptance criteria"
 role: Requirements Analyst
 backend: claude-code
 tools:
@@ -314,7 +314,7 @@ READ-ONLY: Does not modify files directly.
 `,
 		"planner.md": `---
 name: planner
-description: "실행 계획을 수립하고 태스크를 분해하여 에이전트 실행 전략을 설계하는 에이전트"
+description: "Execution planning agent that decomposes tasks and designs multi-agent execution strategies"
 role: Execution Planner
 backend: claude-code
 tools:
@@ -340,7 +340,7 @@ and design multi-agent execution strategies.
 `,
 		"code-reviewer.md": `---
 name: code-reviewer
-description: "심각도 분류 기반 코드 리뷰와 SOLID 원칙 검증을 수행하는 에이전트"
+description: "Code review agent that classifies issues by severity and validates SOLID principles compliance"
 role: Code Reviewer
 backend: claude-code
 tools:
@@ -369,7 +369,7 @@ READ-ONLY: Provides review feedback without modifying code directly.
 `,
 		"debugger.md": `---
 name: debugger
-description: "근본 원인 분석과 빌드 에러 해결을 수행하는 디버깅 전문 에이전트"
+description: "Debugging specialist agent that performs root cause analysis and resolves build errors"
 role: Debugger
 backend: claude-code
 tools:
@@ -397,7 +397,7 @@ and resolve build errors through root cause analysis.
 `,
 		"critic.md": `---
 name: critic
-description: "계획과 코드의 최종 품질 게이트 역할을 수행하는 비평 에이전트"
+description: "Quality gate agent that serves as the final checkpoint for plans and code quality"
 role: Quality Critic
 backend: claude-code
 tools:
