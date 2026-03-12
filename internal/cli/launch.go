@@ -477,16 +477,17 @@ func formatProjectsJSON(projects []config.ProjectInfo) string {
 	return string(data)
 }
 
-// settingsHookEntry represents a single hook definition in .claude/settings.json.
-type settingsHookEntry struct {
-	Type    string              `json:"type"`
-	Command string              `json:"command"`
-	Matcher *settingsHookMatcher `json:"matcher,omitempty"`
+// settingsHookCommand represents a single command within a hook group.
+type settingsHookCommand struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
 }
 
-// settingsHookMatcher defines which tool invocations trigger a PostToolUse hook.
-type settingsHookMatcher struct {
-	ToolName string `json:"tool_name"`
+// settingsHookEntry represents a hook group in .claude/settings.json.
+// Each group has a matcher string and an array of hook commands.
+type settingsHookEntry struct {
+	Matcher string               `json:"matcher"`
+	Hooks   []settingsHookCommand `json:"hooks"`
 }
 
 // generateSettingsHooks writes hook definitions into .claude/settings.json.
@@ -509,15 +510,18 @@ func generateSettingsHooks(claudeDir string) error {
 	pylonHooks := map[string][]settingsHookEntry{
 		"Stop": {
 			{
-				Type:    "command",
-				Command: "pylon sync-memory --from-session --agent claude",
+				Matcher: "",
+				Hooks: []settingsHookCommand{
+					{Type: "command", Command: "pylon sync-memory --from-session --agent claude"},
+				},
 			},
 		},
 		"PostToolUse": {
 			{
-				Type:    "command",
-				Command: "pylon sync-memory --incremental --agent claude",
-				Matcher: &settingsHookMatcher{ToolName: "Write|Edit"},
+				Matcher: "Edit|Write",
+				Hooks: []settingsHookCommand{
+					{Type: "command", Command: "pylon sync-memory --incremental --agent claude"},
+				},
 			},
 		},
 	}
@@ -549,6 +553,23 @@ func isPylonHookCommand(command string) bool {
 	return strings.Contains(command, "pylon sync-memory")
 }
 
+// isPylonHookGroup checks if a hook group contains any pylon-managed hook commands.
+func isPylonHookGroup(entryMap map[string]any) bool {
+	hooksArr, ok := entryMap["hooks"].([]any)
+	if !ok {
+		return false
+	}
+	for _, h := range hooksArr {
+		if hookMap, ok := h.(map[string]any); ok {
+			cmd, _ := hookMap["command"].(string)
+			if isPylonHookCommand(cmd) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // mergeHooks merges pylon hook entries into existing settings, preserving
 // user-defined hooks while replacing pylon-managed ones.
 func mergeHooks(existing map[string]any, pylonHooks map[string][]settingsHookEntry) map[string]any {
@@ -569,8 +590,7 @@ func mergeHooks(existing map[string]any, pylonHooks map[string][]settingsHookEnt
 			if arr, ok := entries.([]any); ok {
 				for _, entry := range arr {
 					if entryMap, ok := entry.(map[string]any); ok {
-						cmd, _ := entryMap["command"].(string)
-						if !isPylonHookCommand(cmd) {
+						if !isPylonHookGroup(entryMap) {
 							preserved = append(preserved, entry)
 						}
 					}
