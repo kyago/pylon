@@ -1,5 +1,6 @@
 ---
 name: po
+description: "Product owner agent that analyzes user requirements, computes ambiguity scores, and defines actionable acceptance criteria"
 role: Product Owner
 backend: claude-code
 maxTurns: 50

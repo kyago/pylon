@@ -1,5 +1,6 @@
 ---
 name: backend-dev
+description: "Backend feature implementation and test writing agent following Go standard project layout"
 role: Backend Developer
 backend: claude-code
 scope:

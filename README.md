@@ -132,9 +132,13 @@ PO: 몇 가지 확인이 필요합니다.
               ├── /pl:verify ── 빌드/테스트/린트 검증
               │
               └── 서브 에이전트 (Claude Code Agent 도구)
+                   ├── Analyst ──── 요구사항 분석
                    ├── Architect ── 기술 분석
-                   ├── PM ───────── 태스크 분해
+                   ├── Planner ──── 태스크 분해
                    ├── Developer ── 코드 구현
+                   ├── Code Reviewer ─ 코드 리뷰
+                   ├── Debugger ──── 디버깅
+                   ├── Critic ────── 품질 게이트
                    └── Tech Writer ─ 도메인 문서 갱신
 ```
 
@@ -286,6 +290,50 @@ conversation:
 ```
 
 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 기본값은 `pylon init`이 생성하는 템플릿을 참고하세요.
+
+## Default Agent Pack
+
+Running `pylon init` automatically creates the following agents in `.pylon/agents/`.
+
+### Agent Definition Format
+
+Each agent consists of YAML frontmatter + Markdown body. Compatible with Claude Code frontmatter fields.
+
+```yaml
+---
+# Claude Code compatible fields
+name: analyst
+description: "Read-only analysis agent that systematically analyzes requirements and derives clear acceptance criteria"
+model: opus
+tools: [Read, Grep, Glob]
+disallowedTools: [Write, Edit]
+maxTurns: 20
+permissionMode: default
+isolation: worktree
+
+# Pylon-only fields
+role: Requirements Analyst
+backend: claude-code
+scope: [project-api]
+env:
+  CLAUDE_CODE_EFFORT_LEVEL: high
+---
+(system prompt body)
+```
+
+### Agent List
+
+| Agent | Role | Model | Description |
+|-------|------|-------|-------------|
+| **po** | Product Owner | — | Analyzes user requirements, computes ambiguity scores, defines acceptance criteria |
+| **pm** | Project Manager | — | Decomposes tasks, assigns agents, manages execution order |
+| **architect** | Architect | — | Cross-project architecture decisions, technical direction analysis |
+| **tech-writer** | Tech Writer | — | Maintains domain knowledge and project documentation |
+| **analyst** | Requirements Analyst | opus | Requirement analysis and acceptance criteria derivation (read-only) |
+| **planner** | Execution Planner | opus | Execution planning and task decomposition |
+| **code-reviewer** | Code Reviewer | opus | Severity-classified code review, SOLID principles validation (read-only) |
+| **debugger** | Debugger | sonnet | Root cause analysis, build error resolution |
+| **critic** | Quality Critic | opus | Final quality gate for plans and code (read-only) |
 
 ## 개발
 
