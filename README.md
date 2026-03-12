@@ -132,9 +132,13 @@ PO: 몇 가지 확인이 필요합니다.
               ├── /pl:verify ── 빌드/테스트/린트 검증
               │
               └── 서브 에이전트 (Claude Code Agent 도구)
+                   ├── Analyst ──── 요구사항 분석
                    ├── Architect ── 기술 분석
-                   ├── PM ───────── 태스크 분해
+                   ├── Planner ──── 태스크 분해
                    ├── Developer ── 코드 구현
+                   ├── Code Reviewer ─ 코드 리뷰
+                   ├── Debugger ──── 디버깅
+                   ├── Critic ────── 품질 게이트
                    └── Tech Writer ─ 도메인 문서 갱신
 ```
 
@@ -286,6 +290,50 @@ conversation:
 ```
 
 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 기본값은 `pylon init`이 생성하는 템플릿을 참고하세요.
+
+## 기본 에이전트 팩
+
+`pylon init`을 실행하면 `.pylon/agents/`에 다음 에이전트들이 자동 생성됩니다.
+
+### 에이전트 정의 포맷
+
+각 에이전트는 YAML 프론트매터 + Markdown 본문으로 구성됩니다. Claude Code 프론트매터 필드와 호환됩니다.
+
+```yaml
+---
+# Claude Code 호환 필드
+name: analyst
+description: "요구사항 분석 및 수용 기준 도출 전문 에이전트"
+model: opus
+tools: [Read, Grep, Glob]
+disallowedTools: [Write, Edit]
+maxTurns: 20
+permissionMode: default
+isolation: worktree
+
+# Pylon 전용 필드
+role: Requirements Analyst
+backend: claude-code
+scope: [project-api]
+env:
+  CLAUDE_CODE_EFFORT_LEVEL: high
+---
+(시스템 프롬프트 본문)
+```
+
+### 에이전트 목록
+
+| 에이전트 | 역할 | 모델 | 설명 |
+|---------|------|------|------|
+| **po** | Product Owner | — | 사용자 요구사항 분석, 모호성 점수 산출, 수용 기준 정의 |
+| **pm** | Project Manager | — | 태스크 분해, 에이전트 할당, 실행 순서 관리 |
+| **architect** | Architect | — | 크로스 프로젝트 아키텍처 결정, 기술 방향성 분석 |
+| **tech-writer** | Tech Writer | — | 도메인 지식 및 프로젝트 문서 유지 관리 |
+| **analyst** | Requirements Analyst | opus | 요구사항 분석 및 수용 기준 도출 (읽기 전용) |
+| **planner** | Execution Planner | opus | 실행 계획 수립 및 태스크 분해 |
+| **code-reviewer** | Code Reviewer | opus | 심각도 분류 코드 리뷰, SOLID 원칙 검증 (읽기 전용) |
+| **debugger** | Debugger | sonnet | 근본 원인 분석, 빌드 에러 해결 |
+| **critic** | Quality Critic | opus | 계획/코드 최종 품질 게이트 (읽기 전용) |
 
 ## 개발
 

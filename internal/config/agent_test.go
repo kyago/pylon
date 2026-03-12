@@ -18,6 +18,7 @@ func TestParseAgentFile_FullAgent(t *testing.T) {
 		expected interface{}
 	}{
 		{"name", agent.Name, "backend-dev"},
+		{"description", agent.Description, "Go 표준 프로젝트 레이아웃을 따르는 백엔드 기능 구현 및 테스트 작성 에이전트"},
 		{"role", agent.Role, "Backend Developer"},
 		{"backend", agent.Backend, "claude-code"},
 		{"maxTurns", agent.MaxTurns, 30},
@@ -77,6 +78,9 @@ func TestParseAgentFile_ArchitectAgent(t *testing.T) {
 
 	if agent.Name != "architect" {
 		t.Errorf("name: got %q, expected %q", agent.Name, "architect")
+	}
+	if agent.Description != "코드베이스 아키텍처 분석, 설계 문서 작성 및 디버깅 어드바이저 역할을 수행하는 읽기 전용 에이전트" {
+		t.Errorf("description: got %q, expected non-empty description", agent.Description)
 	}
 	if agent.Role != "Solution Architect" {
 		t.Errorf("role: got %q, expected %q", agent.Role, "Solution Architect")
@@ -365,6 +369,71 @@ func TestAgentConfig_ResolveDefaults_EnvMerge(t *testing.T) {
 	// Agent-specific env should be present
 	if v := agent.Env["AGENT_VAR"]; v != "agent" {
 		t.Errorf("expected agent var to persist, got %q", v)
+	}
+}
+
+func TestParseAgentData_Description(t *testing.T) {
+	data := []byte(`---
+name: test-agent
+description: "A test agent for validation"
+role: Test Agent
+---
+Test body.
+`)
+	agent, err := ParseAgentData(data)
+	if err != nil {
+		t.Fatalf("ParseAgentData failed: %v", err)
+	}
+
+	if agent.Description != "A test agent for validation" {
+		t.Errorf("description: got %q, expected %q", agent.Description, "A test agent for validation")
+	}
+}
+
+func TestParseAgentFile_AnalystAgent(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "agents", "analyst.md")
+	agent, err := ParseAgentFile(path)
+	if err != nil {
+		t.Fatalf("ParseAgentFile failed: %v", err)
+	}
+
+	if agent.Name != "analyst" {
+		t.Errorf("name: got %q, expected %q", agent.Name, "analyst")
+	}
+	if agent.Description == "" {
+		t.Error("expected non-empty description")
+	}
+	if agent.Role != "Requirements Analyst" {
+		t.Errorf("role: got %q, expected %q", agent.Role, "Requirements Analyst")
+	}
+	if agent.Model != "opus" {
+		t.Errorf("model: got %q, expected %q", agent.Model, "opus")
+	}
+
+	// Check disallowedTools
+	if len(agent.DisallowedTools) != 2 {
+		t.Fatalf("expected 2 disallowedTools, got %d", len(agent.DisallowedTools))
+	}
+}
+
+func TestParseAgentFile_CriticAgent(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "agents", "critic.md")
+	agent, err := ParseAgentFile(path)
+	if err != nil {
+		t.Fatalf("ParseAgentFile failed: %v", err)
+	}
+
+	if agent.Name != "critic" {
+		t.Errorf("name: got %q, expected %q", agent.Name, "critic")
+	}
+	if agent.Description == "" {
+		t.Error("expected non-empty description")
+	}
+	if agent.Role != "Quality Critic" {
+		t.Errorf("role: got %q, expected %q", agent.Role, "Quality Critic")
+	}
+	if agent.Model != "opus" {
+		t.Errorf("model: got %q, expected %q", agent.Model, "opus")
 	}
 }
 
