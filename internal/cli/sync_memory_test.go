@@ -426,7 +426,7 @@ func TestGenerateSettingsHooks(t *testing.T) {
 		t.Fatal("hooks should be a map")
 	}
 
-	// Verify Stop hook exists
+	// Verify Stop hook exists with correct structure
 	stopHooks, ok := hooksMap["Stop"]
 	if !ok {
 		t.Fatal("Stop hook not found")
@@ -435,19 +435,36 @@ func TestGenerateSettingsHooks(t *testing.T) {
 	if !ok || len(stopArr) == 0 {
 		t.Fatal("Stop hook should be a non-empty array")
 	}
-	stopEntry, ok := stopArr[0].(map[string]any)
+	stopGroup, ok := stopArr[0].(map[string]any)
 	if !ok {
-		t.Fatal("Stop hook entry should be a map")
+		t.Fatal("Stop hook group should be a map")
 	}
-	if stopEntry["type"] != "command" {
-		t.Errorf("Stop hook type = %v, want 'command'", stopEntry["type"])
+	// Verify matcher is a string
+	stopMatcher, ok := stopGroup["matcher"].(string)
+	if !ok {
+		t.Fatal("Stop hook matcher should be a string")
 	}
-	cmd, _ := stopEntry["command"].(string)
+	if stopMatcher != "*" {
+		t.Errorf("Stop hook matcher = %q, want \"*\"", stopMatcher)
+	}
+	// Verify hooks array
+	stopInnerHooks, ok := stopGroup["hooks"].([]any)
+	if !ok || len(stopInnerHooks) == 0 {
+		t.Fatal("Stop hook group should have a non-empty 'hooks' array")
+	}
+	stopCmd, ok := stopInnerHooks[0].(map[string]any)
+	if !ok {
+		t.Fatal("Stop inner hook should be a map")
+	}
+	if stopCmd["type"] != "command" {
+		t.Errorf("Stop hook type = %v, want 'command'", stopCmd["type"])
+	}
+	cmd, _ := stopCmd["command"].(string)
 	if !strings.Contains(cmd, "pylon sync-memory") || !strings.Contains(cmd, "--from-session") {
 		t.Errorf("Stop hook command should contain 'pylon sync-memory --from-session', got: %s", cmd)
 	}
 
-	// Verify PostToolUse hook exists
+	// Verify PostToolUse hook exists with correct structure
 	postHooks, ok := hooksMap["PostToolUse"]
 	if !ok {
 		t.Fatal("PostToolUse hook not found")
@@ -456,26 +473,34 @@ func TestGenerateSettingsHooks(t *testing.T) {
 	if !ok || len(postArr) == 0 {
 		t.Fatal("PostToolUse hook should be a non-empty array")
 	}
-	postEntry, ok := postArr[0].(map[string]any)
+	postGroup, ok := postArr[0].(map[string]any)
 	if !ok {
-		t.Fatal("PostToolUse hook entry should be a map")
+		t.Fatal("PostToolUse hook group should be a map")
 	}
-	if postEntry["type"] != "command" {
-		t.Errorf("PostToolUse hook type = %v, want 'command'", postEntry["type"])
-	}
-
-	// Verify matcher
-	matcher, ok := postEntry["matcher"].(map[string]any)
+	// Verify matcher is a string
+	postMatcher, ok := postGroup["matcher"].(string)
 	if !ok {
-		t.Fatal("PostToolUse hook should have a matcher")
+		t.Fatal("PostToolUse hook matcher should be a string")
 	}
-	if matcher["tool_name"] != "Write|Edit" {
-		t.Errorf("matcher.tool_name = %v, want 'Write|Edit'", matcher["tool_name"])
+	if postMatcher != "Edit|Write" {
+		t.Errorf("PostToolUse hook matcher = %q, want 'Edit|Write'", postMatcher)
+	}
+	// Verify hooks array
+	postInnerHooks, ok := postGroup["hooks"].([]any)
+	if !ok || len(postInnerHooks) == 0 {
+		t.Fatal("PostToolUse hook group should have a non-empty 'hooks' array")
+	}
+	postCmd, ok := postInnerHooks[0].(map[string]any)
+	if !ok {
+		t.Fatal("PostToolUse inner hook should be a map")
+	}
+	if postCmd["type"] != "command" {
+		t.Errorf("PostToolUse hook type = %v, want 'command'", postCmd["type"])
 	}
 
 	// Verify no description field (not in Claude Code spec)
-	if _, hasDesc := stopEntry["description"]; hasDesc {
-		t.Error("hook entries should not have a 'description' field")
+	if _, hasDesc := stopGroup["description"]; hasDesc {
+		t.Error("hook groups should not have a 'description' field")
 	}
 }
 
@@ -526,20 +551,30 @@ func TestGenerateSettingsHooks_Idempotent(t *testing.T) {
 func TestGenerateSettingsHooks_PreservesExisting(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Write existing settings with user hooks
+	// Write existing settings with user hooks (in Claude Code format)
 	existingSettings := map[string]any{
 		"theme": "dark",
 		"hooks": map[string]any{
 			"Stop": []any{
 				map[string]any{
-					"type":    "command",
-					"command": "my-custom-hook --on-stop",
+					"matcher": "",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "my-custom-hook --on-stop",
+						},
+					},
 				},
 			},
 			"PreToolUse": []any{
 				map[string]any{
-					"type":    "command",
-					"command": "my-linter --check",
+					"matcher": "",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "my-linter --check",
+						},
+					},
 				},
 			},
 		},
@@ -583,22 +618,26 @@ func TestGenerateSettingsHooks_PreservesExisting(t *testing.T) {
 		t.Errorf("PreToolUse should have 1 entry, got %d", len(preArr))
 	}
 
-	// Stop should have user hook + pylon hook
+	// Stop should have user hook group + pylon hook group
 	stopHooks := hooks["Stop"].([]any)
 	if len(stopHooks) != 2 {
 		t.Errorf("Stop should have 2 entries (user + pylon), got %d", len(stopHooks))
 	}
 
-	// Verify user's custom hook is first (preserved)
-	userHook := stopHooks[0].(map[string]any)
-	if userHook["command"] != "my-custom-hook --on-stop" {
+	// Verify user's custom hook group is first (preserved)
+	userGroup := stopHooks[0].(map[string]any)
+	userInnerHooks := userGroup["hooks"].([]any)
+	userCmd := userInnerHooks[0].(map[string]any)
+	if userCmd["command"] != "my-custom-hook --on-stop" {
 		t.Error("user's custom Stop hook should be preserved")
 	}
 
-	// Verify pylon hook is second (added)
-	pylonHook := stopHooks[1].(map[string]any)
-	pylonCmd, _ := pylonHook["command"].(string)
-	if !strings.Contains(pylonCmd, "pylon sync-memory") {
+	// Verify pylon hook group is second (added)
+	pylonGroup := stopHooks[1].(map[string]any)
+	pylonInnerHooks := pylonGroup["hooks"].([]any)
+	pylonCmd := pylonInnerHooks[0].(map[string]any)
+	cmd, _ := pylonCmd["command"].(string)
+	if !strings.Contains(cmd, "pylon sync-memory") {
 		t.Error("pylon Stop hook should be added")
 	}
 }
