@@ -218,6 +218,35 @@ func TestLoop_buildPRBody(t *testing.T) {
 	}
 }
 
+func TestLoop_Run_ParallelDevAgents(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{exitCode: 0}
+	lcfg := newTestLoopConfig(dir, exec)
+	// Add a second dev agent
+	lcfg.Agents["frontend-dev"] = &config.AgentConfig{
+		Name: "frontend-dev", Role: "프론트엔드 개발자",
+		PermissionMode: "acceptEdits", MaxTurns: 30,
+	}
+	loop := NewLoop(lcfg)
+
+	loop.orch.StartPipeline("test-pipeline")
+	loop.orch.TransitionTo(StagePOConversation)
+	loop.orch.TransitionTo(StageArchitectAnalysis)
+	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageAgentExecuting)
+
+	err := loop.runAgentExecution(context.Background())
+
+	// Should execute both dev agents (backend-dev + frontend-dev)
+	if err != nil {
+		// PR creation will fail (no git), but agents should have been called
+		t.Logf("error (expected in test): %v", err)
+	}
+	if len(exec.runCalls) < 2 {
+		t.Errorf("expected at least 2 agent calls, got %d", len(exec.runCalls))
+	}
+}
+
 func TestLoop_Verification_NoVerifyYml(t *testing.T) {
 	dir := t.TempDir()
 	exec := &testExecutor{exitCode: 0}

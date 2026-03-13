@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/kyago/pylon/internal/agent"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/git"
@@ -244,19 +246,39 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	return nil
 }
 
-// runAgentExecution runs implementation agents (potentially multiple).
+// runAgentExecution runs implementation agents (potentially in parallel).
 func (l *Loop) runAgentExecution(ctx context.Context) error {
-	// Find all developer agents
 	devAgents := l.findDevAgents()
 	if len(devAgents) == 0 {
 		return fmt.Errorf("no dev agents configured (expected agents with name: backend-dev, frontend-dev, or fullstack)")
 	}
 
-	// For Phase 0: run dev agents sequentially
-	for _, agentName := range devAgents {
-		if err := l.executeAgent(ctx, agentName); err != nil {
+	// Single agent: no need for goroutine overhead
+	if len(devAgents) == 1 {
+		if err := l.executeAgent(ctx, devAgents[0]); err != nil {
 			return err
 		}
+		return l.transitionTo(StageVerification)
+	}
+
+	// Multiple agents: run in parallel with concurrency limit
+	maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 5
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrent)
+
+	for _, name := range devAgents {
+		agentName := name // capture loop variable
+		g.Go(func() error {
+			return l.executeAgent(gctx, agentName)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	return l.transitionTo(StageVerification)
