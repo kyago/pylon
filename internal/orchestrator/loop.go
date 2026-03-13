@@ -2,7 +2,9 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -36,7 +38,6 @@ type Loop struct {
 	orch     *Orchestrator
 	watcher  *OutboxWatcher
 	inboxDir string
-	outboxDir string
 }
 
 // NewLoop creates a new orchestration loop.
@@ -45,11 +46,10 @@ func NewLoop(cfg LoopConfig) *Loop {
 	runtimeDir := filepath.Join(cfg.WorkDir, ".pylon", "runtime")
 
 	return &Loop{
-		cfg:       cfg,
-		orch:      orch,
-		watcher:   NewOutboxWatcher(filepath.Join(runtimeDir, "outbox"), 2*time.Second),
-		inboxDir:  filepath.Join(runtimeDir, "inbox"),
-		outboxDir: filepath.Join(runtimeDir, "outbox"),
+		cfg:      cfg,
+		orch:     orch,
+		watcher:  NewOutboxWatcher(filepath.Join(runtimeDir, "outbox"), 2*time.Second),
+		inboxDir: filepath.Join(runtimeDir, "inbox"),
 	}
 }
 
@@ -110,7 +110,7 @@ func (l *Loop) Run(ctx context.Context) error {
 
 		if err != nil {
 			// ErrInteractiveRequired is a signal, not a failure
-			if err == ErrInteractiveRequired {
+			if errors.Is(err, ErrInteractiveRequired) {
 				return err
 			}
 			// Attempt to transition to failed state
@@ -136,6 +136,14 @@ func (l *Loop) runPOConversation(ctx context.Context) error {
 
 // runHeadlessAgent executes a single headless agent and transitions to the next stage.
 func (l *Loop) runHeadlessAgent(ctx context.Context, agentName string, currentStage, nextStage Stage) error {
+	if err := l.executeAgent(ctx, agentName); err != nil {
+		return err
+	}
+	return l.transitionTo(nextStage)
+}
+
+// executeAgent handles the common agent execution pattern without stage transition.
+func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	agentCfg := l.findAgent(agentName)
 	if agentCfg == nil {
 		return fmt.Errorf("agent config not found: %s", agentName)
@@ -182,10 +190,11 @@ func (l *Loop) runHeadlessAgent(ctx context.Context, agentName string, currentSt
 		AgentID: agentName,
 		Status:  "running",
 	}
-	l.orch.savePipelineState()
+	l.saveState()
 
-	// Launch agent
+	// Launch agent with context propagation
 	result, err := l.cfg.Runner.Start(agent.RunConfig{
+		Ctx:        ctx,
 		Agent:      agentCfg,
 		Global:     l.cfg.Config,
 		TaskPrompt: taskPrompt,
@@ -194,26 +203,18 @@ func (l *Loop) runHeadlessAgent(ctx context.Context, agentName string, currentSt
 	})
 	if err != nil {
 		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
-		l.orch.savePipelineState()
+		l.saveState()
 		return fmt.Errorf("agent %s execution failed: %w", agentName, err)
 	}
 
 	if result.ExitCode != 0 {
 		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
-		l.orch.savePipelineState()
+		l.saveState()
 		return fmt.Errorf("agent %s exited with code %d: %s", agentName, result.ExitCode, result.Stderr)
 	}
 
 	// Check for outbox result (non-blocking single poll, agent already finished)
-	watchResults, err := l.watcher.PollOnce()
-	if err != nil {
-		// Poll error is non-fatal; the agent completed successfully
-		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "completed"}
-		l.orch.savePipelineState()
-		return l.transitionTo(nextStage)
-	}
-
-	// Process results for this agent
+	watchResults, _ := l.watcher.PollOnce()
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
 			l.processAgentResult(wr)
@@ -222,9 +223,9 @@ func (l *Loop) runHeadlessAgent(ctx context.Context, agentName string, currentSt
 	}
 
 	l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "completed"}
-	l.orch.savePipelineState()
+	l.saveState()
 
-	return l.transitionTo(nextStage)
+	return nil
 }
 
 // runAgentExecution runs implementation agents (potentially multiple).
@@ -238,64 +239,9 @@ func (l *Loop) runAgentExecution(ctx context.Context) error {
 
 	// For Phase 0: run dev agents sequentially
 	for _, agentName := range devAgents {
-		agentCfg := l.findAgent(agentName)
-		if agentCfg == nil {
-			continue
+		if err := l.executeAgent(ctx, agentName); err != nil {
+			return err
 		}
-
-		agentCfg.ResolveDefaults(l.cfg.Config)
-		taskID := fmt.Sprintf("%s-%s", l.cfg.PipelineID, agentName)
-
-		handoffCtx := l.buildHandoffContext(taskID)
-		if err := l.writeTaskToInbox(agentName, taskID, handoffCtx); err != nil {
-			return fmt.Errorf("failed to write task for %s: %w", agentName, err)
-		}
-
-		claudeMD, err := l.buildClaudeMD(agentCfg, taskID)
-		if err != nil {
-			return fmt.Errorf("failed to build CLAUDE.md for %s: %w", agentName, err)
-		}
-
-		projectDir := l.cfg.WorkDir
-		if len(l.cfg.Projects) > 0 {
-			projectDir = l.cfg.Projects[0].Path
-		}
-
-		workDir, cleanup, err := agent.PrepareWorkDir(
-			l.cfg.WorktreeMgr, agentCfg.Isolation, l.cfg.Branch, projectDir, agentName,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to prepare workdir for %s: %w", agentName, err)
-		}
-
-		taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir)
-
-		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "running"}
-		l.orch.savePipelineState()
-
-		result, err := l.cfg.Runner.Start(agent.RunConfig{
-			Agent:      agentCfg,
-			Global:     l.cfg.Config,
-			TaskPrompt: taskPrompt,
-			WorkDir:    workDir,
-			ClaudeMD:   claudeMD,
-		})
-		cleanup()
-
-		if err != nil {
-			l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
-			l.orch.savePipelineState()
-			return fmt.Errorf("agent %s execution failed: %w", agentName, err)
-		}
-
-		if result.ExitCode != 0 {
-			l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
-			l.orch.savePipelineState()
-			return fmt.Errorf("agent %s exited with code %d", agentName, result.ExitCode)
-		}
-
-		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "completed"}
-		l.orch.savePipelineState()
 	}
 
 	return l.transitionTo(StageVerification)
@@ -352,7 +298,9 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	}
 
 	// Write fix request to inbox for dev agents
-	l.writeFixRequest(results)
+	if err := l.writeFixRequest(results); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to write fix request: %v\n", err)
+	}
 
 	// Retry: go back to agent execution
 	return l.transitionTo(StageAgentExecuting)
@@ -408,7 +356,7 @@ func (l *Loop) runWikiUpdate(ctx context.Context) error {
 		return l.transitionTo(StageCompleted)
 	}
 
-	// Run tech-writer as headless agent, but transition to completed regardless
+	// Run tech-writer as headless agent — failure is non-fatal
 	twAgent.ResolveDefaults(l.cfg.Config)
 	taskID := fmt.Sprintf("%s-tech-writer", l.cfg.PipelineID)
 
@@ -419,14 +367,21 @@ func (l *Loop) runWikiUpdate(ctx context.Context) error {
 		projectDir = l.cfg.Projects[0].Path
 	}
 
-	l.cfg.Runner.Start(agent.RunConfig{
+	result, err := l.cfg.Runner.Start(agent.RunConfig{
+		Ctx:        ctx,
 		Agent:      twAgent,
 		Global:     l.cfg.Config,
 		TaskPrompt: taskPrompt,
 		WorkDir:    projectDir,
 	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ wiki update failed: %v\n", err)
+	} else if result.ExitCode != 0 {
+		fmt.Fprintf(os.Stderr, "⚠ wiki update exited with code %d\n", result.ExitCode)
+	} else {
+		fmt.Println("✓ Wiki update completed")
+	}
 
-	fmt.Println("✓ Wiki update completed")
 	return l.transitionTo(StageCompleted)
 }
 
@@ -434,6 +389,13 @@ func (l *Loop) runWikiUpdate(ctx context.Context) error {
 
 func (l *Loop) transitionTo(stage Stage) error {
 	return l.orch.TransitionTo(stage)
+}
+
+// saveState persists pipeline state with error logging.
+func (l *Loop) saveState() {
+	if err := l.orch.savePipelineState(); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to save pipeline state: %v\n", err)
+	}
 }
 
 func (l *Loop) findAgent(name string) *config.AgentConfig {
@@ -568,7 +530,7 @@ func (l *Loop) processAgentResult(wr WatchResult) {
 	}
 }
 
-func (l *Loop) writeFixRequest(results []VerifyResult) {
+func (l *Loop) writeFixRequest(results []VerifyResult) error {
 	devAgents := l.findDevAgents()
 	failSummary := FailedSummary(results)
 
@@ -587,8 +549,11 @@ func (l *Loop) writeFixRequest(results []VerifyResult) {
 			Description: fmt.Sprintf("다음 검증이 실패했습니다. 수정해주세요:\n%s", failSummary),
 			Branch:      l.cfg.Branch,
 		}
-		protocol.WriteTask(l.inboxDir, agentName, msg)
+		if err := protocol.WriteTask(l.inboxDir, agentName, msg); err != nil {
+			return fmt.Errorf("failed to write fix request for %s: %w", agentName, err)
+		}
 	}
+	return nil
 }
 
 func (l *Loop) buildPRBody() string {
@@ -628,4 +593,3 @@ func containsStr(ss []string, s string) bool {
 	}
 	return false
 }
-

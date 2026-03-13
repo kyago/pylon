@@ -48,6 +48,11 @@ func (o *Orchestrator) TransitionTo(stage Stage) error {
 	return o.savePipelineState()
 }
 
+// SaveState persists the current pipeline state (public API).
+func (o *Orchestrator) SaveState() error {
+	return o.savePipelineState()
+}
+
 // savePipelineState persists the pipeline to both SQLite and state.json.
 func (o *Orchestrator) savePipelineState() error {
 	data, err := o.Pipeline.Snapshot()

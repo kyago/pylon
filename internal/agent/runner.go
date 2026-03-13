@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 // RunConfig holds parameters for running a Claude Code agent.
 type RunConfig struct {
+	Ctx         context.Context   // if set, cancels agent process on context cancellation
 	Agent       *config.AgentConfig
 	Global      *config.Config
 	TaskPrompt  string
@@ -101,6 +103,7 @@ func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
 		Args:    args,
 		WorkDir: cfg.WorkDir,
 		Env:     env,
+		Ctx:     cfg.Ctx,
 		Stdout:  cfg.Stdout,
 		Stderr:  cfg.Stderr,
 	})

@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -138,16 +140,12 @@ func runRequest(cmd *cobra.Command, args []string) error {
 
 	err = loop.Run(context.Background())
 
-	if err == orchestrator.ErrInteractiveRequired {
+	if errors.Is(err, orchestrator.ErrInteractiveRequired) {
 		// PO conversation stage reached — launch PO interactively
 		fmt.Println("🚀 PO 에이전트와 대화를 시작합니다...")
 		fmt.Println()
 		fmt.Printf("  대화 완료 후 headless 실행: pylon request --continue %s \"%s\"\n", pipelineID, requirement)
 		fmt.Println()
-
-		// Transition past PO for the continue path
-		orch := loop.GetOrchestrator()
-		orch.TransitionTo(orchestrator.StageArchitectAnalysis)
 
 		// Launch PO agent interactively
 		poAgent := agents["po"]
@@ -163,11 +161,20 @@ func runRequest(cmd *cobra.Command, args []string) error {
 			CompactionRules:    agent.DefaultCompactionRules(),
 		})
 
-		// ExecInteractive replaces the current process
-		return poRunner.Executor.ExecInteractive(executor.ExecConfig{
+		// Pre-validate claude CLI before state transition
+		if _, lookErr := exec.LookPath("claude"); lookErr != nil {
+			return fmt.Errorf("claude CLI not found: %w", lookErr)
+		}
+
+		// Transition past PO for the --continue path
+		// (ExecInteractive replaces the process on success, so state must be saved before)
+		orch := loop.GetOrchestrator()
+		orch.TransitionTo(orchestrator.StageArchitectAnalysis)
+
+		execErr := poRunner.Executor.ExecInteractive(executor.ExecConfig{
 			Name:    "po",
 			Command: "claude",
-			Args: agent.NewRunner(nil).BuildArgs(agent.RunConfig{
+			Args: poRunner.BuildArgs(agent.RunConfig{
 				Agent:       poAgent,
 				Global:      cfg,
 				Interactive: true,
@@ -176,6 +183,11 @@ func runRequest(cmd *cobra.Command, args []string) error {
 			WorkDir: projects[0].Path,
 			Env:     agent.ResolveEnv(cfg.Runtime.Env, poAgent.Env),
 		})
+
+		// ExecInteractive returns only on failure — rollback state
+		orch.Pipeline.CurrentStage = orchestrator.StagePOConversation
+		_ = orch.SaveState()
+		return fmt.Errorf("failed to launch PO agent: %w", execErr)
 	}
 
 	if err != nil {
