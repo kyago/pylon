@@ -224,6 +224,63 @@ func TestConversationManager_SaveMeta_WithAmbiguity(t *testing.T) {
 	}
 }
 
+func TestConversationMeta_CompletedAt_SessionID_Roundtrip(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewConversationManager(dir)
+
+	mgr.Create("conv-rt", "라운드트립 테스트")
+
+	meta := ConversationMeta{
+		Status:      "completed",
+		StartedAt:   "2026-03-13T10:00:00+09:00",
+		CompletedAt: "2026-03-13T11:00:00+09:00",
+		SessionID:   "session-abc-123",
+		TaskID:      "task-456",
+		Projects:    []string{"proj-a"},
+	}
+	if err := mgr.SaveMeta("conv-rt", meta); err != nil {
+		t.Fatalf("SaveMeta failed: %v", err)
+	}
+
+	conv, err := mgr.Load("conv-rt")
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if conv.Meta.CompletedAt != "2026-03-13T11:00:00+09:00" {
+		t.Errorf("completed_at = %q, want %q", conv.Meta.CompletedAt, "2026-03-13T11:00:00+09:00")
+	}
+	if conv.Meta.SessionID != "session-abc-123" {
+		t.Errorf("session_id = %q, want %q", conv.Meta.SessionID, "session-abc-123")
+	}
+}
+
+func TestConversationMeta_OmitEmpty(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewConversationManager(dir)
+
+	mgr.Create("conv-omit", "빈 필드 테스트")
+
+	// Save without CompletedAt and SessionID
+	meta := ConversationMeta{
+		Status:    "active",
+		StartedAt: "2026-03-13T10:00:00+09:00",
+	}
+	if err := mgr.SaveMeta("conv-omit", meta); err != nil {
+		t.Fatalf("SaveMeta failed: %v", err)
+	}
+
+	conv, err := mgr.Load("conv-omit")
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if conv.Meta.CompletedAt != "" {
+		t.Errorf("completed_at should be empty, got %q", conv.Meta.CompletedAt)
+	}
+	if conv.Meta.SessionID != "" {
+		t.Errorf("session_id should be empty, got %q", conv.Meta.SessionID)
+	}
+}
+
 func TestConversationManager_SaveMeta(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewConversationManager(dir)

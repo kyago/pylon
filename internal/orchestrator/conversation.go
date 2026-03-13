@@ -28,6 +28,8 @@ type ClarityScores struct {
 type ConversationMeta struct {
 	Status         string         `yaml:"status"`
 	StartedAt      string         `yaml:"started_at"`
+	CompletedAt    string         `yaml:"completed_at,omitempty"`
+	SessionID      string         `yaml:"session_id,omitempty"`
 	Projects       []string       `yaml:"projects,omitempty"`
 	TaskID         string         `yaml:"task_id,omitempty"`
 	AmbiguityScore float64        `yaml:"ambiguity_score"`

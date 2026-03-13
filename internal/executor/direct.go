@@ -94,6 +94,11 @@ func (d *DirectExecutor) RunHeadless(cfg ExecConfig) (*ExecResult, error) {
 		cmd.Env = env
 	}
 
+	// Connect stdin if provided.
+	if cfg.Stdin != nil {
+		cmd.Stdin = cfg.Stdin
+	}
+
 	// If callers provide writers, stream directly; otherwise capture into buffers.
 	var stdout, stderr bytes.Buffer
 	if cfg.Stdout != nil {

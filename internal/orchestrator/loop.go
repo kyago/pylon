@@ -1,0 +1,631 @@
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"time"
+
+	"github.com/kyago/pylon/internal/agent"
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/git"
+	"github.com/kyago/pylon/internal/memory"
+	"github.com/kyago/pylon/internal/protocol"
+	"github.com/kyago/pylon/internal/store"
+)
+
+// LoopConfig holds all dependencies for the orchestration loop.
+type LoopConfig struct {
+	Config      *config.Config
+	Store       *store.Store
+	WorkDir     string // workspace root
+	PipelineID  string
+	Requirement string
+	Branch      string
+	ConvManager *ConversationManager
+	MemManager  *memory.Manager
+	Runner      *agent.Runner
+	WorktreeMgr *git.WorktreeManager
+	Agents      map[string]*config.AgentConfig
+	Projects    []config.ProjectInfo
+}
+
+// Loop drives the pipeline stage-by-stage execution.
+type Loop struct {
+	cfg      LoopConfig
+	orch     *Orchestrator
+	watcher  *OutboxWatcher
+	inboxDir string
+	outboxDir string
+}
+
+// NewLoop creates a new orchestration loop.
+func NewLoop(cfg LoopConfig) *Loop {
+	orch := NewOrchestrator(cfg.Config, cfg.Store, cfg.WorkDir)
+	runtimeDir := filepath.Join(cfg.WorkDir, ".pylon", "runtime")
+
+	return &Loop{
+		cfg:       cfg,
+		orch:      orch,
+		watcher:   NewOutboxWatcher(filepath.Join(runtimeDir, "outbox"), 2*time.Second),
+		inboxDir:  filepath.Join(runtimeDir, "inbox"),
+		outboxDir: filepath.Join(runtimeDir, "outbox"),
+	}
+}
+
+// Run executes the pipeline from its current stage until completion or failure.
+// If the pipeline is already at a PO interactive stage, it returns ErrInteractiveRequired.
+func (l *Loop) Run(ctx context.Context) error {
+	// Try to recover existing state
+	if err := l.orch.Recover(); err != nil {
+		return fmt.Errorf("recovery failed: %w", err)
+	}
+
+	// If no pipeline recovered, start a new one
+	if l.orch.Pipeline == nil {
+		if err := l.orch.StartPipeline(l.cfg.PipelineID); err != nil {
+			return fmt.Errorf("failed to start pipeline: %w", err)
+		}
+		l.orch.Pipeline.TaskSpec = l.cfg.Requirement
+		l.orch.Pipeline.MaxAttempts = l.cfg.Config.Runtime.MaxAttempts
+	}
+
+	// Ensure agents map is initialized (may be nil after JSON recovery)
+	if l.orch.Pipeline.Agents == nil {
+		l.orch.Pipeline.Agents = make(map[string]AgentStatus)
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		if l.orch.Pipeline.IsTerminal() {
+			return nil
+		}
+
+		var err error
+		switch l.orch.Pipeline.CurrentStage {
+		case StageInit:
+			err = l.transitionTo(StagePOConversation)
+		case StagePOConversation:
+			err = l.runPOConversation(ctx)
+		case StageArchitectAnalysis:
+			err = l.runHeadlessAgent(ctx, "architect", StageArchitectAnalysis, StagePMTaskBreakdown)
+		case StagePMTaskBreakdown:
+			err = l.runHeadlessAgent(ctx, "pm", StagePMTaskBreakdown, StageAgentExecuting)
+		case StageAgentExecuting:
+			err = l.runAgentExecution(ctx)
+		case StageVerification:
+			err = l.runVerification(ctx)
+		case StagePRCreation:
+			err = l.runPRCreation(ctx)
+		case StagePOValidation:
+			err = l.runPOValidation(ctx)
+		case StageWikiUpdate:
+			err = l.runWikiUpdate(ctx)
+		default:
+			return fmt.Errorf("unknown stage: %s", l.orch.Pipeline.CurrentStage)
+		}
+
+		if err != nil {
+			// ErrInteractiveRequired is a signal, not a failure
+			if err == ErrInteractiveRequired {
+				return err
+			}
+			// Attempt to transition to failed state
+			failErr := l.transitionTo(StageFailed)
+			if failErr != nil {
+				return fmt.Errorf("stage %s error: %w (also failed to transition: %v)",
+					l.orch.Pipeline.CurrentStage, err, failErr)
+			}
+			return fmt.Errorf("pipeline failed at %s: %w", l.orch.Pipeline.CurrentStage, err)
+		}
+	}
+}
+
+// ErrInteractiveRequired signals that an interactive PO session is needed.
+var ErrInteractiveRequired = fmt.Errorf("interactive PO session required")
+
+// runPOConversation handles the PO interactive conversation stage.
+// Since PO uses ExecInteractive (syscall.Exec), the loop returns ErrInteractiveRequired
+// so that the CLI can handle the handoff.
+func (l *Loop) runPOConversation(ctx context.Context) error {
+	return ErrInteractiveRequired
+}
+
+// runHeadlessAgent executes a single headless agent and transitions to the next stage.
+func (l *Loop) runHeadlessAgent(ctx context.Context, agentName string, currentStage, nextStage Stage) error {
+	agentCfg := l.findAgent(agentName)
+	if agentCfg == nil {
+		return fmt.Errorf("agent config not found: %s", agentName)
+	}
+
+	agentCfg.ResolveDefaults(l.cfg.Config)
+
+	taskID := fmt.Sprintf("%s-%s", l.cfg.PipelineID, agentName)
+
+	// Build handoff context from blackboard
+	handoffCtx := l.buildHandoffContext(taskID)
+
+	// Write task to inbox
+	if err := l.writeTaskToInbox(agentName, taskID, handoffCtx); err != nil {
+		return fmt.Errorf("failed to write task for %s: %w", agentName, err)
+	}
+
+	// Build CLAUDE.md
+	claudeMD, err := l.buildClaudeMD(agentCfg, taskID)
+	if err != nil {
+		return fmt.Errorf("failed to build CLAUDE.md for %s: %w", agentName, err)
+	}
+
+	// Prepare work directory
+	projectDir := l.cfg.WorkDir
+	if len(l.cfg.Projects) > 0 {
+		projectDir = l.cfg.Projects[0].Path
+	}
+
+	workDir, cleanup, err := agent.PrepareWorkDir(
+		l.cfg.WorktreeMgr, agentCfg.Isolation, l.cfg.Branch, projectDir, agentName,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to prepare workdir for %s: %w", agentName, err)
+	}
+	defer cleanup()
+
+	// Build task prompt
+	taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir)
+
+	// Track agent status
+	l.orch.Pipeline.Agents[agentName] = AgentStatus{
+		TaskID:  taskID,
+		AgentID: agentName,
+		Status:  "running",
+	}
+	l.orch.savePipelineState()
+
+	// Launch agent
+	result, err := l.cfg.Runner.Start(agent.RunConfig{
+		Agent:      agentCfg,
+		Global:     l.cfg.Config,
+		TaskPrompt: taskPrompt,
+		WorkDir:    workDir,
+		ClaudeMD:   claudeMD,
+	})
+	if err != nil {
+		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
+		l.orch.savePipelineState()
+		return fmt.Errorf("agent %s execution failed: %w", agentName, err)
+	}
+
+	if result.ExitCode != 0 {
+		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
+		l.orch.savePipelineState()
+		return fmt.Errorf("agent %s exited with code %d: %s", agentName, result.ExitCode, result.Stderr)
+	}
+
+	// Check for outbox result (non-blocking single poll, agent already finished)
+	watchResults, err := l.watcher.PollOnce()
+	if err != nil {
+		// Poll error is non-fatal; the agent completed successfully
+		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "completed"}
+		l.orch.savePipelineState()
+		return l.transitionTo(nextStage)
+	}
+
+	// Process results for this agent
+	for _, wr := range watchResults {
+		if wr.AgentName == agentName {
+			l.processAgentResult(wr)
+			markProcessed(filepath.Dir(wr.FilePath), filepath.Base(wr.FilePath))
+		}
+	}
+
+	l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "completed"}
+	l.orch.savePipelineState()
+
+	return l.transitionTo(nextStage)
+}
+
+// runAgentExecution runs implementation agents (potentially multiple).
+func (l *Loop) runAgentExecution(ctx context.Context) error {
+	// Find all developer agents
+	devAgents := l.findDevAgents()
+	if len(devAgents) == 0 {
+		// Fallback: use a single "backend-dev" or any available agent
+		return l.runHeadlessAgent(ctx, "backend-dev", StageAgentExecuting, StageVerification)
+	}
+
+	// For Phase 0: run dev agents sequentially
+	for _, agentName := range devAgents {
+		agentCfg := l.findAgent(agentName)
+		if agentCfg == nil {
+			continue
+		}
+
+		agentCfg.ResolveDefaults(l.cfg.Config)
+		taskID := fmt.Sprintf("%s-%s", l.cfg.PipelineID, agentName)
+
+		handoffCtx := l.buildHandoffContext(taskID)
+		if err := l.writeTaskToInbox(agentName, taskID, handoffCtx); err != nil {
+			return fmt.Errorf("failed to write task for %s: %w", agentName, err)
+		}
+
+		claudeMD, err := l.buildClaudeMD(agentCfg, taskID)
+		if err != nil {
+			return fmt.Errorf("failed to build CLAUDE.md for %s: %w", agentName, err)
+		}
+
+		projectDir := l.cfg.WorkDir
+		if len(l.cfg.Projects) > 0 {
+			projectDir = l.cfg.Projects[0].Path
+		}
+
+		workDir, cleanup, err := agent.PrepareWorkDir(
+			l.cfg.WorktreeMgr, agentCfg.Isolation, l.cfg.Branch, projectDir, agentName,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to prepare workdir for %s: %w", agentName, err)
+		}
+
+		taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir)
+
+		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "running"}
+		l.orch.savePipelineState()
+
+		result, err := l.cfg.Runner.Start(agent.RunConfig{
+			Agent:      agentCfg,
+			Global:     l.cfg.Config,
+			TaskPrompt: taskPrompt,
+			WorkDir:    workDir,
+			ClaudeMD:   claudeMD,
+		})
+		cleanup()
+
+		if err != nil {
+			l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
+			l.orch.savePipelineState()
+			return fmt.Errorf("agent %s execution failed: %w", agentName, err)
+		}
+
+		if result.ExitCode != 0 {
+			l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
+			l.orch.savePipelineState()
+			return fmt.Errorf("agent %s exited with code %d", agentName, result.ExitCode)
+		}
+
+		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "completed"}
+		l.orch.savePipelineState()
+	}
+
+	return l.transitionTo(StageVerification)
+}
+
+// runVerification executes build/test/lint commands.
+func (l *Loop) runVerification(ctx context.Context) error {
+	projectDir := l.cfg.WorkDir
+	if len(l.cfg.Projects) > 0 {
+		projectDir = l.cfg.Projects[0].Path
+	}
+
+	// Try to load verify.yml
+	verifyPath := filepath.Join(projectDir, ".pylon", "verify.yml")
+	vc, err := config.LoadVerifyConfig(verifyPath)
+	if err != nil {
+		// verify.yml not found → skip verification, proceed to PR
+		fmt.Printf("⚠ verify.yml not found, skipping verification\n")
+		return l.transitionTo(StagePRCreation)
+	}
+
+	// Convert to VerifyCommands
+	steps := vc.OrderedSteps()
+	if len(steps) == 0 {
+		return l.transitionTo(StagePRCreation)
+	}
+
+	var commands []VerifyCommand
+	for _, s := range steps {
+		commands = append(commands, VerifyCommand{
+			Name:    s.Name,
+			Command: s.Command,
+			Timeout: s.Timeout,
+		})
+	}
+
+	results, err := RunVerification(projectDir, commands)
+	if err != nil {
+		return fmt.Errorf("verification execution error: %w", err)
+	}
+
+	if AllPassed(results) {
+		fmt.Println("✓ All verifications passed")
+		return l.transitionTo(StagePRCreation)
+	}
+
+	// Verification failed
+	fmt.Printf("✗ Verification failed:\n%s\n", FailedSummary(results))
+
+	l.orch.Pipeline.Attempts++
+	if l.orch.Pipeline.Attempts >= l.orch.Pipeline.MaxAttempts {
+		return fmt.Errorf("verification failed after %d attempts:\n%s",
+			l.orch.Pipeline.Attempts, FailedSummary(results))
+	}
+
+	// Write fix request to inbox for dev agents
+	l.writeFixRequest(results)
+
+	// Retry: go back to agent execution
+	return l.transitionTo(StageAgentExecuting)
+}
+
+// runPRCreation creates a pull request.
+func (l *Loop) runPRCreation(ctx context.Context) error {
+	projectDir := l.cfg.WorkDir
+	if len(l.cfg.Projects) > 0 {
+		projectDir = l.cfg.Projects[0].Path
+	}
+
+	if l.cfg.Config.Git.AutoPush {
+		if err := git.PushBranch(projectDir, l.cfg.Branch); err != nil {
+			return fmt.Errorf("failed to push branch: %w", err)
+		}
+	}
+
+	prURL, err := git.CreatePR(projectDir, git.PRCreateConfig{
+		Title:     fmt.Sprintf("[pylon] %s", truncateOutput(l.cfg.Requirement, 60)),
+		Body:      l.buildPRBody(),
+		Branch:    l.cfg.Branch,
+		Base:      l.cfg.Config.Git.DefaultBase,
+		Reviewers: l.cfg.Config.Git.PR.Reviewers,
+		Draft:     l.cfg.Config.Git.PR.Draft,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create PR: %w", err)
+	}
+
+	fmt.Printf("✓ PR created: %s\n", prURL)
+	return l.transitionTo(StagePOValidation)
+}
+
+// runPOValidation handles PO validation of the PR.
+// Like PO conversation, this may require interactive mode.
+func (l *Loop) runPOValidation(ctx context.Context) error {
+	// For Phase 0: auto-approve and move to wiki update
+	fmt.Println("✓ PO validation: auto-approved (Phase 0)")
+	return l.transitionTo(StageWikiUpdate)
+}
+
+// runWikiUpdate handles wiki/domain knowledge updates.
+func (l *Loop) runWikiUpdate(ctx context.Context) error {
+	if !l.cfg.Config.Wiki.AutoUpdate {
+		return l.transitionTo(StageCompleted)
+	}
+
+	// Try to run tech-writer agent if available
+	twAgent := l.findAgent("tech-writer")
+	if twAgent == nil {
+		fmt.Println("✓ Wiki update: skipped (no tech-writer agent)")
+		return l.transitionTo(StageCompleted)
+	}
+
+	// Run tech-writer as headless agent, but transition to completed regardless
+	twAgent.ResolveDefaults(l.cfg.Config)
+	taskID := fmt.Sprintf("%s-tech-writer", l.cfg.PipelineID)
+
+	taskPrompt := agent.BuildTaskPrompt(twAgent.Role, "tech-writer", taskID, l.inboxDir)
+
+	projectDir := l.cfg.WorkDir
+	if len(l.cfg.Projects) > 0 {
+		projectDir = l.cfg.Projects[0].Path
+	}
+
+	l.cfg.Runner.Start(agent.RunConfig{
+		Agent:      twAgent,
+		Global:     l.cfg.Config,
+		TaskPrompt: taskPrompt,
+		WorkDir:    projectDir,
+	})
+
+	fmt.Println("✓ Wiki update completed")
+	return l.transitionTo(StageCompleted)
+}
+
+// --- Helper methods ---
+
+func (l *Loop) transitionTo(stage Stage) error {
+	return l.orch.TransitionTo(stage)
+}
+
+func (l *Loop) findAgent(name string) *config.AgentConfig {
+	if a, ok := l.cfg.Agents[name]; ok {
+		return a
+	}
+	return nil
+}
+
+// findDevAgents returns agent names with development-related roles.
+func (l *Loop) findDevAgents() []string {
+	var devs []string
+	devRoles := map[string]bool{
+		"backend-dev":  true,
+		"frontend-dev": true,
+		"fullstack":    true,
+	}
+
+	for name := range l.cfg.Agents {
+		if devRoles[name] {
+			devs = append(devs, name)
+		}
+	}
+
+	// Also check project-assigned agents
+	if len(l.cfg.Projects) > 0 {
+		for _, p := range l.cfg.Projects {
+			if pCfg, ok := l.cfg.Config.Projects[p.Name]; ok {
+				for _, a := range pCfg.Agents {
+					if l.findAgent(a) != nil && !containsStr(devs, a) {
+						devs = append(devs, a)
+					}
+				}
+			}
+		}
+	}
+
+	return devs
+}
+
+func (l *Loop) buildHandoffContext(taskID string) *protocol.MsgContext {
+	ctx := &protocol.MsgContext{
+		TaskID:     taskID,
+		PipelineID: l.cfg.PipelineID,
+		Summary:    l.cfg.Requirement,
+	}
+
+	// Add blackboard decisions
+	if l.cfg.Store != nil && len(l.cfg.Projects) > 0 {
+		entries, err := l.cfg.Store.GetBlackboardByCategory(l.cfg.Projects[0].Name, "decision")
+		if err == nil {
+			for _, e := range entries {
+				ctx.Decisions = append(ctx.Decisions, fmt.Sprintf("%s: %s", e.Key, e.Value))
+			}
+		}
+	}
+
+	return ctx
+}
+
+func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgContext) error {
+	msg := protocol.NewMessage(protocol.MsgTaskAssign, "orchestrator", agentName)
+	msg.Subject = fmt.Sprintf("Task: %s", l.cfg.Requirement)
+	msg.Context = msgCtx
+	msg.Body = protocol.TaskAssignBody{
+		TaskID:      taskID,
+		Description: l.cfg.Requirement,
+		Branch:      l.cfg.Branch,
+	}
+	return protocol.WriteTask(l.inboxDir, agentName, msg)
+}
+
+func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID string) (string, error) {
+	builder := &agent.ClaudeMDBuilder{MaxLines: 200}
+
+	var projectMemory string
+	if l.cfg.MemManager != nil && len(l.cfg.Projects) > 0 {
+		mem, err := l.cfg.MemManager.GetProactiveContext(l.cfg.Projects[0].Name, l.cfg.Requirement, 0)
+		if err == nil {
+			projectMemory = mem
+		}
+	}
+
+	return builder.Build(agent.BuildInput{
+		CommunicationRules: agent.DefaultCommunicationRules(),
+		TaskContext:        fmt.Sprintf("태스크: %s\n역할: %s", l.cfg.Requirement, agentCfg.Role),
+		CompactionRules:    agent.DefaultCompactionRules(),
+		ProjectMemory:      projectMemory,
+	})
+}
+
+func (l *Loop) processAgentResult(wr WatchResult) {
+	if wr.Envelope == nil {
+		return
+	}
+
+	// Extract learnings and store to memory
+	if l.cfg.MemManager != nil && len(l.cfg.Projects) > 0 {
+		if bodyMap, ok := wr.Envelope.Body.(map[string]any); ok {
+			if learnings, ok := bodyMap["learnings"].([]any); ok {
+				var strs []string
+				for _, l := range learnings {
+					if s, ok := l.(string); ok {
+						strs = append(strs, s)
+					}
+				}
+				if len(strs) > 0 {
+					taskID := ""
+					if wr.Envelope.Context != nil {
+						taskID = wr.Envelope.Context.TaskID
+					}
+					l.cfg.MemManager.StoreLearnings(l.cfg.Projects[0].Name, taskID, wr.AgentName, strs)
+				}
+			}
+		}
+	}
+
+	// Update blackboard with summary
+	if l.cfg.Store != nil && len(l.cfg.Projects) > 0 {
+		if bodyMap, ok := wr.Envelope.Body.(map[string]any); ok {
+			if summary, ok := bodyMap["summary"].(string); ok {
+				l.cfg.Store.PutBlackboard(&store.BlackboardEntry{
+					ProjectID:  l.cfg.Projects[0].Name,
+					Category:   "agent_result",
+					Key:        wr.AgentName,
+					Value:      summary,
+					Confidence: 0.9,
+					Author:     wr.AgentName,
+				})
+			}
+		}
+	}
+}
+
+func (l *Loop) writeFixRequest(results []VerifyResult) {
+	devAgents := l.findDevAgents()
+	failSummary := FailedSummary(results)
+
+	for _, agentName := range devAgents {
+		taskID := fmt.Sprintf("%s-%s-fix-%d", l.cfg.PipelineID, agentName, l.orch.Pipeline.Attempts)
+
+		msg := protocol.NewMessage(protocol.MsgTaskAssign, "orchestrator", agentName)
+		msg.Subject = "검증 실패 수정 요청"
+		msg.Context = &protocol.MsgContext{
+			TaskID:     taskID,
+			PipelineID: l.cfg.PipelineID,
+			Summary:    fmt.Sprintf("검증 실패 수정: %s", failSummary),
+		}
+		msg.Body = protocol.TaskAssignBody{
+			TaskID:      taskID,
+			Description: fmt.Sprintf("다음 검증이 실패했습니다. 수정해주세요:\n%s", failSummary),
+			Branch:      l.cfg.Branch,
+		}
+		protocol.WriteTask(l.inboxDir, agentName, msg)
+	}
+}
+
+func (l *Loop) buildPRBody() string {
+	body := fmt.Sprintf("## 요약\n\n%s\n\n", l.cfg.Requirement)
+	body += fmt.Sprintf("## Pipeline\n\n- ID: `%s`\n- Branch: `%s`\n", l.cfg.PipelineID, l.cfg.Branch)
+
+	// Add agent results summary
+	if len(l.orch.Pipeline.Agents) > 0 {
+		body += "\n## 에이전트 결과\n\n"
+		for name, status := range l.orch.Pipeline.Agents {
+			body += fmt.Sprintf("- %s: %s\n", name, status.Status)
+		}
+	}
+
+	if l.orch.Pipeline.Attempts > 0 {
+		body += fmt.Sprintf("\n## 검증\n\n- 검증 재시도 횟수: %d\n", l.orch.Pipeline.Attempts)
+	}
+
+	return body
+}
+
+// GetOrchestrator returns the underlying orchestrator for external access.
+func (l *Loop) GetOrchestrator() *Orchestrator {
+	return l.orch
+}
+
+// SetPipeline allows setting the pipeline directly (for resume scenarios).
+func (l *Loop) SetPipeline(p *Pipeline) {
+	l.orch.Pipeline = p
+}
+
+func containsStr(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+

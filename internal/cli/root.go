@@ -74,6 +74,7 @@ func init() {
 	rootCmd.AddCommand(newStageCmd())
 	rootCmd.AddCommand(newMemCmd())
 	rootCmd.AddCommand(newSyncMemoryCmd())
+	rootCmd.AddCommand(newResumeCmd())
 }
 
 // Execute runs the root command.

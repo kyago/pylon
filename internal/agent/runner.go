@@ -7,6 +7,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/executor"
+	"github.com/kyago/pylon/internal/git"
 )
 
 // RunConfig holds parameters for running a Claude Code agent.
@@ -105,23 +106,42 @@ func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
 	})
 }
 
+// BuildTaskPrompt generates a short task instruction for a headless agent.
+// The prompt directs the agent to read its inbox for detailed task information.
+func BuildTaskPrompt(role, agentName, taskID, inboxDir string) string {
+	return fmt.Sprintf(
+		"당신은 %s입니다.\ninbox 파일을 읽고 태스크를 수행하세요.\ninbox: %s/%s/%s.task.json\n완료 후 outbox에 결과를 작성하세요.",
+		role, inboxDir, agentName, taskID,
+	)
+}
+
 // PrepareWorkDir sets up the working directory for an agent.
-// For worktree isolation, creates a git worktree.
-// For no isolation, uses the project directory directly.
+// When a WorktreeManager is provided and isolation is "worktree", creates a git worktree.
+// Otherwise, uses the project directory directly.
 func PrepareWorkDir(
-	enabled bool,
-	autoCleanup bool,
+	wm *git.WorktreeManager,
 	agentIsolation string,
 	taskBranch string,
 	projectDir string,
 	agentName string,
 ) (workDir string, cleanup func() error, err error) {
-	if agentIsolation != "worktree" || !enabled {
-		return projectDir, func() error { return nil }, nil
+	noop := func() error { return nil }
+
+	if wm == nil || agentIsolation != "worktree" || !wm.Enabled {
+		return projectDir, noop, nil
 	}
 
-	// Import git package for worktree creation
-	// Since we can't import git package here without circular dependency,
-	// we keep this as a helper that callers wire up with the git.WorktreeManager
-	return projectDir, func() error { return nil }, nil
+	wtPath, err := wm.Create(projectDir, agentName, taskBranch)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create worktree for %s: %w", agentName, err)
+	}
+
+	cleanup = func() error {
+		if wm.AutoCleanup {
+			return wm.Remove(wtPath)
+		}
+		return nil
+	}
+
+	return wtPath, cleanup, nil
 }
