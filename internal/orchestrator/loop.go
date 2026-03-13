@@ -188,7 +188,7 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	l.orch.Pipeline.Agents[agentName] = AgentStatus{
 		TaskID:  taskID,
 		AgentID: agentName,
-		Status:  "running",
+		Status:  AgentStatusRunning,
 	}
 	l.saveState()
 
@@ -202,13 +202,13 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 		ClaudeMD:   claudeMD,
 	})
 	if err != nil {
-		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
+		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusFailed}
 		l.saveState()
 		return fmt.Errorf("agent %s execution failed: %w", agentName, err)
 	}
 
 	if result.ExitCode != 0 {
-		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "failed"}
+		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusFailed}
 		l.saveState()
 		return fmt.Errorf("agent %s exited with code %d: %s", agentName, result.ExitCode, result.Stderr)
 	}
@@ -218,11 +218,13 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
 			l.processAgentResult(wr)
-			markProcessed(filepath.Dir(wr.FilePath), filepath.Base(wr.FilePath))
+			if err := markProcessed(filepath.Dir(wr.FilePath), filepath.Base(wr.FilePath)); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠ failed to mark processed %s: %v\n", wr.FilePath, err)
+			}
 		}
 	}
 
-	l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: "completed"}
+	l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusCompleted}
 	l.saveState()
 
 	return nil
@@ -424,12 +426,12 @@ func (l *Loop) findDevAgents() []string {
 		}
 	}
 
-	// Also check project-assigned agents
+	// Also check project-assigned agents (only if they match devRoles)
 	if len(l.cfg.Projects) > 0 {
 		for _, p := range l.cfg.Projects {
 			if pCfg, ok := l.cfg.Config.Projects[p.Name]; ok {
 				for _, a := range pCfg.Agents {
-					if l.findAgent(a) != nil && !containsStr(devs, a) {
+					if devRoles[a] && l.findAgent(a) != nil && !containsStr(devs, a) {
 						devs = append(devs, a)
 					}
 				}
@@ -565,10 +567,16 @@ func (l *Loop) buildPRBody() string {
 	body := fmt.Sprintf("## 요약\n\n%s\n\n", l.cfg.Requirement)
 	body += fmt.Sprintf("## Pipeline\n\n- ID: `%s`\n- Branch: `%s`\n", l.cfg.PipelineID, l.cfg.Branch)
 
-	// Add agent results summary
+	// Add agent results summary (sorted for deterministic output)
 	if len(l.orch.Pipeline.Agents) > 0 {
 		body += "\n## 에이전트 결과\n\n"
-		for name, status := range l.orch.Pipeline.Agents {
+		agentNames := make([]string, 0, len(l.orch.Pipeline.Agents))
+		for name := range l.orch.Pipeline.Agents {
+			agentNames = append(agentNames, name)
+		}
+		sort.Strings(agentNames)
+		for _, name := range agentNames {
+			status := l.orch.Pipeline.Agents[name]
 			body += fmt.Sprintf("- %s: %s\n", name, status.Status)
 		}
 	}

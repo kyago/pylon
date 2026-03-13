@@ -38,6 +38,13 @@ var validTransitions = map[Stage][]Stage{
 	StageWikiUpdate:        {StageCompleted, StageFailed},
 }
 
+// Agent execution status constants.
+const (
+	AgentStatusRunning   = "running"
+	AgentStatusCompleted = "completed"
+	AgentStatusFailed    = "failed"
+)
+
 // AgentStatus tracks the state of an agent within a pipeline.
 type AgentStatus struct {
 	TaskID  string `json:"task_id"`

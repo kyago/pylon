@@ -49,7 +49,7 @@ func runResume(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load conversation %s: %w", conversationID, err)
 	}
 
-	if conv.Meta.Status != "active" {
+	if conv.Meta.Status != orchestrator.ConvStatusActive {
 		return fmt.Errorf("conversation %s is not active (status: %s)", conversationID, conv.Meta.Status)
 	}
 

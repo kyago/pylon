@@ -18,7 +18,7 @@ func TestConversationManager_Create(t *testing.T) {
 	if conv.ID != "conv-001" {
 		t.Errorf("ID = %s, want conv-001", conv.ID)
 	}
-	if conv.Meta.Status != "active" {
+	if conv.Meta.Status != ConvStatusActive {
 		t.Errorf("status = %s, want active", conv.Meta.Status)
 	}
 
@@ -86,7 +86,7 @@ func TestConversationManager_Load(t *testing.T) {
 	if conv.ID != "conv-003" {
 		t.Errorf("ID = %s, want conv-003", conv.ID)
 	}
-	if conv.Meta.Status != "active" {
+	if conv.Meta.Status != ConvStatusActive {
 		t.Errorf("status = %s, want active", conv.Meta.Status)
 	}
 }
@@ -197,7 +197,7 @@ func TestConversationManager_SaveMeta_WithAmbiguity(t *testing.T) {
 	mgr.Create("conv-amb", "모호성 테스트")
 
 	meta := ConversationMeta{
-		Status:         "active",
+		Status:         ConvStatusActive,
 		AmbiguityScore: 0.35,
 		ClarityScores: &ClarityScores{
 			Goal:        0.8,
@@ -231,7 +231,7 @@ func TestConversationMeta_CompletedAt_SessionID_Roundtrip(t *testing.T) {
 	mgr.Create("conv-rt", "라운드트립 테스트")
 
 	meta := ConversationMeta{
-		Status:      "completed",
+		Status:      ConvStatusCompleted,
 		StartedAt:   "2026-03-13T10:00:00+09:00",
 		CompletedAt: "2026-03-13T11:00:00+09:00",
 		SessionID:   "session-abc-123",
@@ -262,7 +262,7 @@ func TestConversationMeta_OmitEmpty(t *testing.T) {
 
 	// Save without CompletedAt and SessionID
 	meta := ConversationMeta{
-		Status:    "active",
+		Status:    ConvStatusActive,
 		StartedAt: "2026-03-13T10:00:00+09:00",
 	}
 	if err := mgr.SaveMeta("conv-omit", meta); err != nil {
@@ -288,7 +288,7 @@ func TestConversationManager_SaveMeta(t *testing.T) {
 	mgr.Create("conv-004", "메타 업데이트")
 
 	newMeta := ConversationMeta{
-		Status:   "completed",
+		Status:   ConvStatusCompleted,
 		TaskID:   "task-123",
 		Projects: []string{"proj-a"},
 	}
@@ -300,7 +300,7 @@ func TestConversationManager_SaveMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if conv.Meta.Status != "completed" {
+	if conv.Meta.Status != ConvStatusCompleted {
 		t.Errorf("status = %s, want completed", conv.Meta.Status)
 	}
 	if conv.Meta.TaskID != "task-123" {

@@ -10,6 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Conversation status constants.
+const (
+	ConvStatusActive    = "active"
+	ConvStatusCompleted = "completed"
+	ConvStatusCancelled = "cancelled"
+)
+
 // ConversationManager manages conversation thread files.
 // Spec Reference: Section 9 "Conversation History"
 type ConversationManager struct {
@@ -56,7 +63,7 @@ func (c *ConversationManager) Create(id, title string) (*Conversation, error) {
 	}
 
 	meta := ConversationMeta{
-		Status:    "active",
+		Status:    ConvStatusActive,
 		StartedAt: time.Now().Format(time.RFC3339),
 	}
 

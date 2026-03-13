@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -137,7 +139,10 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		Projects:    projects,
 	})
 
-	err = loop.Run(context.Background())
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	err = loop.Run(ctx)
 
 	if errors.Is(err, orchestrator.ErrInteractiveRequired) {
 		// PO conversation stage reached — launch PO interactively
@@ -168,7 +173,9 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		// Transition past PO for the --continue path
 		// (ExecInteractive replaces the process on success, so state must be saved before)
 		orch := loop.GetOrchestrator()
-		orch.TransitionTo(orchestrator.StageArchitectAnalysis)
+		if err := orch.TransitionTo(orchestrator.StageArchitectAnalysis); err != nil {
+			return fmt.Errorf("failed to transition to architect analysis: %w", err)
+		}
 
 		execErr := poRunner.Executor.ExecInteractive(executor.ExecConfig{
 			Name:    "po",
