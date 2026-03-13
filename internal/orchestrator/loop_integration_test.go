@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,16 +163,18 @@ func TestIntegration_CrashRecovery(t *testing.T) {
 	// Create new loop — should recover from state.json
 	exec := &testExecutor{exitCode: 0}
 	lcfg := newTestLoopConfig(dir, exec)
+	lcfg.PipelineID = "crash-test" // match the crashed pipeline ID for recovery
 	loop := NewLoop(lcfg)
 
 	err := loop.Run(context.Background())
 
-	// Should have recovered and continued from architect stage
-	if err == nil {
-		t.Log("Pipeline recovered and completed")
+	// Recovery should succeed and agents should be called.
+	// Pipeline will eventually fail at PR creation (no git repo in temp dir), which is expected.
+	if err != nil && !strings.Contains(err.Error(), "push branch") && !strings.Contains(err.Error(), "create PR") {
+		t.Fatalf("unexpected error (not PR-related): %v", err)
 	}
 
-	// Verify agents were called (recovered pipeline continues)
+	// Verify agents were called (recovered pipeline continues from architect stage)
 	if len(exec.runCalls) == 0 {
 		t.Error("expected agent calls after recovery")
 	}

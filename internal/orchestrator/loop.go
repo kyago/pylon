@@ -56,9 +56,20 @@ func NewLoop(cfg LoopConfig) *Loop {
 // Run executes the pipeline from its current stage until completion or failure.
 // If the pipeline is already at a PO interactive stage, it returns ErrInteractiveRequired.
 func (l *Loop) Run(ctx context.Context) error {
-	// Try to recover existing state
-	if err := l.orch.Recover(); err != nil {
-		return fmt.Errorf("recovery failed: %w", err)
+	// Try to recover existing state (for --continue scenarios).
+	// Skip recovery if a pipeline was pre-set via SetPipeline() to avoid clobbering it.
+	if l.orch.Pipeline == nil {
+		if err := l.orch.Recover(); err != nil {
+			return fmt.Errorf("recovery failed: %w", err)
+		}
+
+		// If the recovered pipeline ID doesn't match, start fresh.
+		if l.orch.Pipeline != nil && l.cfg.PipelineID != "" &&
+			l.orch.Pipeline.ID != l.cfg.PipelineID {
+			fmt.Fprintf(os.Stderr, "⚠ recovered pipeline %s does not match expected %s, starting fresh\n",
+				l.orch.Pipeline.ID, l.cfg.PipelineID)
+			l.orch.Pipeline = nil
+		}
 	}
 
 	// If no pipeline recovered, start a new one
@@ -306,8 +317,8 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	// Retry: go back to agent execution (Transition increments Attempts and enforces MaxAttempts)
 	err = l.transitionTo(StageAgentExecuting)
 	if err != nil {
-		return fmt.Errorf("verification failed after %d attempts:\n%s",
-			l.orch.Pipeline.Attempts, FailedSummary(results))
+		return fmt.Errorf("verification failed after %d attempts (%w):\n%s",
+			l.orch.Pipeline.Attempts, err, FailedSummary(results))
 	}
 	return nil
 }
@@ -373,6 +384,8 @@ func (l *Loop) runWikiUpdate(ctx context.Context) error {
 		projectDir = l.cfg.Projects[0].Path
 	}
 
+	// NOTE: wiki update는 inbox/outbox 프로토콜 없이 fire-and-forget으로 실행.
+	// 실패해도 파이프라인 진행에 영향 없음. 태스크 추적/worktree 격리가 필요하면 executeAgent로 전환.
 	result, err := l.cfg.Runner.Start(agent.RunConfig{
 		Ctx:        ctx,
 		Agent:      twAgent,

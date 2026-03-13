@@ -86,6 +86,7 @@ func (w *OutboxWatcher) PollOnce() ([]WatchResult, error) {
 }
 
 // WaitForResults blocks until results from all expected agents are found or context is cancelled.
+// NOTE: Phase 0에서는 순차 실행 후 PollOnce()를 사용. 비동기 병렬 에이전트 실행 시 활용 예정.
 func (w *OutboxWatcher) WaitForResults(ctx context.Context, expectedAgents []string) ([]WatchResult, error) {
 	if len(expectedAgents) == 0 {
 		return nil, nil
