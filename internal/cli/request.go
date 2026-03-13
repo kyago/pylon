@@ -1,21 +1,31 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/kyago/pylon/internal/agent"
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/executor"
 	"github.com/kyago/pylon/internal/git"
+	"github.com/kyago/pylon/internal/memory"
 	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/slug"
 	"github.com/kyago/pylon/internal/store"
 )
 
+var flagContinue string
+
 func newRequestCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "request [requirement]",
 		Short: "Submit a new requirement for the AI agent team",
 		Long: `Submit a natural language requirement for the AI agent team to implement.
@@ -23,10 +33,16 @@ func newRequestCmd() *cobra.Command {
 The PO agent will analyze the requirement, ask clarifying questions,
 and orchestrate the team to deliver the implementation.
 
+Use --continue to resume a pipeline after PO conversation completes.
+
 Spec Reference: Section 7 "pylon request"`,
 		Args: cobra.ExactArgs(1),
 		RunE: runRequest,
 	}
+
+	cmd.Flags().StringVar(&flagContinue, "continue", "", "continue a pipeline from the given ID (after PO conversation)")
+
+	return cmd
 }
 
 func runRequest(cmd *cobra.Command, args []string) error {
@@ -60,52 +76,134 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	// Create orchestrator
-	orch := orchestrator.NewOrchestrator(cfg, s, root)
-
-	// Attempt recovery of previous state
-	if err := orch.Recover(); err != nil {
-		fmt.Printf("⚠ Recovery warning: %v\n", err)
+	// Load agents and projects
+	agents, err := config.LoadAllAgents(root)
+	if err != nil {
+		fmt.Printf("⚠ Agent loading warning: %v\n", err)
+		agents = make(map[string]*config.AgentConfig)
 	}
 
-	// Generate pipeline ID
-	pipelineID := generatePipelineID(requirement)
-
-	fmt.Printf("📋 Pipeline: %s\n", pipelineID)
-	fmt.Printf("📝 Requirement: %s\n", requirement)
-	fmt.Println()
-
-	// Step 1: Start pipeline
-	if err := orch.StartPipeline(pipelineID); err != nil {
-		return fmt.Errorf("failed to start pipeline: %w", err)
+	projects, err := config.DiscoverProjects(root)
+	if err != nil {
+		fmt.Printf("⚠ Project discovery warning: %v\n", err)
 	}
-	fmt.Println("✓ Pipeline created")
 
-	// Step 2: Create conversation
+	if len(projects) == 0 {
+		return fmt.Errorf("no projects found in workspace. Run 'pylon add-project' first")
+	}
+
+	// Generate or use provided pipeline ID
+	pipelineID := flagContinue
+	if pipelineID == "" {
+		pipelineID = generatePipelineID(requirement)
+	}
+
+	// Create git branch
+	branch := git.BranchName(cfg.Git.BranchPrefix, slug.Slugify(requirement))
+
+	// Create conversation (if new pipeline)
 	convDir := filepath.Join(root, ".pylon", "conversations")
 	convMgr := orchestrator.NewConversationManager(convDir)
 
-	conv, err := convMgr.Create(pipelineID, requirement)
+	if flagContinue == "" {
+		fmt.Printf("📋 Pipeline: %s\n", pipelineID)
+		fmt.Printf("📝 Requirement: %s\n", requirement)
+		fmt.Printf("🌿 Branch: %s\n", branch)
+		fmt.Println()
+
+		if _, err := convMgr.Create(pipelineID, requirement); err != nil {
+			return fmt.Errorf("failed to create conversation: %w", err)
+		}
+	} else {
+		fmt.Printf("📋 Resuming pipeline: %s\n", pipelineID)
+		fmt.Println()
+	}
+
+	// Build dependencies
+	memMgr := memory.NewManager(s, cfg.Memory)
+	runner := agent.NewRunner(executor.NewDirectExecutor())
+	wtMgr := git.NewWorktreeManager(cfg.Git.Worktree.Enabled, cfg.Git.Worktree.AutoCleanup)
+
+	// Create and run the orchestration loop
+	loop := orchestrator.NewLoop(orchestrator.LoopConfig{
+		Config:      cfg,
+		Store:       s,
+		WorkDir:     root,
+		PipelineID:  pipelineID,
+		Requirement: requirement,
+		Branch:      branch,
+		MemManager:  memMgr,
+		Runner:      runner,
+		WorktreeMgr: wtMgr,
+		Agents:      agents,
+		Projects:    projects,
+	})
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	err = loop.Run(ctx)
+
+	if errors.Is(err, orchestrator.ErrInteractiveRequired) {
+		// PO conversation stage reached — launch PO interactively
+		fmt.Println("🚀 PO 에이전트와 대화를 시작합니다...")
+		fmt.Println()
+		fmt.Printf("  대화 완료 후 headless 실행: pylon request --continue %s \"%s\"\n", pipelineID, requirement)
+		fmt.Println()
+
+		// Launch PO agent interactively
+		poAgent := agents["po"]
+		if poAgent == nil {
+			return fmt.Errorf("PO agent not found in workspace agents")
+		}
+		poAgent.ResolveDefaults(cfg)
+
+		poRunner := agent.NewRunner(executor.NewDirectExecutor())
+		claudeMD, buildErr := (&agent.ClaudeMDBuilder{MaxLines: 200}).Build(agent.BuildInput{
+			CommunicationRules: agent.DefaultCommunicationRules(),
+			TaskContext:        fmt.Sprintf("요구사항 분석: %s", requirement),
+			CompactionRules:    agent.DefaultCompactionRules(),
+		})
+		if buildErr != nil {
+			return fmt.Errorf("failed to build CLAUDE.md for PO: %w", buildErr)
+		}
+
+		// Pre-validate claude CLI before state transition
+		if _, lookErr := exec.LookPath("claude"); lookErr != nil {
+			return fmt.Errorf("claude CLI not found: %w", lookErr)
+		}
+
+		// Transition past PO for the --continue path
+		// (ExecInteractive replaces the process on success, so state must be saved before)
+		orch := loop.GetOrchestrator()
+		if err := orch.TransitionTo(orchestrator.StageArchitectAnalysis); err != nil {
+			return fmt.Errorf("failed to transition to architect analysis: %w", err)
+		}
+
+		execErr := poRunner.Executor.ExecInteractive(executor.ExecConfig{
+			Name:    "po",
+			Command: "claude",
+			Args: poRunner.BuildArgs(agent.RunConfig{
+				Agent:       poAgent,
+				Global:      cfg,
+				Interactive: true,
+				ClaudeMD:    claudeMD,
+			}),
+			WorkDir: projects[0].Path,
+			Env:     agent.ResolveEnv(cfg.Runtime.Env, poAgent.Env),
+		})
+
+		// ExecInteractive returns only on failure — rollback state
+		_ = orch.ForceStage(orchestrator.StagePOConversation)
+		return fmt.Errorf("failed to launch PO agent: %w", execErr)
+	}
+
 	if err != nil {
-		return fmt.Errorf("failed to create conversation: %w", err)
-	}
-	fmt.Printf("✓ Conversation: %s\n", conv.ID)
-
-	// Step 3: Create git branch
-	branch := git.BranchName(cfg.Git.BranchPrefix, slug.Slugify(requirement))
-	fmt.Printf("✓ Branch: %s\n", branch)
-
-	// Step 4: Transition to PO conversation
-	if err := orch.TransitionTo(orchestrator.StagePOConversation); err != nil {
-		return fmt.Errorf("failed to transition to PO conversation: %w", err)
+		return err
 	}
 
 	fmt.Println()
-	fmt.Println("🚀 Pipeline started. PO agent will begin shortly.")
-	fmt.Println()
-	fmt.Printf("  Monitor: pylon status\n")
-	fmt.Printf("  Cancel:  pylon cancel %s\n", pipelineID)
-
+	fmt.Println("✅ Pipeline completed successfully!")
 	return nil
 }
 

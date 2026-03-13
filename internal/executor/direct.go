@@ -83,7 +83,12 @@ func (d *DirectExecutor) RunHeadless(cfg ExecConfig) (*ExecResult, error) {
 		return nil, fmt.Errorf("command not found: %s: %w", cfg.Command, err)
 	}
 
-	cmd := exec.Command(binPath, cfg.Args...)
+	var cmd *exec.Cmd
+	if cfg.Ctx != nil {
+		cmd = exec.CommandContext(cfg.Ctx, binPath, cfg.Args...)
+	} else {
+		cmd = exec.Command(binPath, cfg.Args...)
+	}
 
 	if cfg.WorkDir != "" {
 		cmd.Dir = cfg.WorkDir
@@ -92,6 +97,11 @@ func (d *DirectExecutor) RunHeadless(cfg ExecConfig) (*ExecResult, error) {
 	// Set environment: cfg.Env values override inherited vars.
 	if env := buildEnv(cfg.Env); env != nil {
 		cmd.Env = env
+	}
+
+	// Connect stdin if provided.
+	if cfg.Stdin != nil {
+		cmd.Stdin = cfg.Stdin
 	}
 
 	// If callers provide writers, stream directly; otherwise capture into buffers.

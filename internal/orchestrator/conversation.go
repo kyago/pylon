@@ -10,6 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Conversation status constants.
+const (
+	ConvStatusActive    = "active"
+	ConvStatusCompleted = "completed"
+	ConvStatusCancelled = "cancelled"
+)
+
 // ConversationManager manages conversation thread files.
 // Spec Reference: Section 9 "Conversation History"
 type ConversationManager struct {
@@ -28,6 +35,8 @@ type ClarityScores struct {
 type ConversationMeta struct {
 	Status         string         `yaml:"status"`
 	StartedAt      string         `yaml:"started_at"`
+	CompletedAt    string         `yaml:"completed_at,omitempty"`
+	SessionID      string         `yaml:"session_id,omitempty"`
 	Projects       []string       `yaml:"projects,omitempty"`
 	TaskID         string         `yaml:"task_id,omitempty"`
 	AmbiguityScore float64        `yaml:"ambiguity_score"`
@@ -54,7 +63,7 @@ func (c *ConversationManager) Create(id, title string) (*Conversation, error) {
 	}
 
 	meta := ConversationMeta{
-		Status:    "active",
+		Status:    ConvStatusActive,
 		StartedAt: time.Now().Format(time.RFC3339),
 	}
 

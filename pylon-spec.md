@@ -29,9 +29,11 @@
 - **워크스페이스**: 루트 git repo. 팀 도메인 지식 + 프로젝트들의 상위 디렉토리
 - **프로젝트**: 워크스페이스 하위 git submodule. 독립적인 코드 저장소
 - **오케스트레이터**: Go 프로세스. 모든 에이전트의 생명주기를 관리하고, 에이전트 간 통신을 중재하는 핵심 프로세스
-- **루트 에이전트**: 워크스페이스 레벨에서 동작하는 에이전트. 기본 구성: PO, PM, Architect, Tech Writer. 사용자가 자유롭게 커스텀 가능
+- **루트 에이전트**: 워크스페이스 레벨에서 동작하는 에이전트. 기본 구성: PO, PM, Architect, Tech Writer, Reviewer. 사용자가 자유롭게 커스텀 가능
 - **프로젝트 에이전트**: 프로젝트 레벨에서 실제 구현하는 에이전트 (개발자/디자이너/QA 등)
-- **도메인 지식 (위키)**: 팀 컨벤션, 비즈니스 룰, 아키텍처 결정 등 축적되는 컨텍스트. 항상 AI 기반으로 생성/갱신하며 사용자가 직접 수정하지 않음. 수정이 필요하면 루트 에이전트에게 요청
+- **도메인 지식**: 2계층으로 분리 관리되는 프로젝트 컨텍스트
+  - **사람 소유 (AI read-only)**: `.specify/memory/constitution.md` — 프로젝트 헌법, 개발 원칙. 사람이 정의하고 에이전트는 읽기만 가능
+  - **AI 소유 (자동 생성/갱신)**: `.pylon/domain/*` — 학습된 컨벤션, 아키텍처 결정, 용어 사전. AI 기반으로 생성/갱신하며 사용자가 직접 수정하지 않음. 수정이 필요하면 루트 에이전트에게 요청
 - **대화 (conversation)**: 사용자 ↔ PO 에이전트 간 요구사항 구체화 인터랙션 기록
 
 ## 4. 워크스페이스 구조
@@ -48,7 +50,8 @@ workspace/                              ← git repo (루트)
 │   │   ├── po.md                       ← PO 에이전트 (요구사항 분석, 수용 기준)
 │   │   ├── pm.md                       ← PM 에이전트 (태스크 분해, 실행 조율)
 │   │   ├── architect.md                ← Architect 에이전트 (기술 방향성, 의존성)
-│   │   └── tech-writer.md              ← Tech Writer 에이전트 (위키/문서 갱신)
+│   │   ├── tech-writer.md              ← Tech Writer 에이전트 (위키/문서 갱신)
+│   │   └── reviewer.md                 ← Reviewer 에이전트 (Constitution 검증 전담)
 │   ├── skills/                         ← 에이전트 전문 지식 (preload 대상, 선택)
 │   │   ├── api-design-guide.md         ← backend-dev에 preload
 │   │   └── test-strategy.md            ← qa에 preload
@@ -70,16 +73,28 @@ workspace/                              ← git repo (루트)
 │   └── tasks/                          ← 확정된 작업 지시서 (Source of Truth)
 │       └── 20260305-user-login.md      ← 최종 작업 지시서
 ├── project-api/                        ← git submodule
-│   └── .pylon/
-│       ├── agents/
-│       │   ├── backend-dev.md
-│       │   └── qa.md
-│       ├── verify.yml                  ← 교차 검증 명령어 (빌드/테스트/린트)
-│       └── context.md                  ← 프로젝트 고유 컨텍스트 (AI 자동 생성)
+│   ├── .pylon/
+│   │   ├── agents/
+│   │   │   ├── backend-dev.md
+│   │   │   └── qa.md
+│   │   ├── verify.yml                  ← 교차 검증 명령어 (빌드/테스트/린트)
+│   │   └── context.md                  ← 프로젝트 고유 컨텍스트 (AI 자동 생성)
+│   └── .specify/                       ← speckit 산출물 (pylon add-project 시 자동 생성)
+│       ├── memory/
+│       │   └── constitution.md         ← 프로젝트 헌법 (사람 소유, AI read-only)
+│       ├── specs/
+│       │   └── {###-feature}/
+│       │       ├── spec.md             ← 사용자 스토리 + 수용 기준
+│       │       ├── plan.md             ← 기술 접근 + 헌법 검증
+│       │       ├── tasks.md            ← Phase별 작업 분해 ([P] = 병렬 가능)
+│       │       ├── contracts/          ← API 계약 (YAML)
+│       │       └── data-model.md       ← 데이터 모델
+│       └── templates/                  ← 산출물 템플릿
 ├── project-web/                        ← git submodule
-│   └── .pylon/
-│       └── agents/
-│           └── frontend-dev.md
+│   ├── .pylon/
+│   │   └── agents/
+│   │       └── frontend-dev.md
+│   └── .specify/                       ← speckit 산출물
 └── ...
 ```
 
@@ -104,6 +119,15 @@ tools:
   - git
   - gh
   - docker
+capabilities:                  # 에이전트 능력 메타데이터 (PM의 태스크 매칭에 활용)
+  accepts:                     # 수용 가능한 입력 유형
+    - api_contract
+    - schema_definition
+    - test_spec
+  produces:                    # 생성하는 산출물 유형
+    - implementation
+    - unit_tests
+    - migration
 maxTurns: 30                   # 최대 LLM 턴 수 (기본: config.yml의 max_turns)
 permissionMode: acceptEdits    # 권한 모드 (기본: config.yml의 permission_mode)
 isolation: worktree            # 격리 방식 (기본: worktree)
@@ -141,6 +165,7 @@ project-api의 백엔드 기능을 구현하는 개발자.
 | `permissionMode` | string | | config.yml `permission_mode` | `default` \| `acceptEdits` \| `bypassPermissions` |
 | `isolation` | string | | `worktree` | `none` \| `worktree`. 에이전트 작업 환경 격리 방식 |
 | `model` | string | | backend 기본 | `sonnet` \| `opus` \| `haiku` 등. 에이전트별 모델 지정 |
+| `capabilities` | object | | - | 에이전트 능력 메타데이터. `accepts`: 수용 가능한 입력 유형 배열, `produces`: 생성하는 산출물 유형 배열. PM의 태스크-에이전트 매칭에 활용. **매칭 방식**: Phase 0에서는 PM 에이전트가 LLM 판단으로 capabilities를 참고하여 매칭. 정형화된 매칭 알고리즘은 Phase 2에서 정의 |
 | `env` | map | | config.yml `env` | 에이전트별 환경변수 override |
 
 **permissionMode 상세**:
@@ -153,7 +178,7 @@ project-api의 백엔드 기능을 구현하는 개발자.
 
 ## 6. 루트 에이전트 기본 구성
 
-기본 4종의 루트 에이전트를 제공하며, 사용자가 자유롭게 추가/수정/삭제 가능.
+기본 5종의 루트 에이전트를 제공하며, 사용자가 자유롭게 추가/수정/삭제 가능.
 
 | 에이전트 | 역할 | 활성 시점 |
 |----------|------|-----------|
@@ -161,6 +186,24 @@ project-api의 백엔드 기능을 구현하는 개발자.
 | **PM** (Project Manager) | 태스크 분해, 에이전트 조율, 실행 관리, 에러 처리/에스컬레이션 | 요구사항 확정 후 |
 | **Architect** | 크로스 프로젝트 아키텍처 결정, 기술 방향성, 프로젝트 간 의존성 분석 | 태스크 분해 시 PM이 호출 |
 | **Tech Writer** | 위키/도메인 지식 갱신, 프로젝트 context.md 관리, 문서 품질 | 작업 완료 후 |
+| **Reviewer** | Constitution 검증 전담. 산출물의 constitution.md 준수 여부를 독립적/객관적으로 검증. speckit CLI의 `speckit analyze` 활용 | speckit 산출물 생성/수정 완료 시 |
+
+### speckit 전용 모드 에이전트 역할
+
+speckit 산출물(`.specify/`)이 존재하는 프로젝트에서는 에이전트 역할이 재정의된다. 산출물이 이미 존재하므로 에이전트는 "생성"이 아닌 "검증/보완/실행"에 집중한다.
+
+| 에이전트 | speckit 모드 역할 | speckit 산출물 수정 권한 |
+|---------|------------------|------------------------|
+| **PO** | 보완자 (Enricher) | spec.md: 제안 → PO 대화 중 사람 승인 후 write. speckit CLI의 `speckit clarify` + `speckit analyze` 활용 |
+| **Architect** | 검증 + 조정자 | plan.md (write 직접), contracts/ (write 직접). constitution.md 대비 기술 적합성 검증 |
+| **PM** | 할당 + 조율자 | tasks.md (read-only). [P] 마커 파싱 → 병렬/직렬 결정 → Agent Card 매칭 → 태스크 할당. 실행 모니터링 + 에러 처리 + 에스컬레이션 |
+| **Developer** | 구현자 | contracts/ 제한적 write (사소한 조정: 필드 타입 변경, 엔드포인트 세부 조정, 응답 필드 추가). 구조적 변경은 Architect에 에스컬레이션 |
+| **Tech Writer** | 도메인 지식 전담 | `.pylon/domain/*` (write), context.md (write), constitution.md (read-only). 작업 완료 후 변경사항 분석 → 위키 갱신 |
+| **Reviewer** | Constitution 검증 전담 | 전체 산출물 read (검증만). speckit CLI의 `speckit analyze` 활용하여 산출물 간 교차 일관성 분석 + constitution.md 준수 여부 검증 |
+
+**Developer의 구조적 변경 에스컬레이션 기준**: 엔드포인트 삭제/추가, 인증 방식 변경, DB 스키마 구조 변경 등 contracts/의 구조를 바꾸는 작업은 Architect에게 에스컬레이션한다.
+
+> **참고: speckit CLI 커맨드** — 위 표에서 언급되는 `speckit analyze`, `speckit clarify` 등은 pylon CLI 서브커맨드가 아니라 **speckit CLI의 커맨드**이다. 에이전트가 CLAUDE.md의 지시에 따라 셸에서 직접 실행하는 외부 도구이며, pylon의 Section 7 "명령 인터페이스"에는 포함되지 않는다.
 
 ## 7. 명령 인터페이스
 
@@ -177,9 +220,10 @@ project-api의 백엔드 기능을 구현하는 개발자.
 ### `pylon add-project <name> [--repo <url>]`
 
 - git submodule로 프로젝트 추가
+- **speckit 자동 초기화**: 프로젝트 추가 시 `specify init` 자동 실행 → `.specify/` 디렉토리 생성. 모든 프로젝트에 `.specify/` 존재가 보장됨
 - **AI 기반 자동 구성**: 코드베이스를 분석하여 AI가 적절한 에이전트 구성을 제안 → 사용자 확인 후 생성
 - 코드베이스 분석하여 `.pylon/context.md` 자동 생성
-- 결과: submodule 추가 + 프로젝트별 `.pylon/` 생성
+- 결과: submodule 추가 + 프로젝트별 `.pylon/` + `.specify/` 생성
 
 ### `pylon request "<요구사항>"`
 
@@ -221,12 +265,17 @@ project-api의 백엔드 기능을 구현하는 개발자.
 ### `pylon resume <conversation-id>`
 
 - 중단된 대화 재개
-- 기존 대화 컨텍스트를 로드하여 PO 에이전트와 대화 계속
+- **conversation-id**: `conversations/` 하위 디렉토리명 (예: `20260305-143022-user-login`)
+- **재개 방식**: Claude Code CLI의 `--resume {session_id}` 활용
+  - `meta.yml`에 `session_id` 필드를 저장하여 CLI 세션과 연결
+  - CLI가 세션 상태를 자체 복원하므로 thread.md 재주입 불필요
+- **전제 조건**: `meta.yml`의 `status`가 `active`인 대화만 재개 가능
 
 ### `pylon cleanup`
 
 - 좀비 에이전트 프로세스 정리
 - 비정상 종료된 에이전트 프로세스 일괄 제거
+- **Phase 0 이후 구현** (Phase 0에서는 `pylon cancel`로 정상 종료 처리)
 
 ### `pylon destroy`
 
@@ -326,8 +375,23 @@ claude \
   --permission-mode {permissionMode} \         # 권한 모드
   --model {model} \                            # 모델 지정 (선택)
   --append-system-prompt "$(cat claude.md)" \  # 통신 규칙 + 컨텍스트 주입
-  --prompt "{task_prompt}"                     # 태스크 프롬프트
+  --prompt "{task_prompt}"                     # 태스크 프롬프트 (아래 조립 규칙 참조)
 ```
+
+#### task_prompt 조립 규칙
+
+오케스트레이터가 에이전트 실행 시 `--prompt`에 넣는 내용은 **짧은 지시**만 포함한다. 태스크 상세는 inbox 파일에 위임한다.
+
+**--prompt 내용 (3~5줄)**:
+```
+당신은 {role}입니다.
+inbox 파일을 읽고 태스크를 수행하세요.
+inbox: .pylon/runtime/inbox/{agent-name}/{task-id}.task.json
+완료 후 outbox에 결과를 작성하세요.
+```
+
+- **inbox 파일**: 기존 MessageEnvelope (`body` + `context`) 그대로 사용
+- **CLAUDE.md**: 통신 규칙 상세 + 컨벤션 (200줄 제한 유지, `--append-system-prompt`로 주입)
 
 #### 인터랙티브 에이전트 (PO)
 
@@ -787,6 +851,31 @@ wiki.updated              -- 위키 갱신
 - 검증 실패 시 에이전트에게 실패 로그를 전달하여 수정 기회 부여
 - 검증도 `max_attempts` 횟수에 포함
 
+#### verify.yml 스키마
+
+```yaml
+# .pylon/verify.yml
+build:
+  command: "go build ./..."
+  timeout: 120s           # 선택, 기본 60s
+
+test:
+  command: "go test ./..."
+  timeout: 300s
+
+lint:
+  command: "golangci-lint run"
+```
+
+| 필드 | 필수 | 기본값 | 설명 |
+|------|------|--------|------|
+| `{category}.command` | 필수 | - | 실행할 검증 명령어 |
+| `{category}.timeout` | 선택 | `60s` | 명령어 타임아웃 |
+
+- **카테고리**: `build`, `test`, `lint`를 최상위 키로 사용
+- **실행 순서**: build → test → lint (위에서 아래로 순차 실행)
+- **실패 정책**: 하나라도 실패 시 전체 실패 → 에이전트에게 수정 요청
+
 ### 에러 처리
 
 - 프로젝트 에이전트 실패 → PM 에이전트에게 보고
@@ -794,10 +883,13 @@ wiki.updated              -- 위키 갱신
   - 자동 재시도 (최대 `max_attempts`회, 기본 2회 — 최초 1회 + 재시도 1회)
   - 모든 시도 실패 시 자동으로 사람에게 에스컬레이션
 
-### 도메인 지식 (위키) 업데이트
+### 도메인 지식 업데이트
 
-- **항상 AI 기반 생성/갱신**: 사용자가 직접 수정하지 않음. 수정이 필요하면 루트 에이전트에게 요청
-- **갱신 담당**: Tech Writer 에이전트
+**2계층 분리 원칙**:
+- **사람 소유 (AI read-only)**: `.specify/memory/constitution.md` — 프로젝트 헌법, 개발 원칙. 에이전트는 읽기만 가능
+- **AI 소유 (자동 생성/갱신)**: `.pylon/domain/*` — 학습된 컨벤션, 아키텍처 결정, 용어 사전. 사용자가 직접 수정하지 않음. 수정이 필요하면 루트 에이전트에게 요청
+
+- **갱신 담당**: Tech Writer 에이전트 (`.pylon/domain/*`와 `context.md` 갱신. `constitution.md`는 수정 불가)
 - **갱신 트리거**: `config.yml`의 `wiki.update_on`으로 설정 (`task_complete`, `pr_merged` 중 선택)
 - 변경된 코드를 분석하여 domain/ 파일 및 프로젝트 context.md 갱신
 
@@ -942,6 +1034,121 @@ wiki.updated              -- 위키 갱신
 
 - **벡터 임베딩 시맨틱 검색**: BM25 풀텍스트 검색을 보완하는 벡터 기반 유사도 검색. 로컬 임베딩 모델 또는 API 연동. 구조화된 노트의 80%는 BM25로 충분하며, 비정형 지식 검색 시 벡터 검색으로 보완하는 하이브리드 방식 (참고: QMD 프로젝트의 하이브리드 검색 전략)
 
+### speckit 연동
+
+Pylon은 speckit을 내장하며, `pylon add-project` 시 `specify init`이 자동 실행되어 모든 프로젝트에 `.specify/` 존재가 보장된다.
+
+#### speckit 산출물 소비 방식
+
+에이전트는 speckit 산출물(spec.md, plan.md, tasks.md, contracts/ 등)을 **직접 읽어서** 네이티브로 이해한다. 별도의 파싱/변환 레이어를 두지 않는다.
+
+- **오케스트레이터 역할**: inbox 메시지에 speckit 산출물 **파일 경로만** 전달
+- **에이전트 역할**: Read 도구로 마크다운/YAML을 직접 읽고 해석
+- **[P] 마커 처리**: PM 에이전트가 tasks.md를 읽고 스케줄링 계획(JSON)을 오케스트레이터에 보고. 오케스트레이터는 PM의 계획대로 에이전트 디스패치
+
+```
+오케스트레이터:
+  inbox 메시지에 speckit 파일 경로 포함
+    → { "context": { "references": [".specify/specs/001/spec.md", ...] } }
+
+에이전트:
+  Read 도구로 직접 읽기
+    → spec.md, plan.md, tasks.md, contracts/*.yml 을 네이티브 이해
+
+PM 에이전트 (tasks.md 소비):
+  tasks.md 읽기 → [P] 마커 파싱 → 스케줄링 계획 JSON 작성 → outbox 보고
+    → 오케스트레이터가 PM의 계획대로 에이전트 디스패치
+```
+
+#### Constitution 검증 흐름
+
+speckit의 `constitution.md`(프로젝트 헌법)에 대한 준수 여부를 **별도 검증 에이전트 (reviewer)**가 독립적/객관적으로 검증한다.
+
+**검증 주체**: reviewer 에이전트 — 산출물을 작성한 에이전트와 분리하여 객관성 확보, 결과 추적 가능
+
+**트리거 조건**: reviewer는 **speckit 산출물(spec.md, plan.md, tasks.md, contracts/, data-model.md)을 생성하거나 수정하는 에이전트의 작업 완료 시** 호출된다. 구체적으로:
+- **Architect**가 plan.md, contracts/, data-model.md를 작성/수정한 후
+- **Developer**가 contracts/를 제한적으로 수정한 후
+- **PO**가 spec.md 변경을 제안한 후 (사람 승인 전 사전 검증)
+
+일반 코드 구현(소스 파일 수정)에 대해서는 reviewer가 호출되지 않으며, verify.yml의 빌드/테스트/린트 검증이 대신 수행된다.
+
+**실패 정책**: 재시도 1회 → 사람 에스컬레이션
+
+```
+에이전트가 speckit 산출물 작성/수정 완료
+    ↓
+reviewer 에이전트: constitution.md 대비 검증
+    ↓ (통과)
+    다음 단계 진행
+    ↓ (실패)
+    위반 항목 + 사유를 원래 에이전트에 전달
+    ↓
+원래 에이전트: 수정 후 재제출
+    ↓
+reviewer 에이전트: 재검증 (1회)
+    ↓ (통과)
+    다음 단계 진행
+    ↓ (재검증 실패)
+    파이프라인 일시정지 + 사람에게 알림 (에스컬레이션)
+```
+
+#### 셸 step 에러 처리
+
+`pipeline.yml`의 `type: shell` step에 대한 에러 처리는 **즉시 중단 (halt)**을 기본 동작으로 하되, step별 `on_error` 속성으로 override할 수 있다.
+
+| on_error 값 | 동작 | 비고 |
+|-------------|------|------|
+| `halt` (기본) | 즉시 중단 | `set -e` 스타일. 별도 지정 없으면 기본 |
+| `retry` | 재시도 | `max_retries` 필수, `timeout` 선택 |
+| `continue` | 경고만 남기고 계속 | 비필수 step에 사용 |
+| `escalate` | 사람에게 알림 + 일시정지 | 사람 판단이 필요한 경우 |
+
+```yaml
+# pipeline.yml 셸 step 에러 처리 예시
+stages:
+  - name: check_prerequisites
+    type: shell
+    command: ".specify/scripts/bash/check-prerequisites.sh {{feature_number}}"
+    output: json
+    on_error: retry
+    max_retries: 2
+    timeout: 300s
+
+  - name: lint_check
+    type: shell
+    command: "golangci-lint run"
+    on_error: halt           # 기본값과 동일, 명시적 선언
+
+  - name: optional_metrics
+    type: shell
+    command: "collect-metrics.sh"
+    on_error: continue       # 실패해도 파이프라인 계속
+```
+
+#### 에이전트별 speckit 산출물 수정 권한 매트릭스
+
+| 산출물 | PO | Architect | PM | Developer | Tech Writer | Reviewer |
+|-------|----|-----------|----|-----------|-------------|----------|
+| spec.md | 제안→사람승인 | read | read | read | read | read |
+| plan.md | read | **write** | read | read | read | read |
+| tasks.md | read | read | read ⚠️ | read | read | read |
+| contracts/ | read | **write** | read | **제한적 write** | read | read |
+| data-model.md | read | **write** | read | read | read | read |
+| constitution.md | read | read | read | read | read ⚠️ | read |
+| `.pylon/domain/*` | read | read | read | read | **write** | read |
+| context.md | read | read | read | read | **write** | read |
+
+> ⚠️ 표시: 해당 에이전트의 핵심 입력 산출물이지만 수정 권한 없음 (아래 설명 참조)
+
+**Developer의 "제한적 write"**: 사소한 조정(필드 타입 변경, 엔드포인트 세부 조정, 응답 필드 추가)만 가능. 구조적 변경(엔드포인트 삭제/추가, 인증 방식 변경, DB 스키마 구조 변경)은 Architect에 에스컬레이션.
+
+**PM의 tasks.md (read ⚠️)**: PM은 tasks.md를 읽어서 [P] 마커 파싱 → 스케줄링 계획을 수립하지만, tasks.md 자체를 수정하지 않는다. 핵심 소비자이므로 ⚠️로 표시.
+
+**Tech Writer의 constitution.md (read ⚠️)**: Tech Writer는 constitution.md를 참조하여 문서 품질 기준을 준수하지만 수정 권한은 없다. 사람만 constitution.md를 수정할 수 있다.
+
+**PO의 spec.md "사람 승인" 메커니즘**: PO가 spec.md 변경을 제안하면 파이프라인이 `StagePOConversation`으로 전환되어 일시정지된다. 사람은 PO와의 인터랙티브 대화(Claude Code CLI)를 통해 변경 내용을 검토하고 승인/거부한다. PO 대화가 종료되면 승인으로 간주하고 다음 단계로 진행한다. 이는 `ErrInteractiveRequired` 패턴과 동일한 메커니즘이다.
+
 ## 9. 대화 기록 관리
 
 ### 구조
@@ -950,7 +1157,7 @@ wiki.updated              -- 위키 갱신
 .pylon/conversations/                   ← .gitignore 대상
 └── 20260305-143022-user-login/
     ├── thread.md       ← 전체 대화 기록 (사람 ↔ PO)
-    └── meta.yml        ← 상태, 시작시간, 관련 프로젝트, task_id
+    └── meta.yml        ← 대화 메타데이터
 
 .pylon/tasks/                           ← git 커밋 대상 (Source of Truth)
 └── 20260305-user-login.md              ← 최종 작업 지시서
@@ -959,6 +1166,33 @@ wiki.updated              -- 위키 갱신
 - `conversations/`는 대화 과정 아카이브 (git 제외, 로컬 보관)
 - `tasks/`는 확정된 작업 지시서 (git 포함, Source of Truth)
 - `meta.yml`의 `task_id`로 conversations ↔ tasks 연결
+
+#### meta.yml 스키마
+
+```yaml
+# .pylon/conversations/{id}/meta.yml
+status: active                           # active | completed | cancelled
+started_at: "2026-03-05T14:30:22Z"
+completed_at: null                       # 완료/취소 시 ISO 8601
+projects:                                # 관련 프로젝트 목록
+  - project-api
+task_id: null                            # 요구사항 확정 시 tasks/와 연결
+session_id: null                         # Claude Code CLI 세션 ID (resume용)
+```
+
+| 필드 | 필수 | 설명 |
+|------|------|------|
+| `status` | 필수 | `active` \| `completed` \| `cancelled` |
+| `started_at` | 필수 | 대화 시작 시각 (ISO 8601) |
+| `completed_at` | 선택 | 완료/취소 시각 (ISO 8601) |
+| `projects` | 선택 | 관련 프로젝트 목록 |
+| `task_id` | 선택 | 요구사항 확정 시 `tasks/`의 파일과 연결 |
+| `session_id` | 선택 | Claude Code CLI 세션 ID (`pylon resume`용) |
+
+**status 열거형**:
+- `active`: PO와 대화 진행 중
+- `completed`: 요구사항 확정 → 파이프라인 실행으로 전환
+- `cancelled`: 사용자가 `pylon cancel`로 취소
 
 ### thread.md 형식
 
@@ -1171,12 +1405,22 @@ git:
 - [x] 에이전트 CLI 실행 명세 → Section 8 "Claude Code CLI 실행 명세"에 정의 완료
 - [x] 에이전트 권한 모드 및 안전장치 → Section 5 frontmatter `permissionMode`, `maxTurns` 정의 완료
 - [x] 에이전트 파일시스템 격리 → Section 8 "Git Worktree 격리" 정의 완료
+- [x] speckit 전용 모드 에이전트 역할 재정의 → Section 6 "speckit 전용 모드 에이전트 역할" + Section 8 "에이전트별 speckit 산출물 수정 권한 매트릭스"에 정의 완료
+- [x] speckit 산출물 소비 방식 → Section 8 "speckit 산출물 소비 방식"에 정의 완료 (에이전트 직접 읽기, 별도 파싱 레이어 불필요)
+- [x] Constitution 검증 실패 경로 → Section 8 "Constitution 검증 흐름"에 정의 완료 (별도 reviewer 에이전트 + 재시도 1회 → 사람 에스컬레이션)
+- [x] speckit 위치 및 접근 방식 → Section 7 `pylon add-project`에 정의 완료 (pylon 내장, add-project 시 `specify init` 자동 실행)
+- [x] 셸 step 에러 처리 → Section 8 "셸 step 에러 처리"에 정의 완료 (기본 halt + step별 on_error override)
+- [x] verify.yml 스키마 → Section 8 "코드 품질 교차 검증"에 정의 완료
+- [x] task_prompt 조립 방식 → Section 8 "Claude Code CLI 실행 명세"에 정의 완료
+- [x] meta.yml 스키마 및 status 열거형 → Section 9 "대화 기록 관리"에 정의 완료
+- [x] pylon resume 상세 동작 → Section 7에 정의 완료
+- [ ] pylon cleanup 상세 설계 (좀비 프로세스 판단, pipeline 상태 처리, worktree 정리)
 - [ ] TUI 대화 인터페이스 상세 UX 설계 (화면 구성, 키바인딩 등)
 - [ ] Dashboard SSE 이벤트 타입 및 데이터 포맷 정의
 - [ ] 에이전트 프롬프트 상세 설계 (PO/PM/Architect/Tech Writer 각각)
 - [ ] Compaction 트리거의 구체적 구현 방식 (에이전트 측 토큰 카운팅 메커니즘)
 - [ ] 블랙보드 항목의 confidence 점수 산정 기준 정의
 - [ ] 벡터 임베딩 검색 도입 시점 및 임베딩 모델 선정 (향후 확장)
-- [ ] Hooks 시스템 설계 (PreToolUse, PostToolUse, Stop 이벤트 처리)
+- [ ] Hooks 시스템 설계 (speckit Extension/Hook 연계 — `before_implement`, `after_tasks` 등. Phase 1 로드맵)
 - [ ] 설정 계층화 (`config.local.yml` 도입 여부)
 - [ ] Skills 패턴 상세 설계 (에이전트별 전문 지식 preload 메커니즘)

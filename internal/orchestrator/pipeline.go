@@ -38,6 +38,13 @@ var validTransitions = map[Stage][]Stage{
 	StageWikiUpdate:        {StageCompleted, StageFailed},
 }
 
+// Agent execution status constants.
+const (
+	AgentStatusRunning   = "running"
+	AgentStatusCompleted = "completed"
+	AgentStatusFailed    = "failed"
+)
+
 // AgentStatus tracks the state of an agent within a pipeline.
 type AgentStatus struct {
 	TaskID  string `json:"task_id"`
@@ -100,10 +107,10 @@ func (p *Pipeline) Transition(to Stage) error {
 
 	// Track retry attempts for verification → agent_executing loops
 	if p.CurrentStage == StageVerification && to == StageAgentExecuting {
-		p.Attempts++
 		if p.Attempts >= p.MaxAttempts {
 			return fmt.Errorf("max retry attempts (%d) reached", p.MaxAttempts)
 		}
+		p.Attempts++
 	}
 
 	p.History = append(p.History, StageTransition{

@@ -2,9 +2,11 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kyago/pylon/internal/config"
@@ -48,6 +50,27 @@ func (o *Orchestrator) TransitionTo(stage Stage) error {
 	return o.savePipelineState()
 }
 
+// SaveState persists the current pipeline state (public API).
+func (o *Orchestrator) SaveState() error {
+	return o.savePipelineState()
+}
+
+// ForceStage sets the pipeline stage directly, bypassing transition validation.
+// Use only for rollback scenarios where normal transitions are not possible.
+// Records the forced transition in History for audit/debugging purposes.
+func (o *Orchestrator) ForceStage(stage Stage) error {
+	if o.Pipeline == nil {
+		return fmt.Errorf("no active pipeline")
+	}
+	o.Pipeline.History = append(o.Pipeline.History, StageTransition{
+		From:        o.Pipeline.CurrentStage,
+		To:          stage,
+		CompletedAt: time.Now(),
+	})
+	o.Pipeline.CurrentStage = stage
+	return o.savePipelineState()
+}
+
 // savePipelineState persists the pipeline to both SQLite and state.json.
 func (o *Orchestrator) savePipelineState() error {
 	data, err := o.Pipeline.Snapshot()
@@ -69,7 +92,9 @@ func (o *Orchestrator) savePipelineState() error {
 
 	// Save to state.json (SPOF recovery)
 	stateDir := filepath.Join(o.WorkDir, ".pylon", "runtime")
-	os.MkdirAll(stateDir, 0755)
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return fmt.Errorf("failed to create state dir: %w", err)
+	}
 	statePath := filepath.Join(stateDir, "state.json")
 
 	tmp := statePath + ".tmp"
@@ -85,7 +110,7 @@ func (o *Orchestrator) Recover() error {
 	statePath := filepath.Join(o.WorkDir, ".pylon", "runtime", "state.json")
 	data, err := os.ReadFile(statePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil // no state to recover
 		}
 		return fmt.Errorf("failed to read state.json: %w", err)
@@ -111,7 +136,7 @@ func (o *Orchestrator) Recover() error {
 				agentDir := filepath.Join(outboxDir, entry.Name())
 				files, _ := os.ReadDir(agentDir)
 				for _, f := range files {
-					if filepath.Ext(f.Name()) == ".json" && !isProcessed(agentDir, f.Name()) {
+					if strings.HasSuffix(f.Name(), ".result.json") && !isProcessed(agentDir, f.Name()) {
 						// Mark as needing processing
 						fmt.Printf("[recovery] unprocessed result: %s/%s\n", entry.Name(), f.Name())
 					}

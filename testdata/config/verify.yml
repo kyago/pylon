@@ -1,0 +1,11 @@
+build:
+  command: "go build ./..."
+  timeout: "120s"
+
+test:
+  command: "go test ./... -race"
+  timeout: "300s"
+
+lint:
+  command: "golangci-lint run ./..."
+  timeout: "60s"
