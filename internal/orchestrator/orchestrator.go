@@ -91,7 +91,9 @@ func (o *Orchestrator) savePipelineState() error {
 
 	// Save to state.json (SPOF recovery)
 	stateDir := filepath.Join(o.WorkDir, ".pylon", "runtime")
-	os.MkdirAll(stateDir, 0755)
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return fmt.Errorf("failed to create state dir: %w", err)
+	}
 	statePath := filepath.Join(stateDir, "state.json")
 
 	tmp := statePath + ".tmp"

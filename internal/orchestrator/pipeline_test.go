@@ -90,21 +90,37 @@ func TestPipeline_FailFromAnyStage(t *testing.T) {
 }
 
 func TestPipeline_RetryLimit(t *testing.T) {
-	p := NewPipeline("test-1", 2)
+	p := NewPipeline("test-1", 2) // MaxAttempts=2 → 2회 재시도 허용
+
 	p.CurrentStage = StageVerification
 
-	// First retry
+	// First retry (Attempts: 0 < 2 → 허용, Attempts becomes 1)
 	if err := p.Transition(StageAgentExecuting); err != nil {
-		t.Fatalf("first retry failed: %v", err)
+		t.Fatalf("first retry should succeed: %v", err)
+	}
+	if p.Attempts != 1 {
+		t.Fatalf("expected Attempts=1 after first retry, got %d", p.Attempts)
 	}
 
-	// Back to verification
 	p.CurrentStage = StageVerification
 
-	// Second retry should fail (max_attempts reached)
+	// Second retry (Attempts: 1 < 2 → 허용, Attempts becomes 2)
+	if err := p.Transition(StageAgentExecuting); err != nil {
+		t.Fatalf("second retry should succeed: %v", err)
+	}
+	if p.Attempts != 2 {
+		t.Fatalf("expected Attempts=2 after second retry, got %d", p.Attempts)
+	}
+
+	p.CurrentStage = StageVerification
+
+	// Third retry should fail (Attempts: 2 >= 2 → 차단, Attempts stays 2)
 	err := p.Transition(StageAgentExecuting)
 	if err == nil {
-		t.Error("expected error for max retry attempts")
+		t.Error("expected error for max retry attempts exceeded")
+	}
+	if p.Attempts != 2 {
+		t.Fatalf("expected Attempts=2 after rejected retry, got %d", p.Attempts)
 	}
 }
 

@@ -107,10 +107,10 @@ func (p *Pipeline) Transition(to Stage) error {
 
 	// Track retry attempts for verification → agent_executing loops
 	if p.CurrentStage == StageVerification && to == StageAgentExecuting {
-		p.Attempts++
 		if p.Attempts >= p.MaxAttempts {
 			return fmt.Errorf("max retry attempts (%d) reached", p.MaxAttempts)
 		}
+		p.Attempts++
 	}
 
 	p.History = append(p.History, StageTransition{

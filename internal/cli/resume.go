@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -74,9 +75,14 @@ func runResume(cmd *cobra.Command, args []string) error {
 		workDir = projects[0].Path
 	}
 
+	// Pre-validate claude CLI
+	if _, lookErr := exec.LookPath("claude"); lookErr != nil {
+		return fmt.Errorf("claude CLI not found: %w", lookErr)
+	}
+
 	// ExecInteractive with --resume flag
-	exec := executor.NewDirectExecutor()
-	return exec.ExecInteractive(executor.ExecConfig{
+	directExec := executor.NewDirectExecutor()
+	return directExec.ExecInteractive(executor.ExecConfig{
 		Name:    "resume",
 		Command: "claude",
 		Args:    []string{"--resume", conv.Meta.SessionID},

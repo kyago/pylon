@@ -225,7 +225,10 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	}
 
 	// Check for outbox result (non-blocking single poll, agent already finished)
-	watchResults, _ := l.watcher.PollOnce()
+	watchResults, pollErr := l.watcher.PollOnce()
+	if pollErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to poll outbox: %v\n", pollErr)
+	}
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
 			l.processAgentResult(wr)
@@ -246,7 +249,10 @@ func (l *Loop) runAgentExecution(ctx context.Context) error {
 	// Find all developer agents
 	devAgents := l.findDevAgents()
 	if len(devAgents) == 0 {
-		// Fallback: use a single "backend-dev" or any available agent
+		// Fallback: use "backend-dev" if configured
+		if l.findAgent("backend-dev") == nil {
+			return fmt.Errorf("no dev agents configured (expected agents with name: backend-dev, frontend-dev, or fullstack)")
+		}
 		return l.runHeadlessAgent(ctx, "backend-dev", StageAgentExecuting, StageVerification)
 	}
 
