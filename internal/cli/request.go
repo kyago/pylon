@@ -130,7 +130,6 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		PipelineID:  pipelineID,
 		Requirement: requirement,
 		Branch:      branch,
-		ConvManager: convMgr,
 		MemManager:  memMgr,
 		Runner:      runner,
 		WorktreeMgr: wtMgr,
@@ -185,8 +184,7 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		})
 
 		// ExecInteractive returns only on failure — rollback state
-		orch.Pipeline.CurrentStage = orchestrator.StagePOConversation
-		_ = orch.SaveState()
+		_ = orch.ForceStage(orchestrator.StagePOConversation)
 		return fmt.Errorf("failed to launch PO agent: %w", execErr)
 	}
 

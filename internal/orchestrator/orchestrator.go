@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,6 +54,22 @@ func (o *Orchestrator) SaveState() error {
 	return o.savePipelineState()
 }
 
+// ForceStage sets the pipeline stage directly, bypassing transition validation.
+// Use only for rollback scenarios where normal transitions are not possible.
+// Records the forced transition in History for audit/debugging purposes.
+func (o *Orchestrator) ForceStage(stage Stage) error {
+	if o.Pipeline == nil {
+		return fmt.Errorf("no active pipeline")
+	}
+	o.Pipeline.History = append(o.Pipeline.History, StageTransition{
+		From:        o.Pipeline.CurrentStage,
+		To:          stage,
+		CompletedAt: time.Now(),
+	})
+	o.Pipeline.CurrentStage = stage
+	return o.savePipelineState()
+}
+
 // savePipelineState persists the pipeline to both SQLite and state.json.
 func (o *Orchestrator) savePipelineState() error {
 	data, err := o.Pipeline.Snapshot()
@@ -90,7 +107,7 @@ func (o *Orchestrator) Recover() error {
 	statePath := filepath.Join(o.WorkDir, ".pylon", "runtime", "state.json")
 	data, err := os.ReadFile(statePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil // no state to recover
 		}
 		return fmt.Errorf("failed to read state.json: %w", err)

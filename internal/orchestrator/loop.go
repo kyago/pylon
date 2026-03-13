@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/kyago/pylon/internal/agent"
@@ -24,7 +25,6 @@ type LoopConfig struct {
 	PipelineID  string
 	Requirement string
 	Branch      string
-	ConvManager *ConversationManager
 	MemManager  *memory.Manager
 	Runner      *agent.Runner
 	WorktreeMgr *git.WorktreeManager
@@ -125,7 +125,7 @@ func (l *Loop) Run(ctx context.Context) error {
 }
 
 // ErrInteractiveRequired signals that an interactive PO session is needed.
-var ErrInteractiveRequired = fmt.Errorf("interactive PO session required")
+var ErrInteractiveRequired = errors.New("interactive PO session required")
 
 // runPOConversation handles the PO interactive conversation stage.
 // Since PO uses ExecInteractive (syscall.Exec), the loop returns ErrInteractiveRequired
@@ -258,9 +258,11 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	verifyPath := filepath.Join(projectDir, ".pylon", "verify.yml")
 	vc, err := config.LoadVerifyConfig(verifyPath)
 	if err != nil {
-		// verify.yml not found → skip verification, proceed to PR
-		fmt.Printf("⚠ verify.yml not found, skipping verification\n")
-		return l.transitionTo(StagePRCreation)
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Printf("⚠ verify.yml not found, skipping verification\n")
+			return l.transitionTo(StagePRCreation)
+		}
+		return fmt.Errorf("failed to load verify config: %w", err)
 	}
 
 	// Convert to VerifyCommands
@@ -291,19 +293,21 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	// Verification failed
 	fmt.Printf("✗ Verification failed:\n%s\n", FailedSummary(results))
 
-	l.orch.Pipeline.Attempts++
-	if l.orch.Pipeline.Attempts >= l.orch.Pipeline.MaxAttempts {
-		return fmt.Errorf("verification failed after %d attempts:\n%s",
-			l.orch.Pipeline.Attempts, FailedSummary(results))
-	}
+	// Attempts tracking and max check are handled inside Pipeline.Transition()
+	// when transitioning from StageVerification → StageAgentExecuting.
 
 	// Write fix request to inbox for dev agents
 	if err := l.writeFixRequest(results); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ failed to write fix request: %v\n", err)
 	}
 
-	// Retry: go back to agent execution
-	return l.transitionTo(StageAgentExecuting)
+	// Retry: go back to agent execution (Transition increments Attempts and enforces MaxAttempts)
+	err = l.transitionTo(StageAgentExecuting)
+	if err != nil {
+		return fmt.Errorf("verification failed after %d attempts:\n%s",
+			l.orch.Pipeline.Attempts, FailedSummary(results))
+	}
+	return nil
 }
 
 // runPRCreation creates a pull request.
@@ -433,6 +437,7 @@ func (l *Loop) findDevAgents() []string {
 		}
 	}
 
+	sort.Strings(devs)
 	return devs
 }
 
@@ -497,8 +502,8 @@ func (l *Loop) processAgentResult(wr WatchResult) {
 		if bodyMap, ok := wr.Envelope.Body.(map[string]any); ok {
 			if learnings, ok := bodyMap["learnings"].([]any); ok {
 				var strs []string
-				for _, l := range learnings {
-					if s, ok := l.(string); ok {
+				for _, item := range learnings {
+					if s, ok := item.(string); ok {
 						strs = append(strs, s)
 					}
 				}

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -92,7 +93,7 @@ func TestLoop_Run_POConversation_ReturnsInteractive(t *testing.T) {
 	loop := NewLoop(newTestLoopConfig(dir, exec))
 
 	err := loop.Run(context.Background())
-	if err != ErrInteractiveRequired {
+	if !errors.Is(err, ErrInteractiveRequired) {
 		t.Errorf("expected ErrInteractiveRequired, got: %v", err)
 	}
 }
