@@ -70,7 +70,10 @@ func runResume(cmd *cobra.Command, args []string) error {
 
 	// Determine work directory
 	workDir := root
-	projects, _ := config.DiscoverProjects(root)
+	projects, discoverErr := config.DiscoverProjects(root)
+	if discoverErr != nil {
+		fmt.Printf("⚠ Project discovery warning: %v\n", discoverErr)
+	}
 	if len(projects) > 0 {
 		workDir = projects[0].Path
 	}

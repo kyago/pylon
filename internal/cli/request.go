@@ -159,11 +159,14 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		poAgent.ResolveDefaults(cfg)
 
 		poRunner := agent.NewRunner(executor.NewDirectExecutor())
-		claudeMD, _ := (&agent.ClaudeMDBuilder{MaxLines: 200}).Build(agent.BuildInput{
+		claudeMD, buildErr := (&agent.ClaudeMDBuilder{MaxLines: 200}).Build(agent.BuildInput{
 			CommunicationRules: agent.DefaultCommunicationRules(),
 			TaskContext:        fmt.Sprintf("요구사항 분석: %s", requirement),
 			CompactionRules:    agent.DefaultCompactionRules(),
 		})
+		if buildErr != nil {
+			return fmt.Errorf("failed to build CLAUDE.md for PO: %w", buildErr)
+		}
 
 		// Pre-validate claude CLI before state transition
 		if _, lookErr := exec.LookPath("claude"); lookErr != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kyago/pylon/internal/config"
@@ -135,7 +136,7 @@ func (o *Orchestrator) Recover() error {
 				agentDir := filepath.Join(outboxDir, entry.Name())
 				files, _ := os.ReadDir(agentDir)
 				for _, f := range files {
-					if filepath.Ext(f.Name()) == ".json" && !isProcessed(agentDir, f.Name()) {
+					if strings.HasSuffix(f.Name(), ".result.json") && !isProcessed(agentDir, f.Name()) {
 						// Mark as needing processing
 						fmt.Printf("[recovery] unprocessed result: %s/%s\n", entry.Name(), f.Name())
 					}

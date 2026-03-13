@@ -249,11 +249,7 @@ func (l *Loop) runAgentExecution(ctx context.Context) error {
 	// Find all developer agents
 	devAgents := l.findDevAgents()
 	if len(devAgents) == 0 {
-		// Fallback: use "backend-dev" if configured
-		if l.findAgent("backend-dev") == nil {
-			return fmt.Errorf("no dev agents configured (expected agents with name: backend-dev, frontend-dev, or fullstack)")
-		}
-		return l.runHeadlessAgent(ctx, "backend-dev", StageAgentExecuting, StageVerification)
+		return fmt.Errorf("no dev agents configured (expected agents with name: backend-dev, frontend-dev, or fullstack)")
 	}
 
 	// For Phase 0: run dev agents sequentially

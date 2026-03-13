@@ -130,7 +130,7 @@ func TestPipeline_Snapshot_Load(t *testing.T) {
 	p.Agents["backend-dev"] = AgentStatus{
 		TaskID:      "task-1",
 		AgentID:     "backend-dev",
-		Status:      "running",
+		Status:      AgentStatusRunning,
 	}
 
 	data, err := p.Snapshot()
