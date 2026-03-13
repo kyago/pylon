@@ -804,11 +804,11 @@ pylon-spec.md Section 8 "셸 step 에러 처리"에 반영.
 | blackboard | constitution 항목의 `author: 'system'` + 수정 불가 제약 | 헌법 원칙 보호 |
 | message_queue | `source TEXT DEFAULT 'generated'` | `user_defined` (speckit) vs `generated` (에이전트) 구분 |
 
-### 9.10 Phase 간 상호작용 미정의 — ✅ 해결됨
+### 9.10 Phase 간 상호작용 미정의 — ✅ 결정됨 (구현 시 상세화 예정)
 
-**심각도**: 🟡 중간 (Phase 1~2 설계 시) → **해결 완료 (2026-03-13)**
+**심각도**: 🟡 중간 (Phase 1~2 설계 시) → **방향성 확정 (2026-03-13)**
 
-**확정 결정**: 구현 단계에서 정의. 방향성만 확정:
+**확정 결정**: 방향성 확정, 상세 구현은 해당 Phase 착수 시 pylon-spec.md에 반영 예정:
 
 - **Phase 1 동시성 × Phase 2 Agent Card**: capabilities 매칭 → 동시성 제약 순서 (매칭 먼저, 제약 나중)
 - **Phase 0 Constitution × Phase 2 Confidence**: Constitution 통과 시 Confidence 초기값 >= 0.8 (권장)
