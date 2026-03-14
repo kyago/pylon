@@ -362,6 +362,8 @@ func (l *Loop) runVerification(ctx context.Context) error {
 }
 
 // runPRCreation creates a pull request.
+// PR creation failure is non-fatal — the pipeline skips to wiki update
+// so that tech-writer can still document what agents did.
 func (l *Loop) runPRCreation(ctx context.Context) error {
 	projectDir := l.cfg.WorkDir
 	if len(l.cfg.Projects) > 0 {
@@ -370,7 +372,8 @@ func (l *Loop) runPRCreation(ctx context.Context) error {
 
 	if l.cfg.Config.Git.AutoPush {
 		if err := git.PushBranch(projectDir, l.cfg.Branch); err != nil {
-			return fmt.Errorf("failed to push branch: %w", err)
+			fmt.Fprintf(os.Stderr, "⚠ push failed (skipping PR): %v\n", err)
+			return l.transitionTo(StageWikiUpdate)
 		}
 	}
 
@@ -383,7 +386,8 @@ func (l *Loop) runPRCreation(ctx context.Context) error {
 		Draft:     l.cfg.Config.Git.PR.Draft,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create PR: %w", err)
+		fmt.Fprintf(os.Stderr, "⚠ PR creation failed (continuing to wiki update): %v\n", err)
+		return l.transitionTo(StageWikiUpdate)
 	}
 
 	fmt.Printf("✓ PR created: %s\n", prURL)

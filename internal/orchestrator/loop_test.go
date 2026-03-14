@@ -113,16 +113,20 @@ func TestLoop_Run_HeadlessFromArchitect(t *testing.T) {
 	loop.orch.TransitionTo(StagePOConversation)
 	loop.orch.TransitionTo(StageArchitectAnalysis)
 
-	// Run from architect stage — should execute architect, then pm, then dev agents
+	// Run from architect stage — should execute architect, then pm, then dev agents.
+	// PR creation failure is non-fatal; pipeline skips to wiki update and completes.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	err := loop.Run(ctx)
 
-	// It will try to run agents and likely fail at PR creation (no git repo)
-	// but it should at least execute the architect and PM agents
-	if err == nil {
-		t.Fatal("expected error (no git repo for PR)")
+	if err != nil {
+		t.Fatalf("expected pipeline to complete (PR failure is non-fatal), got: %v", err)
+	}
+
+	// Pipeline should reach completed stage (PR skip → wiki update → completed)
+	if loop.orch.Pipeline.CurrentStage != StageCompleted {
+		t.Errorf("expected completed stage, got %s", loop.orch.Pipeline.CurrentStage)
 	}
 
 	// Verify agents were called
