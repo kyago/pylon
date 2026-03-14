@@ -2,14 +2,15 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
 // StreamResult holds structured data extracted from Claude Code stream-json output.
 type StreamResult struct {
-	FilesChanged []string
-	Commits      []string
-	Summary      string
+	FilesChanged   []string
+	CommitCommands []string // git commit commands found in Bash tool_use (not hashes)
+	Summary        string
 }
 
 // ParseStreamJSON parses Claude Code --output-format stream-json output
@@ -50,6 +51,7 @@ func ParseStreamJSON(output string) *StreamResult {
 	for f := range filesSet {
 		sr.FilesChanged = append(sr.FilesChanged, f)
 	}
+	sort.Strings(sr.FilesChanged)
 
 	return sr
 }
@@ -120,9 +122,7 @@ func extractBashCommits(msg map[string]any, sr *StreamResult) {
 		}
 		cmd, _ := input["command"].(string)
 		if strings.Contains(cmd, "git commit") {
-			// We'll capture the hash from tool_result separately if available,
-			// but mark that a commit was attempted
-			sr.Commits = append(sr.Commits, cmd)
+			sr.CommitCommands = append(sr.CommitCommands, cmd)
 		}
 	}
 }

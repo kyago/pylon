@@ -111,7 +111,7 @@ func CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir string) string
    ` + "```"
 
 	if outboxPath != "" {
-		tmpPath := outboxPath[:len(outboxPath)-len(".result.json")] + ".tmp.json"
+		tmpPath := strings.TrimSuffix(outboxPath, ".result.json") + ".tmp.json"
 		outboxInstruction = fmt.Sprintf(`2. 작업 완료 후 결과를 아래 경로에 JSON으로 작성합니다:
    - 임시 파일: `+"`%s`"+`
 3. 작성 완료 후 mv 명령을 실행합니다:

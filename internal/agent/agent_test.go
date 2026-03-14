@@ -253,6 +253,9 @@ func TestRunner_BuildArgs_NonInteractive(t *testing.T) {
 	if !strings.Contains(joined, "--print") {
 		t.Error("non-interactive should have --print")
 	}
+	if !strings.Contains(joined, "--verbose") {
+		t.Error("non-interactive should have --verbose")
+	}
 	if !strings.Contains(joined, "--output-format stream-json") {
 		t.Error("should have stream-json format")
 	}

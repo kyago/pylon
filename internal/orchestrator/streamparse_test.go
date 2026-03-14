@@ -39,8 +39,8 @@ func TestParseStreamJSON_GitCommit(t *testing.T) {
 
 	sr := ParseStreamJSON(output)
 
-	if len(sr.Commits) != 1 {
-		t.Errorf("expected 1 commit, got %d", len(sr.Commits))
+	if len(sr.CommitCommands) != 1 {
+		t.Errorf("expected 1 commit, got %d", len(sr.CommitCommands))
 	}
 }
 

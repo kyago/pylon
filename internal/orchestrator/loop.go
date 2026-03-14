@@ -246,7 +246,9 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	}
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
+			l.mu.Lock()
 			l.processAgentResult(wr)
+			l.mu.Unlock()
 			foundOutbox = true
 			if err := markProcessed(filepath.Dir(wr.FilePath), filepath.Base(wr.FilePath)); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠ failed to mark processed %s: %v\n", wr.FilePath, err)
@@ -394,6 +396,7 @@ func (l *Loop) runPRCreation(ctx context.Context) error {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ PR creation failed (continuing to wiki update): %v\n", err)
+		fmt.Fprintf(os.Stderr, "  ℹ 리모트 브랜치 '%s'는 push된 상태입니다. 수동으로 PR을 생성하거나 브랜치를 삭제하세요.\n", l.cfg.Branch)
 		return l.transitionTo(StageWikiUpdate)
 	}
 
@@ -606,16 +609,21 @@ func (l *Loop) processAgentResult(wr WatchResult) {
 func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
 	sr := ParseStreamJSON(stdout)
 
+	summary := sr.Summary
+	if summary == "" {
+		summary = fmt.Sprintf("에이전트 %s 작업 완료 (요약 미제공)", agentName)
+	}
+
 	// Build result body as map for processAgentResult compatibility
 	body := map[string]any{
 		"task_id":       taskID,
 		"status":        "completed",
-		"summary":       sr.Summary,
+		"summary":       summary,
 		"files_changed": sr.FilesChanged,
 		"source":        "stream-json-fallback",
 	}
-	if len(sr.Commits) > 0 {
-		body["commits"] = sr.Commits
+	if len(sr.CommitCommands) > 0 {
+		body["commit_commands"] = sr.CommitCommands
 	}
 
 	// Write to outbox via protocol
@@ -636,7 +644,9 @@ func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
 		AgentName: agentName,
 		Envelope:  msg,
 	}
+	l.mu.Lock()
 	l.processAgentResult(wr)
+	l.mu.Unlock()
 }
 
 func (l *Loop) writeFixRequest(results []VerifyResult) error {
