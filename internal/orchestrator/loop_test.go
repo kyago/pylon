@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/kyago/pylon/internal/agent"
@@ -15,6 +16,7 @@ var _ executor.ProcessExecutor = (*testExecutor)(nil)
 
 // testExecutor is a mock executor for loop tests.
 type testExecutor struct {
+	mu        sync.Mutex
 	runCalls  []executor.ExecConfig
 	exitCode  int
 	stdout    string
@@ -27,7 +29,9 @@ func (m *testExecutor) ExecInteractive(cfg executor.ExecConfig) error {
 }
 
 func (m *testExecutor) RunHeadless(cfg executor.ExecConfig) (*executor.ExecResult, error) {
+	m.mu.Lock()
 	m.runCalls = append(m.runCalls, cfg)
+	m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}

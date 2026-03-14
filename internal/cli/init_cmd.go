@@ -218,6 +218,9 @@ func linkAgentsToClaude(workDir, pylonDir string) error {
 		relTarget := filepath.Join("..", "..", ".pylon", "agents", entry.Name())
 		linkPath := filepath.Join(claudeAgentsDir, entry.Name())
 		if err := os.Symlink(relTarget, linkPath); err != nil {
+			if os.IsExist(err) {
+				continue
+			}
 			return fmt.Errorf("failed to create symlink for %s: %w", entry.Name(), err)
 		}
 	}

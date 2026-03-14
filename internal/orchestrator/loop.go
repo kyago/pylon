@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -40,6 +41,7 @@ type Loop struct {
 	orch     *Orchestrator
 	watcher  *OutboxWatcher
 	inboxDir string
+	mu       sync.Mutex // protects Pipeline.Agents writes and saveState calls
 }
 
 // NewLoop creates a new orchestration loop.
@@ -198,12 +200,14 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir)
 
 	// Track agent status
+	l.mu.Lock()
 	l.orch.Pipeline.Agents[agentName] = AgentStatus{
 		TaskID:  taskID,
 		AgentID: agentName,
 		Status:  AgentStatusRunning,
 	}
 	l.saveState()
+	l.mu.Unlock()
 
 	// Launch agent with context propagation
 	result, err := l.cfg.Runner.Start(agent.RunConfig{
@@ -215,14 +219,18 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 		ClaudeMD:   claudeMD,
 	})
 	if err != nil {
+		l.mu.Lock()
 		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusFailed}
 		l.saveState()
+		l.mu.Unlock()
 		return fmt.Errorf("agent %s execution failed: %w", agentName, err)
 	}
 
 	if result.ExitCode != 0 {
+		l.mu.Lock()
 		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusFailed}
 		l.saveState()
+		l.mu.Unlock()
 		return fmt.Errorf("agent %s exited with code %d: %s", agentName, result.ExitCode, result.Stderr)
 	}
 
@@ -240,8 +248,10 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 		}
 	}
 
+	l.mu.Lock()
 	l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusCompleted}
 	l.saveState()
+	l.mu.Unlock()
 
 	return nil
 }
