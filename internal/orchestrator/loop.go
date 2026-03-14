@@ -239,6 +239,7 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	}
 
 	// Check for outbox result (non-blocking single poll, agent already finished)
+	foundOutbox := false
 	watchResults, pollErr := l.watcher.PollOnce()
 	if pollErr != nil {
 		fmt.Fprintf(os.Stderr, "⚠ failed to poll outbox: %v\n", pollErr)
@@ -246,10 +247,16 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
 			l.processAgentResult(wr)
+			foundOutbox = true
 			if err := markProcessed(filepath.Dir(wr.FilePath), filepath.Base(wr.FilePath)); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠ failed to mark processed %s: %v\n", wr.FilePath, err)
 			}
 		}
+	}
+
+	// Fallback: if agent didn't write outbox result, create one from stream-json output
+	if !foundOutbox && result.Stdout != "" {
+		l.createOutboxFromStream(agentName, taskID, result.Stdout)
 	}
 
 	l.mu.Lock()
@@ -592,6 +599,44 @@ func (l *Loop) processAgentResult(wr WatchResult) {
 			}
 		}
 	}
+}
+
+// createOutboxFromStream parses stream-json output and creates an outbox result file.
+// This is the fallback when the agent doesn't write its own outbox result.
+func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
+	sr := ParseStreamJSON(stdout)
+
+	// Build result body as map for processAgentResult compatibility
+	body := map[string]any{
+		"task_id":       taskID,
+		"status":        "completed",
+		"summary":       sr.Summary,
+		"files_changed": sr.FilesChanged,
+		"source":        "stream-json-fallback",
+	}
+	if len(sr.Commits) > 0 {
+		body["commits"] = sr.Commits
+	}
+
+	// Write to outbox via protocol
+	msg := protocol.NewMessage(protocol.MsgResult, agentName, "orchestrator")
+	msg.Context = &protocol.MsgContext{
+		TaskID:     taskID,
+		PipelineID: l.cfg.PipelineID,
+	}
+	msg.Body = body
+
+	if err := protocol.WriteResult(l.watcher.OutboxDir, agentName, msg); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to write fallback outbox for %s: %v\n", agentName, err)
+		return
+	}
+
+	// Process the result we just wrote
+	wr := WatchResult{
+		AgentName: agentName,
+		Envelope:  msg,
+	}
+	l.processAgentResult(wr)
 }
 
 func (l *Loop) writeFixRequest(results []VerifyResult) error {
