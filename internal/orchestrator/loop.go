@@ -396,7 +396,9 @@ func (l *Loop) runPRCreation(ctx context.Context) error {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ PR creation failed (continuing to wiki update): %v\n", err)
-		fmt.Fprintf(os.Stderr, "  ℹ 리모트 브랜치 '%s'는 push된 상태입니다. 수동으로 PR을 생성하거나 브랜치를 삭제하세요.\n", l.cfg.Branch)
+		if l.cfg.Config.Git.AutoPush {
+			fmt.Fprintf(os.Stderr, "  ℹ 리모트 브랜치 '%s'는 push된 상태입니다. 수동으로 PR을 생성하거나 브랜치를 삭제하세요.\n", l.cfg.Branch)
+		}
 		return l.transitionTo(StageWikiUpdate)
 	}
 

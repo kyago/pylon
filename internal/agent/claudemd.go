@@ -141,7 +141,7 @@ func CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir string) string
   "status": "completed",
   "summary": "작업 결과 요약",
   "files_changed": ["변경한 파일 목록"],
-  "commits": ["생성한 커밋 해시"],
+  "commits": ["생성한 커밋 해시 (git log --oneline -1 으로 확인)"],
   "learnings": ["작업 중 발견한 교훈/패턴"]
 }
 ` + "```" + `

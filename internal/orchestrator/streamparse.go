@@ -92,7 +92,7 @@ func extractToolUseFiles(msg map[string]any, files map[string]bool) {
 	}
 }
 
-// extractBashCommits finds git commit hashes from Bash tool_use events.
+// extractBashCommits finds git commit commands from Bash tool_use events.
 func extractBashCommits(msg map[string]any, sr *StreamResult) {
 	message, ok := msg["message"].(map[string]any)
 	if !ok {
