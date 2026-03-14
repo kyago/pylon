@@ -176,8 +176,12 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 		return fmt.Errorf("failed to write task for %s: %w", agentName, err)
 	}
 
-	// Build CLAUDE.md
-	claudeMD, err := l.buildClaudeMD(agentCfg, taskID)
+	// Build outbox path for this agent
+	outboxDir := filepath.Join(l.watcher.OutboxDir, agentName)
+	outboxPath := filepath.Join(outboxDir, taskID+".result.json")
+
+	// Build CLAUDE.md with concrete outbox path
+	claudeMD, err := l.buildClaudeMD(agentCfg, taskID, outboxPath, outboxDir)
 	if err != nil {
 		return fmt.Errorf("failed to build CLAUDE.md for %s: %w", agentName, err)
 	}
@@ -196,8 +200,8 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	}
 	defer cleanup()
 
-	// Build task prompt
-	taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir)
+	// Build task prompt with concrete inbox and outbox paths
+	taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir, l.watcher.OutboxDir)
 
 	// Track agent status
 	l.mu.Lock()
@@ -411,7 +415,7 @@ func (l *Loop) runWikiUpdate(ctx context.Context) error {
 	twAgent.ResolveDefaults(l.cfg.Config)
 	taskID := fmt.Sprintf("%s-tech-writer", l.cfg.PipelineID)
 
-	taskPrompt := agent.BuildTaskPrompt(twAgent.Role, "tech-writer", taskID, l.inboxDir)
+	taskPrompt := agent.BuildTaskPrompt(twAgent.Role, "tech-writer", taskID, l.inboxDir, l.watcher.OutboxDir)
 
 	projectDir := l.cfg.WorkDir
 	if len(l.cfg.Projects) > 0 {
@@ -522,7 +526,7 @@ func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgCo
 	return protocol.WriteTask(l.inboxDir, agentName, msg)
 }
 
-func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID string) (string, error) {
+func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, outboxDir string) (string, error) {
 	builder := &agent.ClaudeMDBuilder{MaxLines: 200}
 
 	var projectMemory string
@@ -533,8 +537,10 @@ func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID string) (strin
 		}
 	}
 
+	inboxPath := filepath.Join(l.inboxDir, agentCfg.Name, taskID+".task.json")
+
 	return builder.Build(agent.BuildInput{
-		CommunicationRules: agent.DefaultCommunicationRules(),
+		CommunicationRules: agent.CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir),
 		TaskContext:        fmt.Sprintf("태스크: %s\n역할: %s", l.cfg.Requirement, agentCfg.Role),
 		CompactionRules:    agent.DefaultCompactionRules(),
 		ProjectMemory:      projectMemory,

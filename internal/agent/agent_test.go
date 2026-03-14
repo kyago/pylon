@@ -475,7 +475,8 @@ func TestRunner_Start_EmptyWorkDir(t *testing.T) {
 // --- BuildTaskPrompt Tests ---
 
 func TestBuildTaskPrompt(t *testing.T) {
-	prompt := BuildTaskPrompt("백엔드 개발자", "backend-dev", "task-001", ".pylon/runtime/inbox")
+	prompt := BuildTaskPrompt("백엔드 개발자", "backend-dev", "task-001",
+		"/workspace/.pylon/runtime/inbox", "/workspace/.pylon/runtime/outbox")
 
 	if !strings.Contains(prompt, "백엔드 개발자") {
 		t.Error("prompt should contain role")
@@ -484,13 +485,16 @@ func TestBuildTaskPrompt(t *testing.T) {
 		t.Error("prompt should contain agent name")
 	}
 	if !strings.Contains(prompt, "task-001.task.json") {
-		t.Error("prompt should contain task file path")
+		t.Error("prompt should contain inbox task file path")
 	}
-	if !strings.Contains(prompt, "inbox") {
-		t.Error("prompt should reference inbox")
+	if !strings.Contains(prompt, "/workspace/.pylon/runtime/inbox") {
+		t.Error("prompt should contain absolute inbox path")
 	}
-	if !strings.Contains(prompt, "outbox") {
-		t.Error("prompt should reference outbox")
+	if !strings.Contains(prompt, "task-001.result.json") {
+		t.Error("prompt should contain outbox result file path")
+	}
+	if !strings.Contains(prompt, "/workspace/.pylon/runtime/outbox") {
+		t.Error("prompt should contain absolute outbox path")
 	}
 }
 
