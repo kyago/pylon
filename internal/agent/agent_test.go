@@ -265,8 +265,11 @@ func TestRunner_BuildArgs_NonInteractive(t *testing.T) {
 	if !strings.Contains(joined, "--model sonnet") {
 		t.Error("should have model")
 	}
-	if !strings.Contains(joined, "--prompt") {
-		t.Error("non-interactive should have --prompt")
+	if !strings.Contains(joined, "Implement login API") {
+		t.Error("non-interactive should have task prompt as positional argument")
+	}
+	if strings.Contains(joined, "--prompt") {
+		t.Error("should NOT use --prompt flag (claude CLI uses positional argument)")
 	}
 	if !strings.Contains(joined, "--append-system-prompt test rules") {
 		t.Error("should append system prompt from ClaudeMD")

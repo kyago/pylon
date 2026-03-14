@@ -39,8 +39,11 @@ func (w *WorktreeManager) Create(projectDir, agentName, taskBranch string) (stri
 	slug := sanitizeBranchName(agentName)
 	worktreePath := filepath.Join(worktreeBase, slug)
 
+	// Each agent gets its own branch: {taskBranch}/{agentName}
+	agentBranch := fmt.Sprintf("%s/%s", taskBranch, sanitizeBranchName(agentName))
+
 	// Create worktree with new branch
-	cmd := exec.Command("git", "worktree", "add", "-b", taskBranch, worktreePath)
+	cmd := exec.Command("git", "worktree", "add", "-b", agentBranch, worktreePath)
 	cmd.Dir = projectDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("failed to create worktree: %w\n%s", err, output)

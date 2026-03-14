@@ -47,6 +47,7 @@ func (r *Runner) BuildArgs(cfg RunConfig) []string {
 	} else {
 		// Non-interactive agent: --print with stream-json output
 		args = append(args, "--print")
+		args = append(args, "--verbose")
 		args = append(args, "--output-format", "stream-json")
 		if cfg.Agent.MaxTurns > 0 {
 			args = append(args, "--max-turns", fmt.Sprintf("%d", cfg.Agent.MaxTurns))
@@ -74,9 +75,9 @@ func (r *Runner) BuildArgs(cfg RunConfig) []string {
 		args = append(args, "--append-system-prompt", cfg.ClaudeMD)
 	}
 
-	// Task prompt (non-interactive only)
+	// Task prompt as positional argument (non-interactive only)
 	if !cfg.Interactive && cfg.TaskPrompt != "" {
-		args = append(args, "--prompt", cfg.TaskPrompt)
+		args = append(args, cfg.TaskPrompt)
 	}
 
 	return args
