@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/kyago/pylon/internal/agent"
 	"github.com/kyago/pylon/internal/config"
@@ -38,6 +41,7 @@ type Loop struct {
 	orch     *Orchestrator
 	watcher  *OutboxWatcher
 	inboxDir string
+	mu       sync.Mutex // protects Pipeline.Agents writes and saveState calls
 }
 
 // NewLoop creates a new orchestration loop.
@@ -196,12 +200,14 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir)
 
 	// Track agent status
+	l.mu.Lock()
 	l.orch.Pipeline.Agents[agentName] = AgentStatus{
 		TaskID:  taskID,
 		AgentID: agentName,
 		Status:  AgentStatusRunning,
 	}
 	l.saveState()
+	l.mu.Unlock()
 
 	// Launch agent with context propagation
 	result, err := l.cfg.Runner.Start(agent.RunConfig{
@@ -213,14 +219,18 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 		ClaudeMD:   claudeMD,
 	})
 	if err != nil {
+		l.mu.Lock()
 		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusFailed}
 		l.saveState()
+		l.mu.Unlock()
 		return fmt.Errorf("agent %s execution failed: %w", agentName, err)
 	}
 
 	if result.ExitCode != 0 {
+		l.mu.Lock()
 		l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusFailed}
 		l.saveState()
+		l.mu.Unlock()
 		return fmt.Errorf("agent %s exited with code %d: %s", agentName, result.ExitCode, result.Stderr)
 	}
 
@@ -238,25 +248,47 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 		}
 	}
 
+	l.mu.Lock()
 	l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusCompleted}
 	l.saveState()
+	l.mu.Unlock()
 
 	return nil
 }
 
-// runAgentExecution runs implementation agents (potentially multiple).
+// runAgentExecution runs implementation agents (potentially in parallel).
 func (l *Loop) runAgentExecution(ctx context.Context) error {
-	// Find all developer agents
 	devAgents := l.findDevAgents()
 	if len(devAgents) == 0 {
 		return fmt.Errorf("no dev agents configured (expected agents with name: backend-dev, frontend-dev, or fullstack)")
 	}
 
-	// For Phase 0: run dev agents sequentially
-	for _, agentName := range devAgents {
-		if err := l.executeAgent(ctx, agentName); err != nil {
+	// Single agent: no need for goroutine overhead
+	if len(devAgents) == 1 {
+		if err := l.executeAgent(ctx, devAgents[0]); err != nil {
 			return err
 		}
+		return l.transitionTo(StageVerification)
+	}
+
+	// Multiple agents: run in parallel with concurrency limit
+	maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 5
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrent)
+
+	for _, name := range devAgents {
+		agentName := name // capture loop variable
+		g.Go(func() error {
+			return l.executeAgent(gctx, agentName)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	return l.transitionTo(StageVerification)

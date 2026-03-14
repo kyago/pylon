@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/kyago/pylon/internal/agent"
@@ -15,6 +16,7 @@ var _ executor.ProcessExecutor = (*testExecutor)(nil)
 
 // testExecutor is a mock executor for loop tests.
 type testExecutor struct {
+	mu        sync.Mutex
 	runCalls  []executor.ExecConfig
 	exitCode  int
 	stdout    string
@@ -27,7 +29,9 @@ func (m *testExecutor) ExecInteractive(cfg executor.ExecConfig) error {
 }
 
 func (m *testExecutor) RunHeadless(cfg executor.ExecConfig) (*executor.ExecResult, error) {
+	m.mu.Lock()
 	m.runCalls = append(m.runCalls, cfg)
+	m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -215,6 +219,35 @@ func TestLoop_buildPRBody(t *testing.T) {
 	body := loop.buildPRBody()
 	if body == "" {
 		t.Fatal("PR body should not be empty")
+	}
+}
+
+func TestLoop_Run_ParallelDevAgents(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{exitCode: 0}
+	lcfg := newTestLoopConfig(dir, exec)
+	// Add a second dev agent
+	lcfg.Agents["frontend-dev"] = &config.AgentConfig{
+		Name: "frontend-dev", Role: "프론트엔드 개발자",
+		PermissionMode: "acceptEdits", MaxTurns: 30,
+	}
+	loop := NewLoop(lcfg)
+
+	loop.orch.StartPipeline("test-pipeline")
+	loop.orch.TransitionTo(StagePOConversation)
+	loop.orch.TransitionTo(StageArchitectAnalysis)
+	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageAgentExecuting)
+
+	err := loop.runAgentExecution(context.Background())
+
+	// Should execute both dev agents (backend-dev + frontend-dev)
+	if err != nil {
+		// PR creation will fail (no git), but agents should have been called
+		t.Logf("error (expected in test): %v", err)
+	}
+	if len(exec.runCalls) < 2 {
+		t.Errorf("expected at least 2 agent calls, got %d", len(exec.runCalls))
 	}
 }
 

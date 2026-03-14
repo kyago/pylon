@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+//go:embed agents/*.md
+var embeddedAgents embed.FS
 
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
@@ -129,6 +133,11 @@ git:
 		return err
 	}
 
+	// Create symlinks in .claude/agents/ for Claude CLI native discovery
+	if err := linkAgentsToClaude(workDir, pylonDir); err != nil {
+		return err
+	}
+
 	// Create .gitkeep in skills/
 	if err := os.WriteFile(filepath.Join(pylonDir, "skills", ".gitkeep"), []byte(""), 0644); err != nil {
 		return fmt.Errorf("failed to create skills/.gitkeep: %w", err)
@@ -140,6 +149,9 @@ git:
 		"# Pylon runtime (agent communication, state)",
 		".pylon/runtime/",
 		".pylon/conversations/",
+		"",
+		"# Claude CLI agent symlinks (managed by pylon)",
+		".claude/agents/",
 		"",
 	}
 	gitignoreContent := strings.Join(gitignoreEntries, "\n")
@@ -169,11 +181,12 @@ git:
 	fmt.Println("Created:")
 	fmt.Println("  .pylon/config.yml          - workspace configuration")
 	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
-	fmt.Println("  .pylon/agents/             - root agent definitions (po, pm, architect, tech-writer)")
+	fmt.Println("  .pylon/agents/             - agent definitions (23 agents)")
 	fmt.Println("  .pylon/skills/             - agent skills")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
 	fmt.Println("  .pylon/conversations/      - conversation history")
 	fmt.Println("  .pylon/tasks/              - confirmed task specs")
+	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/agents/)")
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
@@ -183,108 +196,55 @@ git:
 	return nil
 }
 
-func writeAgentTemplates(pylonDir string) error {
-	agentTemplates := map[string]string{
-		"po.md": `---
-name: po
-role: Product Owner
-backend: claude-code
-maxTurns: 50
-permissionMode: default
----
-
-# Product Owner
-
-## Role
-Analyze user requirements through clarifying questions,
-define acceptance criteria, and validate final deliverables
-against business expectations.
-
-## Workflow
-1. Receive requirement -> wiki-based analysis
-2. Clarify ambiguous points through questions
-3. Confirm acceptance criteria -> deliver result via outbox
-`,
-		"pm.md": `---
-name: pm
-role: Project Manager
-backend: claude-code
-maxTurns: 50
-permissionMode: acceptEdits
----
-
-# Project Manager
-
-## Role
-Break down confirmed requirements into tasks,
-assign agents, manage execution order (serial/parallel),
-and handle error escalation.
-
-## Workflow
-1. Receive confirmed requirements from PO
-2. Analyze technical dependencies with Architect
-3. Break down into tasks -> assign to project agents
-4. Monitor execution -> handle failures and retries
-5. Report completion via outbox
-`,
-		"architect.md": `---
-name: architect
-role: Architect
-backend: claude-code
-maxTurns: 50
-permissionMode: acceptEdits
----
-
-# Architect
-
-## Role
-Make cross-project architectural decisions,
-analyze technical direction and inter-project dependencies,
-ensure consistency across the codebase.
-
-## Workflow
-1. Receive analysis request from PM
-2. Review domain knowledge and existing architecture
-3. Analyze technical direction and dependencies
-4. Record decisions -> deliver result via outbox
-`,
-		"tech-writer.md": `---
-name: tech-writer
-role: Tech Writer
-backend: claude-code
-maxTurns: 50
-permissionMode: acceptEdits
----
-
-# Tech Writer
-
-## Role
-Maintain and update domain knowledge (wiki),
-project context files, and ensure documentation
-stays in sync with the codebase.
-
-## Workflow
-1. Receive update trigger (task_complete or pr_merged)
-2. Analyze code changes and their impact
-3. Update domain/ files and project context.md
-4. Verify cross-document consistency
-5. Record learnings -> deliver result via outbox
-
-### Self-Evolution Rules
-After completing a task:
-1. Sync modified domain documents with related skills
-2. Verify cross-document consistency (conventions <-> architecture <-> glossary)
-3. Record learnings in the Learnings section below
-
-## Learnings
-_Findings from previous executions are recorded here._
-`,
+// linkAgentsToClaude creates .claude/agents/ with symlinks pointing to .pylon/agents/,
+// enabling Claude CLI native agent discovery without duplicating files.
+func linkAgentsToClaude(workDir, pylonDir string) error {
+	claudeAgentsDir := filepath.Join(workDir, ".claude", "agents")
+	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .claude/agents/: %w", err)
 	}
 
-	for name, content := range agentTemplates {
-		path := filepath.Join(pylonDir, "agents", name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to create agent %s: %w", name, err)
+	pylonAgentsDir := filepath.Join(pylonDir, "agents")
+	entries, err := os.ReadDir(pylonAgentsDir)
+	if err != nil {
+		return fmt.Errorf("failed to read .pylon/agents/: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+			continue
+		}
+		// Relative symlink: .claude/agents/foo.md -> ../../.pylon/agents/foo.md
+		relTarget := filepath.Join("..", "..", ".pylon", "agents", entry.Name())
+		linkPath := filepath.Join(claudeAgentsDir, entry.Name())
+		if err := os.Symlink(relTarget, linkPath); err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return fmt.Errorf("failed to create symlink for %s: %w", entry.Name(), err)
+		}
+	}
+
+	return nil
+}
+
+func writeAgentTemplates(pylonDir string) error {
+	entries, err := embeddedAgents.ReadDir("agents")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded agents: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		content, err := embeddedAgents.ReadFile("agents/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("failed to read agent %s: %w", entry.Name(), err)
+		}
+		path := filepath.Join(pylonDir, "agents", entry.Name())
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			return fmt.Errorf("failed to create agent %s: %w", entry.Name(), err)
 		}
 	}
 	return nil
