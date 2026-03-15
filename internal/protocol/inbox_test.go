@@ -251,6 +251,25 @@ func TestWriteAtomically_Overwrite(t *testing.T) {
 	}
 }
 
+func TestWriteAtomically_ErrorOnWrite(t *testing.T) {
+	err := writeAtomically("/nonexistent/dir/file.json", []byte("data"))
+	if err == nil {
+		t.Fatal("expected error when writing to nonexistent directory")
+	}
+}
+
+func TestWriteTask_ErrorOnMarshalFailure(t *testing.T) {
+	dir := t.TempDir()
+	msg := NewMessage(MsgTaskAssign, "orchestrator", "agent")
+	msg.Body = make(chan int) // not JSON-serializable
+	msg.Context = &MsgContext{TaskID: "t1"}
+
+	err := WriteTask(dir, "agent", msg)
+	if err == nil {
+		t.Fatal("expected error for non-serializable body")
+	}
+}
+
 func TestWriteAtomically_NoTmpFileRemains(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clean.json")
