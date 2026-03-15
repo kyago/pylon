@@ -7,7 +7,6 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -77,26 +76,36 @@ func (s *Store) Migrate() error {
 	}
 	sort.Strings(sqlFiles)
 
-	// 4. 미실행 파일만 순차 실행 및 기록
+	// 4. 미실행 파일만 개별 트랜잭션으로 순차 실행 및 기록
 	for _, name := range sqlFiles {
 		if applied[name] {
 			continue
 		}
 
-		content, err := fs.ReadFile(migrationsFS, filepath.Join("migrations", name))
+		content, err := fs.ReadFile(migrationsFS, "migrations/"+name)
 		if err != nil {
 			return fmt.Errorf("failed to read migration %s: %w", name, err)
 		}
 
-		if _, err := s.db.Exec(string(content)); err != nil {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction for %s: %w", name, err)
+		}
+
+		if _, err := tx.Exec(string(content)); err != nil {
+			tx.Rollback()
 			return fmt.Errorf("migration %s failed: %w", name, err)
 		}
 
-		// 5. 실행된 파일명을 schema_migrations에 기록
-		if _, err := s.db.Exec(
+		if _, err := tx.Exec(
 			`INSERT INTO schema_migrations (version) VALUES (?)`, name,
 		); err != nil {
+			tx.Rollback()
 			return fmt.Errorf("failed to record migration %s: %w", name, err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit migration %s: %w", name, err)
 		}
 	}
 
