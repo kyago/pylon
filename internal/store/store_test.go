@@ -1,6 +1,9 @@
 package store
 
 import (
+	"io/fs"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,6 +33,144 @@ func TestMigrate_Idempotent(t *testing.T) {
 	// Running migrate again should not error (IF NOT EXISTS)
 	if err := s.Migrate(); err != nil {
 		t.Errorf("second migration failed: %v", err)
+	}
+}
+
+func TestMigrate_FileNameOrder(t *testing.T) {
+	// migrations/ 디렉토리의 .sql 파일이 파일명 기준으로 정렬되어 실행되는지 확인
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatalf("failed to read migrations dir: %v", err)
+	}
+
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			names = append(names, e.Name())
+		}
+	}
+
+	sorted := make([]string, len(names))
+	copy(sorted, names)
+	sort.Strings(sorted)
+
+	for i, name := range names {
+		if name != sorted[i] {
+			t.Errorf("migration file order mismatch at index %d: got %q, want %q", i, name, sorted[i])
+		}
+	}
+
+	// 실제 마이그레이션 실행 후 schema_migrations의 순서 확인
+	s := setupTestStore(t)
+	rows, err := s.DB().Query(`SELECT version FROM schema_migrations ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("failed to query schema_migrations: %v", err)
+	}
+	defer rows.Close()
+
+	var applied []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		applied = append(applied, v)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows error: %v", err)
+	}
+
+	if len(applied) != len(sorted) {
+		t.Fatalf("expected %d applied migrations, got %d", len(sorted), len(applied))
+	}
+	for i, v := range applied {
+		if v != sorted[i] {
+			t.Errorf("applied migration order mismatch at index %d: got %q, want %q", i, v, sorted[i])
+		}
+	}
+}
+
+func TestMigrate_SkipsAlreadyApplied(t *testing.T) {
+	s, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	// 첫 번째 마이그레이션 실행
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("first migration failed: %v", err)
+	}
+
+	// 실행된 마이그레이션 수 확인
+	var countBefore int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&countBefore); err != nil {
+		t.Fatalf("failed to count migrations: %v", err)
+	}
+
+	// 두 번째 마이그레이션 실행 — 이미 적용된 것은 건너뛰어야 함
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("second migration failed: %v", err)
+	}
+
+	var countAfter int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&countAfter); err != nil {
+		t.Fatalf("failed to count migrations: %v", err)
+	}
+
+	if countBefore != countAfter {
+		t.Errorf("expected same migration count after re-run: before=%d, after=%d", countBefore, countAfter)
+	}
+}
+
+func TestMigrate_RecordsAppliedVersions(t *testing.T) {
+	s := setupTestStore(t)
+
+	// schema_migrations 테이블에 실행 기록이 있는지 확인
+	rows, err := s.DB().Query(`SELECT version, applied_at FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatalf("failed to query schema_migrations: %v", err)
+	}
+	defer rows.Close()
+
+	var versions []string
+	for rows.Next() {
+		var version string
+		var appliedAt string
+		if err := rows.Scan(&version, &appliedAt); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		if version == "" {
+			t.Error("version should not be empty")
+		}
+		if appliedAt == "" {
+			t.Error("applied_at should not be empty")
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows error: %v", err)
+	}
+
+	if len(versions) == 0 {
+		t.Error("expected at least one migration record in schema_migrations")
+	}
+
+	// 모든 .sql 파일이 기록되어 있는지 확인
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatalf("failed to read migrations dir: %v", err)
+	}
+
+	var expectedFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			expectedFiles = append(expectedFiles, e.Name())
+		}
+	}
+
+	if len(versions) != len(expectedFiles) {
+		t.Errorf("expected %d migration records, got %d", len(expectedFiles), len(versions))
 	}
 }
 
