@@ -137,6 +137,138 @@ func TestMessageQueue_GetPending(t *testing.T) {
 	}
 }
 
+// --- GetByTaskID Tests ---
+
+func TestMessageQueue_GetByTaskID_BodyMatch(t *testing.T) {
+	s := setupTestStore(t)
+
+	s.Enqueue(&QueuedMessage{
+		Type: "task_assign", FromAgent: "orc", ToAgent: "dev",
+		Body: `{"task_id":"task-abc","description":"login"}`,
+	})
+	s.Enqueue(&QueuedMessage{
+		Type: "result", FromAgent: "dev", ToAgent: "orc",
+		Body: `{"task_id":"task-abc","status":"completed"}`,
+	})
+	s.Enqueue(&QueuedMessage{
+		Type: "task_assign", FromAgent: "orc", ToAgent: "dev",
+		Body: `{"task_id":"task-other","description":"signup"}`,
+	})
+
+	msgs, err := s.GetByTaskID("task-abc")
+	if err != nil {
+		t.Fatalf("GetByTaskID failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages for task-abc, got %d", len(msgs))
+	}
+}
+
+func TestMessageQueue_GetByTaskID_ContextMatch(t *testing.T) {
+	s := setupTestStore(t)
+
+	s.Enqueue(&QueuedMessage{
+		Type: "result", FromAgent: "dev", ToAgent: "orc",
+		Body:    `{"status":"completed"}`,
+		Context: `{"task_id":"task-ctx-1","pipeline_id":"pipe-1"}`,
+	})
+
+	msgs, err := s.GetByTaskID("task-ctx-1")
+	if err != nil {
+		t.Fatalf("GetByTaskID failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Errorf("expected 1 message for task-ctx-1, got %d", len(msgs))
+	}
+}
+
+func TestMessageQueue_GetByTaskID_BothBodyAndContext(t *testing.T) {
+	s := setupTestStore(t)
+
+	// task_id in body
+	s.Enqueue(&QueuedMessage{
+		Type: "task_assign", FromAgent: "orc", ToAgent: "dev",
+		Body: `{"task_id":"task-both","description":"test"}`,
+	})
+	// task_id in context only
+	s.Enqueue(&QueuedMessage{
+		Type: "result", FromAgent: "dev", ToAgent: "orc",
+		Body:    `{"status":"completed"}`,
+		Context: `{"task_id":"task-both"}`,
+	})
+	// task_id in both body and context (should not duplicate)
+	s.Enqueue(&QueuedMessage{
+		Type: "result", FromAgent: "dev", ToAgent: "orc",
+		Body:    `{"task_id":"task-both","status":"done"}`,
+		Context: `{"task_id":"task-both"}`,
+	})
+
+	msgs, err := s.GetByTaskID("task-both")
+	if err != nil {
+		t.Fatalf("GetByTaskID failed: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Errorf("expected 3 messages for task-both, got %d", len(msgs))
+	}
+}
+
+func TestMessageQueue_GetByTaskID_NotFound(t *testing.T) {
+	s := setupTestStore(t)
+
+	s.Enqueue(&QueuedMessage{
+		Type: "task_assign", FromAgent: "orc", ToAgent: "dev",
+		Body: `{"task_id":"task-exists","description":"test"}`,
+	})
+
+	msgs, err := s.GetByTaskID("nonexistent-task")
+	if err != nil {
+		t.Fatalf("GetByTaskID failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages for nonexistent task, got %d", len(msgs))
+	}
+}
+
+func TestMessageQueue_GetByTaskID_SQLInjection(t *testing.T) {
+	s := setupTestStore(t)
+
+	s.Enqueue(&QueuedMessage{
+		Type: "task_assign", FromAgent: "orc", ToAgent: "dev",
+		Body: `{"task_id":"safe-task","description":"test"}`,
+	})
+
+	// SQL 인젝션 시도 — 결과가 없어야 하고 에러도 없어야 함
+	injectionPayloads := []string{
+		`"; DROP TABLE message_queue; --`,
+		`' OR '1'='1`,
+		`" OR "1"="1`,
+		`%`,
+		`%%`,
+		`' UNION SELECT * FROM message_queue --`,
+		`task_id" OR 1=1 --`,
+	}
+
+	for _, payload := range injectionPayloads {
+		msgs, err := s.GetByTaskID(payload)
+		if err != nil {
+			t.Errorf("GetByTaskID with injection payload %q returned error: %v", payload, err)
+			continue
+		}
+		if len(msgs) != 0 {
+			t.Errorf("GetByTaskID with injection payload %q returned %d messages, expected 0", payload, len(msgs))
+		}
+	}
+
+	// 원본 데이터가 손상되지 않았는지 확인
+	msgs, err := s.GetByTaskID("safe-task")
+	if err != nil {
+		t.Fatalf("GetByTaskID after injection attempts failed: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Errorf("expected original data intact, got %d messages", len(msgs))
+	}
+}
+
 // --- Pipeline State Tests ---
 
 func TestPipelineState_UpsertGet(t *testing.T) {
