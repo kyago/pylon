@@ -5,7 +5,6 @@ package git
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -14,6 +13,15 @@ import (
 type WorktreeManager struct {
 	Enabled     bool
 	AutoCleanup bool
+	Runner      CommandRunner // nil이면 defaultRunner 사용
+}
+
+// runner returns the effective CommandRunner for this manager.
+func (w *WorktreeManager) runner() CommandRunner {
+	if w.Runner != nil {
+		return w.Runner
+	}
+	return defaultRunner
 }
 
 // NewWorktreeManager creates a WorktreeManager from config.
@@ -43,9 +51,8 @@ func (w *WorktreeManager) Create(projectDir, agentName, taskBranch string) (stri
 	agentBranch := fmt.Sprintf("%s/%s", taskBranch, sanitizeBranchName(agentName))
 
 	// Create worktree with new branch
-	cmd := exec.Command("git", "worktree", "add", "-b", agentBranch, worktreePath)
-	cmd.Dir = projectDir
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err := w.runner().Run(projectDir, "git", "worktree", "add", "-b", agentBranch, worktreePath)
+	if err != nil {
 		return "", fmt.Errorf("failed to create worktree: %w\n%s", err, output)
 	}
 
@@ -54,9 +61,8 @@ func (w *WorktreeManager) Create(projectDir, agentName, taskBranch string) (stri
 
 // Remove removes a Git worktree.
 func (w *WorktreeManager) Remove(projectDir, worktreePath string) error {
-	cmd := exec.Command("git", "worktree", "remove", worktreePath, "--force")
-	cmd.Dir = projectDir
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err := w.runner().Run(projectDir, "git", "worktree", "remove", worktreePath, "--force")
+	if err != nil {
 		return fmt.Errorf("failed to remove worktree: %w\n%s", err, output)
 	}
 	return nil
@@ -86,9 +92,7 @@ func (w *WorktreeManager) Cleanup(projectDir string) error {
 	}
 
 	// Also prune stale worktree entries
-	pruneCmd := exec.Command("git", "worktree", "prune")
-	pruneCmd.Dir = projectDir
-	pruneCmd.CombinedOutput() // best-effort
+	w.runner().Run(projectDir, "git", "worktree", "prune") // best-effort
 
 	if len(errs) > 0 {
 		return fmt.Errorf("some worktrees failed to clean:\n%s", strings.Join(errs, "\n"))

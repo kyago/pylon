@@ -2,7 +2,6 @@ package git
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -37,10 +36,7 @@ func CreatePR(projectDir string, cfg PRCreateConfig) (string, error) {
 		args = append(args, "--reviewer", r)
 	}
 
-	cmd := exec.Command("gh", args...)
-	cmd.Dir = projectDir
-
-	output, err := cmd.CombinedOutput()
+	output, err := defaultRunner.Run(projectDir, "gh", args...)
 	if err != nil {
 		return "", fmt.Errorf("failed to create PR: %w\n%s", err, output)
 	}
@@ -51,9 +47,8 @@ func CreatePR(projectDir string, cfg PRCreateConfig) (string, error) {
 
 // PushBranch pushes the current branch to remote.
 func PushBranch(projectDir, branch string) error {
-	cmd := exec.Command("git", "push", "-u", "origin", branch)
-	cmd.Dir = projectDir
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err := defaultRunner.Run(projectDir, "git", "push", "-u", "origin", branch)
+	if err != nil {
 		return fmt.Errorf("failed to push branch: %w\n%s", err, output)
 	}
 	return nil
