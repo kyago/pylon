@@ -13,6 +13,9 @@ import (
 //go:embed migrations/001_initial.sql
 var migrationSQL string
 
+//go:embed migrations/002_fts_triggers.sql
+var ftsTriggerSQL string
+
 // Store wraps a SQLite database connection for pylon data.
 type Store struct {
 	db *sql.DB
@@ -41,10 +44,13 @@ func NewStore(dbPath string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// Migrate runs the embedded SQL migration to create all tables.
+// Migrate runs the embedded SQL migrations to create all tables and triggers.
 func (s *Store) Migrate() error {
 	if _, err := s.db.Exec(migrationSQL); err != nil {
 		return fmt.Errorf("migration failed: %w", err)
+	}
+	if _, err := s.db.Exec(ftsTriggerSQL); err != nil {
+		return fmt.Errorf("fts trigger migration failed: %w", err)
 	}
 	return nil
 }

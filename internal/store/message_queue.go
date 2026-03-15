@@ -35,6 +35,10 @@ func (s *Store) Enqueue(msg *QueuedMessage) error {
 		msg.Status = "queued"
 	}
 
+	if err := validateMessageStatus(msg.Status); err != nil {
+		return fmt.Errorf("invalid message: %w", err)
+	}
+
 	_, err := s.db.Exec(`
 		INSERT INTO message_queue (id, type, priority, from_agent, to_agent, subject, body, context, status, reply_to, ttl_seconds)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -118,14 +122,15 @@ func (s *Store) Ack(messageID string) error {
 	return nil
 }
 
-// GetByTaskID returns all messages for a given task (matching body JSON).
+// GetByTaskID returns all messages for a given task (matching body or context JSON).
 func (s *Store) GetByTaskID(taskID string) ([]QueuedMessage, error) {
 	rows, err := s.db.Query(`
 		SELECT id, type, priority, from_agent, to_agent, subject, body, context, status, reply_to, ttl_seconds, created_at
 		FROM message_queue
-		WHERE body LIKE ?
+		WHERE (json_valid(body) AND json_extract(body, '$.task_id') = ?)
+		   OR (json_valid(context) AND json_extract(context, '$.task_id') = ?)
 		ORDER BY created_at ASC`,
-		fmt.Sprintf(`%%"task_id":"%s"%%`, taskID),
+		taskID, taskID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query by task_id: %w", err)

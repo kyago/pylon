@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -537,5 +539,139 @@ func TestPrepareWorkDir_DisabledManager(t *testing.T) {
 	}
 	if workDir != "/project" {
 		t.Errorf("workDir = %q, want /project", workDir)
+	}
+}
+
+func TestPrepareWorkDir_WorktreeCreation(t *testing.T) {
+	// 임시 디렉토리에 실제 git repo 초기화
+	projectDir := t.TempDir()
+	initGitRepo(t, projectDir)
+
+	wm := &git.WorktreeManager{Enabled: true, AutoCleanup: true}
+	workDir, cleanup, err := PrepareWorkDir(wm, "worktree", "task-branch", projectDir, "test-agent")
+	if err != nil {
+		t.Fatalf("PrepareWorkDir failed: %v", err)
+	}
+
+	// worktree 경로가 projectDir과 달라야 함
+	if workDir == projectDir {
+		t.Error("workDir should differ from projectDir when worktree is created")
+	}
+
+	// worktree 디렉토리가 실제로 존재해야 함
+	if _, statErr := os.Stat(workDir); os.IsNotExist(statErr) {
+		t.Errorf("worktree directory does not exist: %s", workDir)
+	}
+
+	// cleanup 함수가 nil이 아닌지 확인
+	if cleanup == nil {
+		t.Fatal("cleanup function should not be nil")
+	}
+
+	// git worktree remove는 메인 repo 컨텍스트에서 실행되어야 하므로
+	// 직접 git 명령으로 정리
+	removeCmd := exec.Command("git", "worktree", "remove", workDir, "--force")
+	removeCmd.Dir = projectDir
+	if output, err := removeCmd.CombinedOutput(); err != nil {
+		t.Fatalf("worktree cleanup failed: %v\n%s", err, output)
+	}
+
+	if _, statErr := os.Stat(workDir); !os.IsNotExist(statErr) {
+		t.Error("worktree directory should be removed after cleanup")
+	}
+}
+
+func TestPrepareWorkDir_WorktreeCreationError(t *testing.T) {
+	// git repo가 아닌 일반 디렉토리 → worktree 생성 실패 예상
+	nonGitDir := t.TempDir()
+
+	wm := &git.WorktreeManager{Enabled: true, AutoCleanup: true}
+	_, _, err := PrepareWorkDir(wm, "worktree", "task-branch", nonGitDir, "test-agent")
+	if err == nil {
+		t.Fatal("expected error when creating worktree in non-git directory")
+	}
+	if !strings.Contains(err.Error(), "failed to create worktree") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRunner_Start_ExecutorError(t *testing.T) {
+	expectedErr := fmt.Errorf("process execution failed: exit code 1")
+	mock := &mockExecutor{
+		result: nil,
+		err:    expectedErr,
+	}
+	r := NewRunner(mock)
+
+	result, err := r.Start(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:           "dev",
+			MaxTurns:       30,
+			PermissionMode: "acceptEdits",
+		},
+		Global:  &config.Config{},
+		WorkDir: "/tmp",
+	})
+	if err == nil {
+		t.Fatal("expected error from executor")
+	}
+	if err != expectedErr {
+		t.Errorf("error = %v, want %v", err, expectedErr)
+	}
+	if result != nil {
+		t.Error("result should be nil on executor error")
+	}
+}
+
+func TestRunner_Start_InteractiveExecutorError(t *testing.T) {
+	expectedErr := fmt.Errorf("headless process failed in interactive mode")
+	mock := &mockExecutor{
+		result: nil,
+		err:    expectedErr,
+	}
+	r := NewRunner(mock)
+
+	result, err := r.Start(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:           "po",
+			MaxTurns:       50,
+			PermissionMode: "default",
+		},
+		Global:      &config.Config{},
+		WorkDir:     "/tmp",
+		Interactive: true,
+	})
+	if err == nil {
+		t.Fatal("expected error from executor")
+	}
+	if err != expectedErr {
+		t.Errorf("error = %v, want %v", err, expectedErr)
+	}
+	if result != nil {
+		t.Error("result should be nil on executor error")
+	}
+
+	// Interactive 모드에서 BuildArgs가 --print 없이 호출되었는지 확인
+	joined := strings.Join(mock.lastCfg.Args, " ")
+	if strings.Contains(joined, "--print") {
+		t.Error("interactive mode should NOT have --print in args")
+	}
+}
+
+// initGitRepo는 테스트용 git 저장소를 초기화하는 헬퍼 함수.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+		{"git", "commit", "--allow-empty", "-m", "initial commit"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git command %v failed: %v\n%s", args, err, output)
+		}
 	}
 }

@@ -2,7 +2,6 @@ package git
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -24,9 +23,8 @@ func BranchName(prefix, taskDesc string) string {
 
 // CreateBranch creates a new git branch from the current HEAD.
 func CreateBranch(dir, branchName string) error {
-	cmd := exec.Command("git", "checkout", "-b", branchName)
-	cmd.Dir = dir
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err := defaultRunner.Run(dir, "git", "checkout", "-b", branchName)
+	if err != nil {
 		return fmt.Errorf("failed to create branch %q: %w\n%s", branchName, err, output)
 	}
 	return nil
@@ -34,12 +32,9 @@ func CreateBranch(dir, branchName string) error {
 
 // CurrentBranch returns the current git branch name.
 func CurrentBranch(dir string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = dir
-	output, err := cmd.Output()
+	output, err := defaultRunner.Run(dir, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("failed to get current branch: %w", err)
 	}
 	return strings.TrimSpace(string(output)), nil
 }
-
