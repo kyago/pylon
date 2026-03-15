@@ -23,7 +23,12 @@ func BranchName(prefix, taskDesc string) string {
 
 // CreateBranch creates a new git branch from the current HEAD.
 func CreateBranch(dir, branchName string) error {
-	output, err := defaultRunner.Run(dir, "git", "checkout", "-b", branchName)
+	return createBranchWith(defaultRunner, dir, branchName)
+}
+
+// createBranchWith is the internal implementation that accepts a CommandRunner.
+func createBranchWith(runner CommandRunner, dir, branchName string) error {
+	output, err := runner.Run(dir, "git", "checkout", "-b", branchName)
 	if err != nil {
 		return fmt.Errorf("failed to create branch %q: %w\n%s", branchName, err, output)
 	}
@@ -32,7 +37,12 @@ func CreateBranch(dir, branchName string) error {
 
 // CurrentBranch returns the current git branch name.
 func CurrentBranch(dir string) (string, error) {
-	output, err := defaultRunner.Run(dir, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	return currentBranchWith(defaultRunner, dir)
+}
+
+// currentBranchWith is the internal implementation that accepts a CommandRunner.
+func currentBranchWith(runner CommandRunner, dir string) (string, error) {
+	output, err := runner.Run(dir, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("failed to get current branch: %w", err)
 	}
