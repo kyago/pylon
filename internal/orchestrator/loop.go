@@ -246,9 +246,8 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	}
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
-			l.mu.Lock()
-			l.processAgentResult(wr)
-			l.mu.Unlock()
+			data := l.extractAgentResult(wr)
+			l.storeAgentResult(data)
 			foundOutbox = true
 			if err := markProcessed(filepath.Dir(wr.FilePath), filepath.Base(wr.FilePath)); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠ failed to mark processed %s: %v\n", wr.FilePath, err)
@@ -478,17 +477,18 @@ func (l *Loop) findAgent(name string) *config.AgentConfig {
 	return nil
 }
 
-// findDevAgents returns agent names with development-related roles.
+// findDevAgents returns agent names matching known dev agent names.
+// Recognized names: backend-dev, frontend-dev, fullstack.
 func (l *Loop) findDevAgents() []string {
 	var devs []string
-	devRoles := map[string]bool{
+	devAgentNames := map[string]bool{
 		"backend-dev":  true,
 		"frontend-dev": true,
 		"fullstack":    true,
 	}
 
 	for name := range l.cfg.Agents {
-		if devRoles[name] {
+		if devAgentNames[name] {
 			devs = append(devs, name)
 		}
 	}
@@ -498,7 +498,7 @@ func (l *Loop) findDevAgents() []string {
 		for _, p := range l.cfg.Projects {
 			if pCfg, ok := l.cfg.Config.Projects[p.Name]; ok {
 				for _, a := range pCfg.Agents {
-					if devRoles[a] && l.findAgent(a) != nil && !containsStr(devs, a) {
+					if devAgentNames[a] && l.findAgent(a) != nil && !containsStr(devs, a) {
 						devs = append(devs, a)
 					}
 				}
@@ -563,46 +563,71 @@ func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, o
 	})
 }
 
-func (l *Loop) processAgentResult(wr WatchResult) {
+// agentResultData holds extracted data from an agent result for deferred I/O.
+type agentResultData struct {
+	agentName string
+	taskID    string
+	project   string
+	learnings []string
+	summary   string
+}
+
+// extractAgentResult extracts data from a WatchResult without performing I/O.
+// Must be called with l.mu held if Pipeline state is accessed concurrently.
+func (l *Loop) extractAgentResult(wr WatchResult) *agentResultData {
 	if wr.Envelope == nil {
+		return nil
+	}
+
+	data := &agentResultData{agentName: wr.AgentName}
+	if len(l.cfg.Projects) > 0 {
+		data.project = l.cfg.Projects[0].Name
+	}
+	if wr.Envelope.Context != nil {
+		data.taskID = wr.Envelope.Context.TaskID
+	}
+
+	bodyMap, ok := wr.Envelope.Body.(map[string]any)
+	if !ok {
+		return data
+	}
+
+	// Extract learnings
+	if learnings, ok := bodyMap["learnings"].([]any); ok {
+		for _, item := range learnings {
+			if s, ok := item.(string); ok {
+				data.learnings = append(data.learnings, s)
+			}
+		}
+	}
+
+	// Extract summary
+	if summary, ok := bodyMap["summary"].(string); ok {
+		data.summary = summary
+	}
+
+	return data
+}
+
+// storeAgentResult performs I/O operations (memory + blackboard) outside of mutex.
+func (l *Loop) storeAgentResult(data *agentResultData) {
+	if data == nil || data.project == "" {
 		return
 	}
 
-	// Extract learnings and store to memory
-	if l.cfg.MemManager != nil && len(l.cfg.Projects) > 0 {
-		if bodyMap, ok := wr.Envelope.Body.(map[string]any); ok {
-			if learnings, ok := bodyMap["learnings"].([]any); ok {
-				var strs []string
-				for _, item := range learnings {
-					if s, ok := item.(string); ok {
-						strs = append(strs, s)
-					}
-				}
-				if len(strs) > 0 {
-					taskID := ""
-					if wr.Envelope.Context != nil {
-						taskID = wr.Envelope.Context.TaskID
-					}
-					l.cfg.MemManager.StoreLearnings(l.cfg.Projects[0].Name, taskID, wr.AgentName, strs)
-				}
-			}
-		}
+	if l.cfg.MemManager != nil && len(data.learnings) > 0 {
+		l.cfg.MemManager.StoreLearnings(data.project, data.taskID, data.agentName, data.learnings)
 	}
 
-	// Update blackboard with summary
-	if l.cfg.Store != nil && len(l.cfg.Projects) > 0 {
-		if bodyMap, ok := wr.Envelope.Body.(map[string]any); ok {
-			if summary, ok := bodyMap["summary"].(string); ok {
-				l.cfg.Store.PutBlackboard(&store.BlackboardEntry{
-					ProjectID:  l.cfg.Projects[0].Name,
-					Category:   "agent_result",
-					Key:        wr.AgentName,
-					Value:      summary,
-					Confidence: 0.9,
-					Author:     wr.AgentName,
-				})
-			}
-		}
+	if l.cfg.Store != nil && data.summary != "" {
+		l.cfg.Store.PutBlackboard(&store.BlackboardEntry{
+			ProjectID:  data.project,
+			Category:   "agent_result",
+			Key:        data.agentName,
+			Value:      data.summary,
+			Confidence: 0.9,
+			Author:     data.agentName,
+		})
 	}
 }
 
@@ -641,14 +666,21 @@ func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
 		return
 	}
 
+	// Mark as processed to prevent duplicate processing by future PollOnce() calls
+	agentDir := filepath.Join(l.watcher.OutboxDir, agentName)
+	resultFile := taskID + ".result.json"
+	if err := markProcessed(agentDir, resultFile); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to mark processed fallback outbox for %s: %v\n", agentName, err)
+	}
+
 	// Process the result we just wrote
 	wr := WatchResult{
 		AgentName: agentName,
+		FilePath:  filepath.Join(agentDir, resultFile),
 		Envelope:  msg,
 	}
-	l.mu.Lock()
-	l.processAgentResult(wr)
-	l.mu.Unlock()
+	data := l.extractAgentResult(wr)
+	l.storeAgentResult(data)
 }
 
 func (l *Loop) writeFixRequest(results []VerifyResult) error {

@@ -116,7 +116,7 @@ func CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir string) string
    - 임시 파일: `+"`%s`"+`
 3. 작성 완료 후 mv 명령을 실행합니다:
    `+"```"+`bash
-   mv %s %s
+   mv '%s' '%s'
    `+"```", tmpPath, tmpPath, outboxPath)
 	}
 

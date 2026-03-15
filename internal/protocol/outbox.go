@@ -17,7 +17,10 @@ func ReadResult(path string) (*MessageEnvelope, error) {
 		return nil, fmt.Errorf("failed to read result file: %w", err)
 	}
 
-	// Try full envelope first
+	// Try full envelope first.
+	// Require env.Type to be non-empty: valid JSON without a "type" field
+	// (e.g. flat agent output) should fall through to flat JSON parsing below,
+	// which wraps it in a proper envelope with MsgResult type.
 	env, envErr := Unmarshal(data)
 	if envErr == nil && env.Type != "" {
 		return env, nil
