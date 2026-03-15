@@ -1,6 +1,9 @@
 package store
 
 import (
+	"io/fs"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,6 +33,144 @@ func TestMigrate_Idempotent(t *testing.T) {
 	// Running migrate again should not error (IF NOT EXISTS)
 	if err := s.Migrate(); err != nil {
 		t.Errorf("second migration failed: %v", err)
+	}
+}
+
+func TestMigrate_FileNameOrder(t *testing.T) {
+	// migrations/ 디렉토리의 .sql 파일이 파일명 기준으로 정렬되어 실행되는지 확인
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatalf("failed to read migrations dir: %v", err)
+	}
+
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			names = append(names, e.Name())
+		}
+	}
+
+	sorted := make([]string, len(names))
+	copy(sorted, names)
+	sort.Strings(sorted)
+
+	for i, name := range names {
+		if name != sorted[i] {
+			t.Errorf("migration file order mismatch at index %d: got %q, want %q", i, name, sorted[i])
+		}
+	}
+
+	// 실제 마이그레이션 실행 후 schema_migrations의 순서 확인
+	s := setupTestStore(t)
+	rows, err := s.DB().Query(`SELECT version FROM schema_migrations ORDER BY rowid`)
+	if err != nil {
+		t.Fatalf("failed to query schema_migrations: %v", err)
+	}
+	defer rows.Close()
+
+	var applied []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		applied = append(applied, v)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows error: %v", err)
+	}
+
+	if len(applied) != len(sorted) {
+		t.Fatalf("expected %d applied migrations, got %d", len(sorted), len(applied))
+	}
+	for i, v := range applied {
+		if v != sorted[i] {
+			t.Errorf("applied migration order mismatch at index %d: got %q, want %q", i, v, sorted[i])
+		}
+	}
+}
+
+func TestMigrate_SkipsAlreadyApplied(t *testing.T) {
+	s, err := NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	// 첫 번째 마이그레이션 실행
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("first migration failed: %v", err)
+	}
+
+	// 실행된 마이그레이션 수 확인
+	var countBefore int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&countBefore); err != nil {
+		t.Fatalf("failed to count migrations: %v", err)
+	}
+
+	// 두 번째 마이그레이션 실행 — 이미 적용된 것은 건너뛰어야 함
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("second migration failed: %v", err)
+	}
+
+	var countAfter int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&countAfter); err != nil {
+		t.Fatalf("failed to count migrations: %v", err)
+	}
+
+	if countBefore != countAfter {
+		t.Errorf("expected same migration count after re-run: before=%d, after=%d", countBefore, countAfter)
+	}
+}
+
+func TestMigrate_RecordsAppliedVersions(t *testing.T) {
+	s := setupTestStore(t)
+
+	// schema_migrations 테이블에 실행 기록이 있는지 확인
+	rows, err := s.DB().Query(`SELECT version, applied_at FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatalf("failed to query schema_migrations: %v", err)
+	}
+	defer rows.Close()
+
+	var versions []string
+	for rows.Next() {
+		var version string
+		var appliedAt string
+		if err := rows.Scan(&version, &appliedAt); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		if version == "" {
+			t.Error("version should not be empty")
+		}
+		if appliedAt == "" {
+			t.Error("applied_at should not be empty")
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows error: %v", err)
+	}
+
+	if len(versions) == 0 {
+		t.Error("expected at least one migration record in schema_migrations")
+	}
+
+	// 모든 .sql 파일이 기록되어 있는지 확인
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		t.Fatalf("failed to read migrations dir: %v", err)
+	}
+
+	var expectedFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			expectedFiles = append(expectedFiles, e.Name())
+		}
+	}
+
+	if len(versions) != len(expectedFiles) {
+		t.Errorf("expected %d migration records, got %d", len(expectedFiles), len(versions))
 	}
 }
 
@@ -524,6 +665,188 @@ func TestProjectMemory_FTSTrigger_DeleteSync(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 results after delete, got %d", len(results))
+	}
+}
+
+// --- FTS5 Query Sanitization Tests ---
+
+func TestSanitizeFTS5Query(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"정상 단어", "nullable", `"nullable"`},
+		{"여러 단어", "sql nullable field", `"sql" "nullable" "field"`},
+		{"AND 연산자 제거", "sql AND nullable", `"sql" "nullable"`},
+		{"OR 연산자 제거", "sql OR nullable", `"sql" "nullable"`},
+		{"NOT 연산자 제거", "NOT nullable", `"nullable"`},
+		{"NEAR 연산자 제거", "NEAR nullable", `"nullable"`},
+		{"소문자 연산자 제거", "sql and nullable", `"sql" "nullable"`},
+		{"따옴표 제거", `"unclosed`, `"unclosed"`},
+		{"짝 안맞는 따옴표", `"hello world`, `"hello" "world"`},
+		{"별표 제거", "test*", `"test"`},
+		{"괄호 제거", "(test)", `"test"`},
+		{"빈 문자열", "", ""},
+		{"공백만", "   ", ""},
+		{"특수문자만", "* ^ : + -", ""},
+		{"연산자만", "AND OR NOT", ""},
+		{"혼합 쿼리", `"hello AND world*`, `"hello" "world"`},
+		{"한글 쿼리", "인증 시스템", `"인증" "시스템"`},
+		{"콜론 포함", "category:learning", `"category" "learning"`},
+		{"중괄호 제거", "{test}", `"test"`},
+		{"하이픈 포함 키 유지", "sqlc-nullable", `"sqlc-nullable"`},
+		{"하이픈 여러 개 유지", "my-long-key-name", `"my-long-key-name"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeFTS5Query(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeFTS5Query(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSearchMemory_EmptyQuery(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "test-key",
+		Content:    "test content",
+		Confidence: 0.9,
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// 빈 쿼리 — nil 반환
+	results, err := s.SearchMemory("proj-1", "", 10)
+	if err != nil {
+		t.Fatalf("search with empty query failed: %v", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil for empty query, got %d results", len(results))
+	}
+}
+
+func TestSearchMemory_SpecialCharactersOnly(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "test-key",
+		Content:    "test content",
+		Confidence: 0.9,
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// 특수문자만 있는 쿼리 — nil 반환
+	results, err := s.SearchMemory("proj-1", "***", 10)
+	if err != nil {
+		t.Fatalf("search with special chars only failed: %v", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil for special chars only query, got %d results", len(results))
+	}
+}
+
+func TestSearchMemory_FTS5SpecialCharsNoError(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "sqlc-nullable",
+		Content:    "sqlc에서 nullable 필드는 sql.NullString 사용 필요",
+		Confidence: 0.9,
+		Author:     "backend-dev",
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// FTS5 문법 에러를 유발할 수 있는 쿼리들이 에러 없이 동작해야 함
+	dangerousQueries := []string{
+		`"unclosed`,
+		`nullable AND`,
+		`OR OR OR`,
+		`***`,
+		`"hello" OR "world`,
+		`NEAR(nullable, 5)`,
+		`nullable*`,
+		`^nullable`,
+		`column:nullable`,
+		`{nullable}`,
+		`(nullable OR)`,
+		`NOT`,
+		`"`,
+		`""`,
+	}
+
+	for _, q := range dangerousQueries {
+		results, err := s.SearchMemory("proj-1", q, 10)
+		if err != nil {
+			t.Errorf("SearchMemory(%q) returned error: %v", q, err)
+		}
+		// 에러만 안 나면 OK — 결과 유무는 쿼리에 따라 다름
+		_ = results
+	}
+}
+
+func TestSearchMemory_NormalQueryStillWorks(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "sqlc-nullable",
+		Content:    "sqlc에서 nullable 필드는 sql.NullString 사용 필요",
+		Confidence: 0.9,
+		Author:     "backend-dev",
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// sanitization 적용 후에도 정상 쿼리가 제대로 동작해야 함
+	results, err := s.SearchMemory("proj-1", "nullable", 10)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result, got %d", len(results))
+	}
+}
+
+func TestSearchMemory_HyphenatedKeyMatch(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "sqlc-nullable",
+		Content:    "sqlc에서 nullable 필드는 sql.NullString 사용 필요",
+		Confidence: 0.9,
+		Author:     "backend-dev",
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// 하이픈 포함 키로 검색 시 매칭되어야 함
+	results, err := s.SearchMemory("proj-1", "sqlc-nullable", 10)
+	if err != nil {
+		t.Fatalf("search with hyphenated key failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result for hyphenated key search, got %d", len(results))
 	}
 }
 

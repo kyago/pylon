@@ -18,6 +18,11 @@ type PRCreateConfig struct {
 
 // CreatePR creates a GitHub pull request using the gh CLI.
 func CreatePR(projectDir string, cfg PRCreateConfig) (string, error) {
+	return createPRWith(defaultRunner, projectDir, cfg)
+}
+
+// createPRWith is the internal implementation that accepts a CommandRunner.
+func createPRWith(runner CommandRunner, projectDir string, cfg PRCreateConfig) (string, error) {
 	args := []string{"pr", "create"}
 
 	if cfg.Title != "" {
@@ -36,7 +41,7 @@ func CreatePR(projectDir string, cfg PRCreateConfig) (string, error) {
 		args = append(args, "--reviewer", r)
 	}
 
-	output, err := defaultRunner.Run(projectDir, "gh", args...)
+	output, err := runner.Run(projectDir, "gh", args...)
 	if err != nil {
 		return "", fmt.Errorf("failed to create PR: %w\n%s", err, output)
 	}
@@ -47,7 +52,12 @@ func CreatePR(projectDir string, cfg PRCreateConfig) (string, error) {
 
 // PushBranch pushes the current branch to remote.
 func PushBranch(projectDir, branch string) error {
-	output, err := defaultRunner.Run(projectDir, "git", "push", "-u", "origin", branch)
+	return pushBranchWith(defaultRunner, projectDir, branch)
+}
+
+// pushBranchWith is the internal implementation that accepts a CommandRunner.
+func pushBranchWith(runner CommandRunner, projectDir, branch string) error {
+	output, err := runner.Run(projectDir, "git", "push", "-u", "origin", branch)
 	if err != nil {
 		return fmt.Errorf("failed to push branch: %w\n%s", err, output)
 	}

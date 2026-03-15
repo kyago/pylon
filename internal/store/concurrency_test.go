@@ -99,22 +99,32 @@ func TestMessageQueue_ConcurrentDequeue(t *testing.T) {
 	dequeued := make(map[string]bool)
 	var wg sync.WaitGroup
 
+	const maxDequeueRetries = 100
+
 	for w := 0; w < numWorkers; w++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
+			retries := 0
 			for {
 				msg, err := s.Dequeue("shared-agent")
 				if err != nil {
-					// SQLite는 동시 트랜잭션 승격 시 SQLITE_BUSY가 발생할 수 있음.
-					// 실제 환경에서도 재시도가 필요한 정상적인 동작이므로 재시도 수행.
+					// SQLite의 deferred transaction에서 lock escalation 시 SQLITE_BUSY가 발생할 수 있습니다.
+					// busy_timeout은 RESERVED lock 대기에만 적용되며, deferred → reserved 승격 시점의
+					// 즉각적 충돌에는 적용되지 않으므로 애플리케이션 레벨 재시도가 필요합니다.
 					if strings.Contains(err.Error(), "database is locked") {
+						retries++
+						if retries > maxDequeueRetries {
+							t.Errorf("worker %d: 최대 재시도 횟수(%d) 초과", workerID, maxDequeueRetries)
+							return
+						}
 						time.Sleep(time.Millisecond)
 						continue
 					}
 					t.Errorf("worker %d: dequeue error: %v", workerID, err)
 					return
 				}
+				retries = 0
 				if msg == nil {
 					// 큐가 비었으면 종료
 					return

@@ -4,17 +4,17 @@ package store
 
 import (
 	"database/sql"
-	_ "embed"
+	"embed"
 	"fmt"
+	"io/fs"
+	"sort"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
 
-//go:embed migrations/001_initial.sql
-var migrationSQL string
-
-//go:embed migrations/002_fts_triggers.sql
-var ftsTriggerSQL string
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 // Store wraps a SQLite database connection for pylon data.
 type Store struct {
@@ -45,14 +45,91 @@ func NewStore(dbPath string) (*Store, error) {
 }
 
 // Migrate runs the embedded SQL migrations to create all tables and triggers.
+// It tracks applied migrations in a schema_migrations table and only executes
+// migrations that have not been applied yet, in filename-sorted order.
 func (s *Store) Migrate() error {
-	if _, err := s.db.Exec(migrationSQL); err != nil {
-		return fmt.Errorf("migration failed: %w", err)
+	// 1. schema_migrations 테이블 생성
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version    TEXT PRIMARY KEY,
+		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		return fmt.Errorf("failed to create schema_migrations table: %w", err)
 	}
-	if _, err := s.db.Exec(ftsTriggerSQL); err != nil {
-		return fmt.Errorf("fts trigger migration failed: %w", err)
+
+	// 2. 이미 실행된 마이그레이션 목록 조회
+	applied, err := s.getAppliedMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
 	}
+
+	// 3. migrations/ 디렉토리의 .sql 파일을 이름순 정렬
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		return fmt.Errorf("failed to read migrations directory: %w", err)
+	}
+
+	var sqlFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			sqlFiles = append(sqlFiles, e.Name())
+		}
+	}
+	sort.Strings(sqlFiles)
+
+	// 4. 미실행 파일만 개별 트랜잭션으로 순차 실행 및 기록
+	for _, name := range sqlFiles {
+		if applied[name] {
+			continue
+		}
+
+		content, err := fs.ReadFile(migrationsFS, "migrations/"+name)
+		if err != nil {
+			return fmt.Errorf("failed to read migration %s: %w", name, err)
+		}
+
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction for %s: %w", name, err)
+		}
+
+		if _, err := tx.Exec(string(content)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migration %s failed: %w", name, err)
+		}
+
+		if _, err := tx.Exec(
+			`INSERT INTO schema_migrations (version) VALUES (?)`, name,
+		); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to record migration %s: %w", name, err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit migration %s: %w", name, err)
+		}
+	}
+
 	return nil
+}
+
+// getAppliedMigrations returns a set of already-applied migration filenames.
+func (s *Store) getAppliedMigrations() (map[string]bool, error) {
+	applied := make(map[string]bool)
+
+	rows, err := s.db.Query(`SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		applied[version] = true
+	}
+	return applied, rows.Err()
 }
 
 // Close closes the database connection.
