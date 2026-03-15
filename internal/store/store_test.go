@@ -527,6 +527,161 @@ func TestProjectMemory_FTSTrigger_DeleteSync(t *testing.T) {
 	}
 }
 
+// --- FTS5 Query Sanitization Tests ---
+
+func TestSanitizeFTS5Query(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"정상 단어", "nullable", `"nullable"`},
+		{"여러 단어", "sql nullable field", `"sql" "nullable" "field"`},
+		{"AND 연산자 제거", "sql AND nullable", `"sql" "nullable"`},
+		{"OR 연산자 제거", "sql OR nullable", `"sql" "nullable"`},
+		{"NOT 연산자 제거", "NOT nullable", `"nullable"`},
+		{"NEAR 연산자 제거", "NEAR nullable", `"nullable"`},
+		{"소문자 연산자 제거", "sql and nullable", `"sql" "nullable"`},
+		{"따옴표 제거", `"unclosed`, `"unclosed"`},
+		{"짝 안맞는 따옴표", `"hello world`, `"hello" "world"`},
+		{"별표 제거", "test*", `"test"`},
+		{"괄호 제거", "(test)", `"test"`},
+		{"빈 문자열", "", ""},
+		{"공백만", "   ", ""},
+		{"특수문자만", "* ^ : + -", ""},
+		{"연산자만", "AND OR NOT", ""},
+		{"혼합 쿼리", `"hello AND world*`, `"hello" "world"`},
+		{"한글 쿼리", "인증 시스템", `"인증" "시스템"`},
+		{"콜론 포함", "category:learning", `"category" "learning"`},
+		{"중괄호 제거", "{test}", `"test"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeFTS5Query(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeFTS5Query(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSearchMemory_EmptyQuery(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "test-key",
+		Content:    "test content",
+		Confidence: 0.9,
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// 빈 쿼리 — nil 반환
+	results, err := s.SearchMemory("proj-1", "", 10)
+	if err != nil {
+		t.Fatalf("search with empty query failed: %v", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil for empty query, got %d results", len(results))
+	}
+}
+
+func TestSearchMemory_SpecialCharactersOnly(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "test-key",
+		Content:    "test content",
+		Confidence: 0.9,
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// 특수문자만 있는 쿼리 — nil 반환
+	results, err := s.SearchMemory("proj-1", "***", 10)
+	if err != nil {
+		t.Fatalf("search with special chars only failed: %v", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil for special chars only query, got %d results", len(results))
+	}
+}
+
+func TestSearchMemory_FTS5SpecialCharsNoError(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "sqlc-nullable",
+		Content:    "sqlc에서 nullable 필드는 sql.NullString 사용 필요",
+		Confidence: 0.9,
+		Author:     "backend-dev",
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// FTS5 문법 에러를 유발할 수 있는 쿼리들이 에러 없이 동작해야 함
+	dangerousQueries := []string{
+		`"unclosed`,
+		`nullable AND`,
+		`OR OR OR`,
+		`***`,
+		`"hello" OR "world`,
+		`NEAR(nullable, 5)`,
+		`nullable*`,
+		`^nullable`,
+		`column:nullable`,
+		`{nullable}`,
+		`(nullable OR)`,
+		`NOT`,
+		`"`,
+		`""`,
+	}
+
+	for _, q := range dangerousQueries {
+		results, err := s.SearchMemory("proj-1", q, 10)
+		if err != nil {
+			t.Errorf("SearchMemory(%q) returned error: %v", q, err)
+		}
+		// 에러만 안 나면 OK — 결과 유무는 쿼리에 따라 다름
+		_ = results
+	}
+}
+
+func TestSearchMemory_NormalQueryStillWorks(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "sqlc-nullable",
+		Content:    "sqlc에서 nullable 필드는 sql.NullString 사용 필요",
+		Confidence: 0.9,
+		Author:     "backend-dev",
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// sanitization 적용 후에도 정상 쿼리가 제대로 동작해야 함
+	results, err := s.SearchMemory("proj-1", "nullable", 10)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result, got %d", len(results))
+	}
+}
+
 // --- Session Archive Tests ---
 
 func TestSessionArchive_ArchiveAndGet(t *testing.T) {

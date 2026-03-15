@@ -3,10 +3,63 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
+
+// sanitizeFTS5Query는 FTS5 쿼리 문자열을 안전하게 변환합니다.
+// 특수 연산자를 제거하고 각 토큰을 큰따옴표로 감싸 리터럴 매칭합니다.
+func sanitizeFTS5Query(query string) string {
+	// FTS5 연산자 키워드 목록 (대소문자 무관하게 비교)
+	operators := map[string]struct{}{
+		"AND":  {},
+		"OR":   {},
+		"NOT":  {},
+		"NEAR": {},
+	}
+
+	// 따옴표를 모두 제거하고 특수문자를 공백으로 치환
+	var cleaned strings.Builder
+	for _, r := range query {
+		switch {
+		case r == '"' || r == '\'':
+			// 따옴표 제거
+			cleaned.WriteRune(' ')
+		case r == '*' || r == '^' || r == ':' || r == '+' || r == '-' || r == '(' || r == ')' || r == '{' || r == '}':
+			// FTS5 특수문자를 공백으로 치환
+			cleaned.WriteRune(' ')
+		default:
+			cleaned.WriteRune(r)
+		}
+	}
+
+	// 토큰 분리 후 연산자 제외, 유효 토큰만 큰따옴표로 감싸기
+	words := strings.Fields(cleaned.String())
+	var tokens []string
+	for _, w := range words {
+		upper := strings.ToUpper(w)
+		if _, isOp := operators[upper]; isOp {
+			continue
+		}
+		// 공백이나 문자가 아닌 것만으로 이루어진 토큰은 건너뛰기
+		hasContent := false
+		for _, r := range w {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				hasContent = true
+				break
+			}
+		}
+		if !hasContent {
+			continue
+		}
+		tokens = append(tokens, `"`+w+`"`)
+	}
+
+	return strings.Join(tokens, " ")
+}
 
 // MemoryEntry represents a row in the project_memory table.
 type MemoryEntry struct {
@@ -60,6 +113,11 @@ func (s *Store) SearchMemory(projectID, query string, limit int) ([]MemorySearch
 		limit = 10
 	}
 
+	sanitized := sanitizeFTS5Query(query)
+	if sanitized == "" {
+		return nil, nil
+	}
+
 	rows, err := s.db.Query(`
 		SELECT pm.id, pm.project_id, pm.category, pm.key, pm.content, pm.metadata,
 		       pm.author, pm.confidence, pm.access_count, pm.created_at,
@@ -71,7 +129,7 @@ func (s *Store) SearchMemory(projectID, query string, limit int) ([]MemorySearch
 		  AND (pm.expires_at IS NULL OR pm.expires_at > CURRENT_TIMESTAMP)
 		ORDER BY rank
 		LIMIT ?`,
-		query, projectID, limit,
+		sanitized, projectID, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search memory: %w", err)
