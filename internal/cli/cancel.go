@@ -51,6 +51,7 @@ func runCancel(cmd *cobra.Command, args []string) error {
 	}
 
 	orch := orchestrator.NewOrchestrator(cfg, s, root)
+	orch.SetPipelineID(pipelineID)
 
 	// Recover current state
 	if err := orch.Recover(); err != nil {
