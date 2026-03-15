@@ -33,7 +33,7 @@ var validTransitions = map[Stage][]Stage{
 	StagePMTaskBreakdown:   {StageAgentExecuting, StageFailed},
 	StageAgentExecuting:    {StageVerification, StageFailed},
 	StageVerification:      {StageAgentExecuting, StagePRCreation, StageFailed}, // retry or proceed
-	StagePRCreation:        {StagePOValidation, StageFailed},
+	StagePRCreation:        {StagePOValidation, StageWikiUpdate, StageFailed},
 	StagePOValidation:      {StageWikiUpdate, StageFailed},
 	StageWikiUpdate:        {StageCompleted, StageFailed},
 }

@@ -47,6 +47,7 @@ func (r *Runner) BuildArgs(cfg RunConfig) []string {
 	} else {
 		// Non-interactive agent: --print with stream-json output
 		args = append(args, "--print")
+		args = append(args, "--verbose")
 		args = append(args, "--output-format", "stream-json")
 		if cfg.Agent.MaxTurns > 0 {
 			args = append(args, "--max-turns", fmt.Sprintf("%d", cfg.Agent.MaxTurns))
@@ -74,9 +75,9 @@ func (r *Runner) BuildArgs(cfg RunConfig) []string {
 		args = append(args, "--append-system-prompt", cfg.ClaudeMD)
 	}
 
-	// Task prompt (non-interactive only)
+	// Task prompt as positional argument (non-interactive only)
 	if !cfg.Interactive && cfg.TaskPrompt != "" {
-		args = append(args, "--prompt", cfg.TaskPrompt)
+		args = append(args, cfg.TaskPrompt)
 	}
 
 	return args
@@ -110,11 +111,12 @@ func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
 }
 
 // BuildTaskPrompt generates a short task instruction for a headless agent.
-// The prompt directs the agent to read its inbox for detailed task information.
-func BuildTaskPrompt(role, agentName, taskID, inboxDir string) string {
+// The prompt directs the agent to read its inbox for detailed task information
+// and write results to a concrete outbox path.
+func BuildTaskPrompt(role, agentName, taskID, inboxDir, outboxDir string) string {
 	return fmt.Sprintf(
-		"당신은 %s입니다.\ninbox 파일을 읽고 태스크를 수행하세요.\ninbox: %s/%s/%s.task.json\n완료 후 outbox에 결과를 작성하세요.",
-		role, inboxDir, agentName, taskID,
+		"당신은 %s입니다.\ninbox 파일을 읽고 태스크를 수행하세요.\ninbox: %s/%s/%s.task.json\n완료 후 결과를 outbox에 JSON으로 작성하세요.\noutbox: %s/%s/%s.result.json",
+		role, inboxDir, agentName, taskID, outboxDir, agentName, taskID,
 	)
 }
 

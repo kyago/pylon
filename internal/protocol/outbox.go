@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,12 +9,45 @@ import (
 )
 
 // ReadResult reads a result message from an agent's outbox file.
+// It handles both the full MessageEnvelope format and the flat ResultBody format
+// that agents write (simpler JSON without the envelope wrapper).
 func ReadResult(path string) (*MessageEnvelope, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read result file: %w", err)
 	}
-	return Unmarshal(data)
+
+	// Try full envelope first.
+	// Require env.Type to be non-empty: valid JSON without a "type" field
+	// (e.g. flat agent output) should fall through to flat JSON parsing below,
+	// which wraps it in a proper envelope with MsgResult type.
+	env, envErr := Unmarshal(data)
+	if envErr == nil && env.Type != "" {
+		return env, nil
+	}
+
+	// Try flat result body — agents write this simpler format
+	var raw map[string]any
+	if jsonErr := json.Unmarshal(data, &raw); jsonErr != nil {
+		// Return original envelope error if both fail
+		if envErr != nil {
+			return nil, fmt.Errorf("failed to parse result (envelope: %w, flat: %v)", envErr, jsonErr)
+		}
+		return nil, fmt.Errorf("failed to parse result as JSON: %w", jsonErr)
+	}
+
+	// Wrap flat result in a MessageEnvelope
+	wrapped := &MessageEnvelope{
+		Type: MsgResult,
+		Body: raw,
+	}
+
+	// Extract context from flat fields
+	if taskID, ok := raw["task_id"].(string); ok {
+		wrapped.Context = &MsgContext{TaskID: taskID}
+	}
+
+	return wrapped, nil
 }
 
 // WriteResult writes a result message to an agent's outbox.

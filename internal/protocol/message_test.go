@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -149,6 +150,54 @@ func TestScanOutbox(t *testing.T) {
 	}
 	if len(results) != 2 {
 		t.Errorf("expected 2 results, got %d", len(results))
+	}
+}
+
+// TestReadResult_FlatJSON tests that ReadResult handles flat JSON (no envelope wrapper)
+// which is what agents write based on the communication rules.
+func TestReadResult_FlatJSON(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := dir + "/backend-dev"
+	os.MkdirAll(agentDir, 0755)
+
+	// Write flat JSON (what an agent would actually produce)
+	flatJSON := `{
+		"task_id": "pipeline-001-backend-dev",
+		"status": "completed",
+		"summary": "로그인 API 구현 완료",
+		"files_changed": ["internal/auth/login.go"],
+		"learnings": ["JWT 토큰 만료 시간은 1시간이 적절"]
+	}`
+	os.WriteFile(agentDir+"/pipeline-001-backend-dev.result.json", []byte(flatJSON), 0644)
+
+	env, err := ReadResult(agentDir + "/pipeline-001-backend-dev.result.json")
+	if err != nil {
+		t.Fatalf("ReadResult failed for flat JSON: %v", err)
+	}
+	if env.Type != MsgResult {
+		t.Errorf("expected type 'result', got %q", env.Type)
+	}
+
+	bodyMap, ok := env.Body.(map[string]any)
+	if !ok {
+		t.Fatalf("expected body to be map[string]any, got %T", env.Body)
+	}
+	if bodyMap["status"] != "completed" {
+		t.Errorf("expected status 'completed', got %v", bodyMap["status"])
+	}
+	if bodyMap["summary"] != "로그인 API 구현 완료" {
+		t.Errorf("unexpected summary: %v", bodyMap["summary"])
+	}
+
+	// Context should be extracted from task_id
+	if env.Context == nil || env.Context.TaskID != "pipeline-001-backend-dev" {
+		t.Errorf("expected context.TaskID from flat JSON, got %+v", env.Context)
+	}
+
+	// Learnings should be accessible
+	learnings, ok := bodyMap["learnings"].([]any)
+	if !ok || len(learnings) != 1 {
+		t.Errorf("expected 1 learning, got %v", bodyMap["learnings"])
 	}
 }
 

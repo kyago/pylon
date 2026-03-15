@@ -176,8 +176,12 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 		return fmt.Errorf("failed to write task for %s: %w", agentName, err)
 	}
 
-	// Build CLAUDE.md
-	claudeMD, err := l.buildClaudeMD(agentCfg, taskID)
+	// Build outbox path for this agent
+	outboxDir := filepath.Join(l.watcher.OutboxDir, agentName)
+	outboxPath := filepath.Join(outboxDir, taskID+".result.json")
+
+	// Build CLAUDE.md with concrete outbox path
+	claudeMD, err := l.buildClaudeMD(agentCfg, taskID, outboxPath, outboxDir)
 	if err != nil {
 		return fmt.Errorf("failed to build CLAUDE.md for %s: %w", agentName, err)
 	}
@@ -196,8 +200,8 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	}
 	defer cleanup()
 
-	// Build task prompt
-	taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir)
+	// Build task prompt with concrete inbox and outbox paths
+	taskPrompt := agent.BuildTaskPrompt(agentCfg.Role, agentName, taskID, l.inboxDir, l.watcher.OutboxDir)
 
 	// Track agent status
 	l.mu.Lock()
@@ -235,17 +239,25 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	}
 
 	// Check for outbox result (non-blocking single poll, agent already finished)
+	foundOutbox := false
 	watchResults, pollErr := l.watcher.PollOnce()
 	if pollErr != nil {
 		fmt.Fprintf(os.Stderr, "⚠ failed to poll outbox: %v\n", pollErr)
 	}
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
-			l.processAgentResult(wr)
+			data := l.extractAgentResult(wr)
+			l.storeAgentResult(data)
+			foundOutbox = true
 			if err := markProcessed(filepath.Dir(wr.FilePath), filepath.Base(wr.FilePath)); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠ failed to mark processed %s: %v\n", wr.FilePath, err)
 			}
 		}
+	}
+
+	// Fallback: if agent didn't write outbox result, create one from stream-json output
+	if !foundOutbox && result.Stdout != "" {
+		l.createOutboxFromStream(agentName, taskID, result.Stdout)
 	}
 
 	l.mu.Lock()
@@ -358,6 +370,8 @@ func (l *Loop) runVerification(ctx context.Context) error {
 }
 
 // runPRCreation creates a pull request.
+// PR creation failure is non-fatal — the pipeline skips to wiki update
+// so that tech-writer can still document what agents did.
 func (l *Loop) runPRCreation(ctx context.Context) error {
 	projectDir := l.cfg.WorkDir
 	if len(l.cfg.Projects) > 0 {
@@ -366,7 +380,8 @@ func (l *Loop) runPRCreation(ctx context.Context) error {
 
 	if l.cfg.Config.Git.AutoPush {
 		if err := git.PushBranch(projectDir, l.cfg.Branch); err != nil {
-			return fmt.Errorf("failed to push branch: %w", err)
+			fmt.Fprintf(os.Stderr, "⚠ push failed (skipping PR): %v\n", err)
+			return l.transitionTo(StageWikiUpdate)
 		}
 	}
 
@@ -379,7 +394,11 @@ func (l *Loop) runPRCreation(ctx context.Context) error {
 		Draft:     l.cfg.Config.Git.PR.Draft,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create PR: %w", err)
+		fmt.Fprintf(os.Stderr, "⚠ PR creation failed (continuing to wiki update): %v\n", err)
+		if l.cfg.Config.Git.AutoPush {
+			fmt.Fprintf(os.Stderr, "  ℹ 리모트 브랜치 '%s'는 push된 상태입니다. 수동으로 PR을 생성하거나 브랜치를 삭제하세요.\n", l.cfg.Branch)
+		}
+		return l.transitionTo(StageWikiUpdate)
 	}
 
 	fmt.Printf("✓ PR created: %s\n", prURL)
@@ -411,7 +430,7 @@ func (l *Loop) runWikiUpdate(ctx context.Context) error {
 	twAgent.ResolveDefaults(l.cfg.Config)
 	taskID := fmt.Sprintf("%s-tech-writer", l.cfg.PipelineID)
 
-	taskPrompt := agent.BuildTaskPrompt(twAgent.Role, "tech-writer", taskID, l.inboxDir)
+	taskPrompt := agent.BuildTaskPrompt(twAgent.Role, "tech-writer", taskID, l.inboxDir, l.watcher.OutboxDir)
 
 	projectDir := l.cfg.WorkDir
 	if len(l.cfg.Projects) > 0 {
@@ -458,27 +477,28 @@ func (l *Loop) findAgent(name string) *config.AgentConfig {
 	return nil
 }
 
-// findDevAgents returns agent names with development-related roles.
+// findDevAgents returns agent names matching known dev agent names.
+// Recognized names: backend-dev, frontend-dev, fullstack.
 func (l *Loop) findDevAgents() []string {
 	var devs []string
-	devRoles := map[string]bool{
+	devAgentNames := map[string]bool{
 		"backend-dev":  true,
 		"frontend-dev": true,
 		"fullstack":    true,
 	}
 
 	for name := range l.cfg.Agents {
-		if devRoles[name] {
+		if devAgentNames[name] {
 			devs = append(devs, name)
 		}
 	}
 
-	// Also check project-assigned agents (only if they match devRoles)
+	// Also check project-assigned agents (only if they match devAgentNames)
 	if len(l.cfg.Projects) > 0 {
 		for _, p := range l.cfg.Projects {
 			if pCfg, ok := l.cfg.Config.Projects[p.Name]; ok {
 				for _, a := range pCfg.Agents {
-					if devRoles[a] && l.findAgent(a) != nil && !containsStr(devs, a) {
+					if devAgentNames[a] && l.findAgent(a) != nil && !containsStr(devs, a) {
 						devs = append(devs, a)
 					}
 				}
@@ -522,7 +542,7 @@ func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgCo
 	return protocol.WriteTask(l.inboxDir, agentName, msg)
 }
 
-func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID string) (string, error) {
+func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, outboxDir string) (string, error) {
 	builder := &agent.ClaudeMDBuilder{MaxLines: 200}
 
 	var projectMemory string
@@ -533,55 +553,134 @@ func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID string) (strin
 		}
 	}
 
+	inboxPath := filepath.Join(l.inboxDir, agentCfg.Name, taskID+".task.json")
+
 	return builder.Build(agent.BuildInput{
-		CommunicationRules: agent.DefaultCommunicationRules(),
+		CommunicationRules: agent.CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir),
 		TaskContext:        fmt.Sprintf("태스크: %s\n역할: %s", l.cfg.Requirement, agentCfg.Role),
 		CompactionRules:    agent.DefaultCompactionRules(),
 		ProjectMemory:      projectMemory,
 	})
 }
 
-func (l *Loop) processAgentResult(wr WatchResult) {
+// agentResultData holds extracted data from an agent result for deferred I/O.
+type agentResultData struct {
+	agentName string
+	taskID    string
+	project   string
+	learnings []string
+	summary   string
+}
+
+// extractAgentResult extracts data from a WatchResult without performing I/O.
+// Must be called with l.mu held if Pipeline state is accessed concurrently.
+func (l *Loop) extractAgentResult(wr WatchResult) *agentResultData {
 	if wr.Envelope == nil {
+		return nil
+	}
+
+	data := &agentResultData{agentName: wr.AgentName}
+	if len(l.cfg.Projects) > 0 {
+		data.project = l.cfg.Projects[0].Name
+	}
+	if wr.Envelope.Context != nil {
+		data.taskID = wr.Envelope.Context.TaskID
+	}
+
+	bodyMap, ok := wr.Envelope.Body.(map[string]any)
+	if !ok {
+		return data
+	}
+
+	// Extract learnings
+	if learnings, ok := bodyMap["learnings"].([]any); ok {
+		for _, item := range learnings {
+			if s, ok := item.(string); ok {
+				data.learnings = append(data.learnings, s)
+			}
+		}
+	}
+
+	// Extract summary
+	if summary, ok := bodyMap["summary"].(string); ok {
+		data.summary = summary
+	}
+
+	return data
+}
+
+// storeAgentResult performs I/O operations (memory + blackboard) outside of mutex.
+func (l *Loop) storeAgentResult(data *agentResultData) {
+	if data == nil || data.project == "" {
 		return
 	}
 
-	// Extract learnings and store to memory
-	if l.cfg.MemManager != nil && len(l.cfg.Projects) > 0 {
-		if bodyMap, ok := wr.Envelope.Body.(map[string]any); ok {
-			if learnings, ok := bodyMap["learnings"].([]any); ok {
-				var strs []string
-				for _, item := range learnings {
-					if s, ok := item.(string); ok {
-						strs = append(strs, s)
-					}
-				}
-				if len(strs) > 0 {
-					taskID := ""
-					if wr.Envelope.Context != nil {
-						taskID = wr.Envelope.Context.TaskID
-					}
-					l.cfg.MemManager.StoreLearnings(l.cfg.Projects[0].Name, taskID, wr.AgentName, strs)
-				}
-			}
-		}
+	if l.cfg.MemManager != nil && len(data.learnings) > 0 {
+		l.cfg.MemManager.StoreLearnings(data.project, data.taskID, data.agentName, data.learnings)
 	}
 
-	// Update blackboard with summary
-	if l.cfg.Store != nil && len(l.cfg.Projects) > 0 {
-		if bodyMap, ok := wr.Envelope.Body.(map[string]any); ok {
-			if summary, ok := bodyMap["summary"].(string); ok {
-				l.cfg.Store.PutBlackboard(&store.BlackboardEntry{
-					ProjectID:  l.cfg.Projects[0].Name,
-					Category:   "agent_result",
-					Key:        wr.AgentName,
-					Value:      summary,
-					Confidence: 0.9,
-					Author:     wr.AgentName,
-				})
-			}
-		}
+	if l.cfg.Store != nil && data.summary != "" {
+		l.cfg.Store.PutBlackboard(&store.BlackboardEntry{
+			ProjectID:  data.project,
+			Category:   "agent_result",
+			Key:        data.agentName,
+			Value:      data.summary,
+			Confidence: 0.9,
+			Author:     data.agentName,
+		})
 	}
+}
+
+// createOutboxFromStream parses stream-json output and creates an outbox result file.
+// This is the fallback when the agent doesn't write its own outbox result.
+func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
+	sr := ParseStreamJSON(stdout)
+
+	summary := sr.Summary
+	if summary == "" {
+		summary = fmt.Sprintf("에이전트 %s 작업 완료 (요약 미제공)", agentName)
+	}
+
+	// Build result body as map for processAgentResult compatibility
+	body := map[string]any{
+		"task_id":       taskID,
+		"status":        "completed",
+		"summary":       summary,
+		"files_changed": sr.FilesChanged,
+		"source":        "stream-json-fallback",
+	}
+	if len(sr.CommitCommands) > 0 {
+		body["commit_commands"] = sr.CommitCommands
+	}
+
+	// Write to outbox via protocol
+	msg := protocol.NewMessage(protocol.MsgResult, agentName, "orchestrator")
+	msg.Context = &protocol.MsgContext{
+		TaskID:     taskID,
+		PipelineID: l.cfg.PipelineID,
+	}
+	msg.Body = body
+
+	if err := protocol.WriteResult(l.watcher.OutboxDir, agentName, msg); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to write fallback outbox for %s: %v\n", agentName, err)
+		return
+	}
+
+	// Mark as processed to prevent duplicate processing by future PollOnce() calls
+	agentDir := filepath.Join(l.watcher.OutboxDir, agentName)
+	resultFile := taskID + ".result.json"
+	if err := markProcessed(agentDir, resultFile); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to mark processed fallback outbox for %s: %v\n", agentName, err)
+	}
+
+	// Process the result we just wrote
+	wr := WatchResult{
+		AgentName: agentName,
+		FilePath:  filepath.Join(agentDir, resultFile),
+		Envelope:  msg,
+	}
+	data := l.extractAgentResult(wr)
+	l.storeAgentResult(data)
 }
 
 func (l *Loop) writeFixRequest(results []VerifyResult) error {

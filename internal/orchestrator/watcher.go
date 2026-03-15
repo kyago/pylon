@@ -71,6 +71,7 @@ func (w *OutboxWatcher) PollOnce() ([]WatchResult, error) {
 			filePath := filepath.Join(agentDir, f.Name())
 			env, err := protocol.ReadResult(filePath)
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "⚠ failed to parse outbox result %s: %v\n", filePath, err)
 				continue
 			}
 
