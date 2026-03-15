@@ -764,9 +764,10 @@ func (l *Loop) SetPipeline(p *Pipeline) {
 }
 
 // enqueueResultAck records a result as processed (acked) in the message_queue.
-// Failures are logged but do not interrupt the pipeline.
+// On Store failure, falls back to writing a .done marker file to prevent duplicate processing.
 func (l *Loop) enqueueResultAck(agentName, taskID string) {
 	if l.cfg.Store == nil {
+		l.writeDoneFallback(agentName, taskID)
 		return
 	}
 	body, _ := json.Marshal(map[string]string{"task_id": taskID})
@@ -780,7 +781,17 @@ func (l *Loop) enqueueResultAck(agentName, taskID string) {
 		Context:   string(ctx),
 		Status:    "acked",
 	}); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠ failed to record result ack for %s/%s: %v\n", agentName, taskID, err)
+		fmt.Fprintf(os.Stderr, "⚠ failed to record result ack for %s/%s: %v, writing .done fallback\n", agentName, taskID, err)
+		l.writeDoneFallback(agentName, taskID)
+	}
+}
+
+// writeDoneFallback creates a .done marker file as a fallback when Store is unavailable.
+func (l *Loop) writeDoneFallback(agentName, taskID string) {
+	agentDir := filepath.Join(l.watcher.OutboxDir, agentName)
+	donePath := filepath.Join(agentDir, taskID+".result.json.done")
+	if err := os.WriteFile(donePath, []byte{}, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to write .done fallback for %s/%s: %v\n", agentName, taskID, err)
 	}
 }
 

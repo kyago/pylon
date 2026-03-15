@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -67,7 +68,7 @@ func (s *Store) GetConversation(id string) (*ConversationRecord, error) {
 		&projects, &taskID, &rec.AmbiguityScore, &clarityScores,
 		&rec.StartedAt, &completedAt, &rec.UpdatedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

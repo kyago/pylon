@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/kyago/pylon/internal/store"
@@ -62,11 +61,19 @@ func NewConversationManager(baseDir string, s *store.Store) *ConversationManager
 	return &ConversationManager{BaseDir: baseDir, Store: s}
 }
 
-// Create initializes a new conversation with metadata in SQLite and thread.md on disk.
+// Create initializes a new conversation with thread.md on disk and metadata in SQLite.
+// File creation is performed first to avoid orphan SQLite records on disk failure.
 func (c *ConversationManager) Create(id, title string) (*Conversation, error) {
 	dir := filepath.Join(c.BaseDir, id)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create conversation dir: %w", err)
+	}
+
+	// Create thread.md first — if disk write fails, no SQLite record is left behind
+	threadPath := filepath.Join(dir, "thread.md")
+	header := fmt.Sprintf("# 대화: %s\n\n", title)
+	if err := os.WriteFile(threadPath, []byte(header), 0644); err != nil {
+		return nil, fmt.Errorf("failed to create thread.md: %w", err)
 	}
 
 	now := time.Now()
@@ -84,13 +91,6 @@ func (c *ConversationManager) Create(id, title string) (*Conversation, error) {
 		UpdatedAt: now,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to save conversation to store: %w", err)
-	}
-
-	// Create initial thread.md
-	threadPath := filepath.Join(dir, "thread.md")
-	header := fmt.Sprintf("# 대화: %s\n\n", title)
-	if err := os.WriteFile(threadPath, []byte(header), 0644); err != nil {
-		return nil, fmt.Errorf("failed to create thread.md: %w", err)
 	}
 
 	return &Conversation{ID: id, Dir: dir, Meta: meta}, nil
@@ -117,7 +117,7 @@ func (c *ConversationManager) AppendMessage(id, role, content string) error {
 }
 
 // SaveMeta updates the conversation metadata in SQLite.
-// The existing title is preserved (ConversationMeta does not carry a title).
+// The existing title and started_at are preserved (ConversationMeta may not carry them).
 func (c *ConversationManager) SaveMeta(id string, meta ConversationMeta) error {
 	existing, err := c.Store.GetConversation(id)
 	if err != nil {
@@ -128,6 +128,10 @@ func (c *ConversationManager) SaveMeta(id string, meta ConversationMeta) error {
 		title = existing.Title
 	}
 	rec := metaToRecord(id, title, meta)
+	// Preserve existing started_at when meta doesn't provide one
+	if rec.StartedAt.IsZero() && existing != nil {
+		rec.StartedAt = existing.StartedAt
+	}
 	return c.Store.UpsertConversation(rec)
 }
 
@@ -197,7 +201,9 @@ func metaToRecord(id, title string, meta ConversationMeta) *store.ConversationRe
 		}
 	}
 	if len(meta.Projects) > 0 {
-		rec.Projects = strings.Join(meta.Projects, ",")
+		if data, err := json.Marshal(meta.Projects); err == nil {
+			rec.Projects = string(data)
+		}
 	}
 	if meta.ClarityScores != nil {
 		rec.ClarityScores = marshalClarityScores(meta.ClarityScores)
@@ -218,7 +224,10 @@ func recordToMeta(rec *store.ConversationRecord) ConversationMeta {
 		meta.CompletedAt = rec.CompletedAt.Format(time.RFC3339)
 	}
 	if rec.Projects != "" {
-		meta.Projects = strings.Split(rec.Projects, ",")
+		var projects []string
+		if err := json.Unmarshal([]byte(rec.Projects), &projects); err == nil {
+			meta.Projects = projects
+		}
 	}
 	if rec.ClarityScores != "" {
 		meta.ClarityScores = unmarshalClarityScores(rec.ClarityScores)
