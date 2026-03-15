@@ -493,7 +493,7 @@ func (l *Loop) findDevAgents() []string {
 		}
 	}
 
-	// Also check project-assigned agents (only if they match devRoles)
+	// Also check project-assigned agents (only if they match devAgentNames)
 	if len(l.cfg.Projects) > 0 {
 		for _, p := range l.cfg.Projects {
 			if pCfg, ok := l.cfg.Config.Projects[p.Name]; ok {
