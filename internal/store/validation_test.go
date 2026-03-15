@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 )
@@ -106,9 +107,10 @@ func TestPipeline_AcceptsAllValidStages(t *testing.T) {
 	s := setupTestStore(t)
 
 	validStages := []string{
-		"init", "analyzing", "planning", "executing",
-		"verifying", "completed", "failed",
-		"po_conversation", "agent_executing",
+		"init", "po_conversation", "architect_analysis",
+		"pm_task_breakdown", "agent_executing", "verification",
+		"pr_creation", "po_validation", "wiki_update",
+		"completed", "failed",
 	}
 
 	for i, stage := range validStages {
@@ -287,6 +289,9 @@ func TestValidateConfidence(t *testing.T) {
 		{"above one", 1.01, true},
 		{"large negative", -100.0, true},
 		{"large positive", 100.0, true},
+		{"NaN", math.NaN(), true},
+		{"positive Inf", math.Inf(1), true},
+		{"negative Inf", math.Inf(-1), true},
 	}
 
 	for _, tt := range tests {
@@ -306,17 +311,23 @@ func TestValidatePipelineStage(t *testing.T) {
 		wantErr bool
 	}{
 		{"init", "init", false},
-		{"analyzing", "analyzing", false},
-		{"planning", "planning", false},
-		{"executing", "executing", false},
-		{"verifying", "verifying", false},
+		{"po_conversation", "po_conversation", false},
+		{"architect_analysis", "architect_analysis", false},
+		{"pm_task_breakdown", "pm_task_breakdown", false},
+		{"agent_executing", "agent_executing", false},
+		{"verification", "verification", false},
+		{"pr_creation", "pr_creation", false},
+		{"po_validation", "po_validation", false},
+		{"wiki_update", "wiki_update", false},
 		{"completed", "completed", false},
 		{"failed", "failed", false},
-		{"po_conversation", "po_conversation", false},
-		{"agent_executing", "agent_executing", false},
 		{"invalid", "bogus", true},
 		{"empty", "", true},
 		{"uppercase", "INIT", true},
+		{"removed analyzing", "analyzing", true},
+		{"removed planning", "planning", true},
+		{"removed executing", "executing", true},
+		{"removed verifying", "verifying", true},
 	}
 
 	for _, tt := range tests {
