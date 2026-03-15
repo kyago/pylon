@@ -91,11 +91,8 @@ func TestWorktreeManager_Remove(t *testing.T) {
 		t.Fatalf("worktree path should exist before removal")
 	}
 
-	// Remove는 cmd.Dir을 설정하지 않으므로 repo 디렉토리로 이동 필요
-	t.Chdir(dir)
-
 	// 제거
-	if err := wm.Remove(worktreePath); err != nil {
+	if err := wm.Remove(dir, worktreePath); err != nil {
 		t.Fatalf("Remove() unexpected error: %v", err)
 	}
 
@@ -126,9 +123,6 @@ func TestWorktreeManager_Cleanup(t *testing.T) {
 	if len(entries) != len(names) {
 		t.Fatalf("expected %d worktree entries, got %d", len(names), len(entries))
 	}
-
-	// Cleanup 내부 Remove는 cmd.Dir을 설정하지 않으므로 repo 디렉토리로 이동 필요
-	t.Chdir(dir)
 
 	// Cleanup 실행
 	if err := wm.Cleanup(dir); err != nil {

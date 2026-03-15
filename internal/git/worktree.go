@@ -53,9 +53,9 @@ func (w *WorktreeManager) Create(projectDir, agentName, taskBranch string) (stri
 }
 
 // Remove removes a Git worktree.
-func (w *WorktreeManager) Remove(worktreePath string) error {
-	// Find the main repo by going up from the worktree
+func (w *WorktreeManager) Remove(projectDir, worktreePath string) error {
 	cmd := exec.Command("git", "worktree", "remove", worktreePath, "--force")
+	cmd.Dir = projectDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to remove worktree: %w\n%s", err, output)
 	}
@@ -80,7 +80,7 @@ func (w *WorktreeManager) Cleanup(projectDir string) error {
 			continue
 		}
 		path := filepath.Join(worktreeBase, entry.Name())
-		if err := w.Remove(path); err != nil {
+		if err := w.Remove(projectDir, path); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", entry.Name(), err))
 		}
 	}

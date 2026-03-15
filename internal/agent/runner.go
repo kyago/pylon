@@ -143,7 +143,7 @@ func PrepareWorkDir(
 
 	cleanup = func() error {
 		if wm.AutoCleanup {
-			return wm.Remove(wtPath)
+			return wm.Remove(projectDir, wtPath)
 		}
 		return nil
 	}

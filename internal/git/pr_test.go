@@ -17,7 +17,7 @@ func TestPRCreateConfig_Defaults(t *testing.T) {
 	if cfg.Base != "" {
 		t.Errorf("default Base = %q, want empty", cfg.Base)
 	}
-	if cfg.Draft != false {
+	if cfg.Draft {
 		t.Errorf("default Draft = %v, want false", cfg.Draft)
 	}
 	if len(cfg.Reviewers) != 0 {
