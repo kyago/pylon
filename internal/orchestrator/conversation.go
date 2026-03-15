@@ -1,13 +1,15 @@
 package orchestrator
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/kyago/pylon/internal/store"
 )
 
 // Conversation status constants.
@@ -17,30 +19,31 @@ const (
 	ConvStatusCancelled = "cancelled"
 )
 
-// ConversationManager manages conversation thread files.
-// Spec Reference: Section 9 "Conversation History"
+// ConversationManager manages conversation thread files and metadata.
+// Metadata is stored in SQLite via Store; thread.md files remain on disk.
 type ConversationManager struct {
 	BaseDir string // .pylon/conversations/
+	Store   *store.Store
 }
 
 // ClarityScores holds per-dimension clarity scores (0.0–1.0).
 type ClarityScores struct {
-	Goal        float64 `yaml:"goal"`
-	Constraints float64 `yaml:"constraints"`
-	Criteria    float64 `yaml:"criteria"`
-	Context     float64 `yaml:"context,omitempty"`
+	Goal        float64 `json:"goal"`
+	Constraints float64 `json:"constraints"`
+	Criteria    float64 `json:"criteria"`
+	Context     float64 `json:"context,omitempty"`
 }
 
 // ConversationMeta holds metadata for a conversation.
 type ConversationMeta struct {
-	Status         string         `yaml:"status"`
-	StartedAt      string         `yaml:"started_at"`
-	CompletedAt    string         `yaml:"completed_at,omitempty"`
-	SessionID      string         `yaml:"session_id,omitempty"`
-	Projects       []string       `yaml:"projects,omitempty"`
-	TaskID         string         `yaml:"task_id,omitempty"`
-	AmbiguityScore float64        `yaml:"ambiguity_score"`
-	ClarityScores  *ClarityScores `yaml:"clarity_scores,omitempty"`
+	Status         string
+	StartedAt      string
+	CompletedAt    string
+	SessionID      string
+	Projects       []string
+	TaskID         string
+	AmbiguityScore float64
+	ClarityScores  *ClarityScores
 }
 
 // Conversation represents a single conversation thread.
@@ -51,24 +54,36 @@ type Conversation struct {
 }
 
 // NewConversationManager creates a new manager.
-func NewConversationManager(baseDir string) *ConversationManager {
-	return &ConversationManager{BaseDir: baseDir}
+// Store must be non-nil; all metadata operations require SQLite.
+func NewConversationManager(baseDir string, s *store.Store) *ConversationManager {
+	if s == nil {
+		panic("ConversationManager requires a non-nil Store")
+	}
+	return &ConversationManager{BaseDir: baseDir, Store: s}
 }
 
-// Create initializes a new conversation directory with metadata.
+// Create initializes a new conversation with metadata in SQLite and thread.md on disk.
 func (c *ConversationManager) Create(id, title string) (*Conversation, error) {
 	dir := filepath.Join(c.BaseDir, id)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create conversation dir: %w", err)
 	}
 
+	now := time.Now()
 	meta := ConversationMeta{
 		Status:    ConvStatusActive,
-		StartedAt: time.Now().Format(time.RFC3339),
+		StartedAt: now.Format(time.RFC3339),
 	}
 
-	if err := c.saveMeta(dir, meta); err != nil {
-		return nil, err
+	// Store metadata in SQLite
+	if err := c.Store.UpsertConversation(&store.ConversationRecord{
+		ID:        id,
+		Title:     title,
+		Status:    ConvStatusActive,
+		StartedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to save conversation to store: %w", err)
 	}
 
 	// Create initial thread.md
@@ -101,48 +116,133 @@ func (c *ConversationManager) AppendMessage(id, role, content string) error {
 	return nil
 }
 
-// SaveMeta updates the conversation metadata.
+// SaveMeta updates the conversation metadata in SQLite.
+// The existing title is preserved (ConversationMeta does not carry a title).
 func (c *ConversationManager) SaveMeta(id string, meta ConversationMeta) error {
-	dir := filepath.Join(c.BaseDir, id)
-	return c.saveMeta(dir, meta)
-}
-
-func (c *ConversationManager) saveMeta(dir string, meta ConversationMeta) error {
-	data, err := yaml.Marshal(meta)
+	existing, err := c.Store.GetConversation(id)
 	if err != nil {
-		return fmt.Errorf("failed to marshal meta: %w", err)
+		return fmt.Errorf("failed to load existing conversation for SaveMeta: %w", err)
 	}
-
-	// Atomic write: write to temp file then rename
-	metaPath := filepath.Join(dir, "meta.yml")
-	tmpPath := metaPath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write meta: %w", err)
+	title := ""
+	if existing != nil {
+		title = existing.Title
 	}
-	if err := os.Rename(tmpPath, metaPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to rename meta: %w", err)
-	}
-
-	return nil
+	rec := metaToRecord(id, title, meta)
+	return c.Store.UpsertConversation(rec)
 }
 
-// Load reads an existing conversation.
+// Complete marks a conversation as completed.
+func (c *ConversationManager) Complete(id string) error {
+	now := time.Now()
+	return c.Store.UpdateConversationStatus(id, ConvStatusCompleted, &now)
+}
+
+// Load reads an existing conversation from SQLite.
 func (c *ConversationManager) Load(id string) (*Conversation, error) {
-	dir := filepath.Join(c.BaseDir, id)
-
-	metaPath := filepath.Join(dir, "meta.yml")
-	data, err := os.ReadFile(metaPath)
+	rec, err := c.Store.GetConversation(id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read meta: %w", err)
+		return nil, fmt.Errorf("failed to load conversation: %w", err)
+	}
+	if rec == nil {
+		return nil, fmt.Errorf("conversation %q not found", id)
 	}
 
-	var meta ConversationMeta
-	if err := yaml.Unmarshal(data, &meta); err != nil {
-		return nil, fmt.Errorf("failed to parse meta: %w", err)
-	}
+	dir := filepath.Join(c.BaseDir, id)
+	meta := recordToMeta(rec)
 
 	return &Conversation{ID: id, Dir: dir, Meta: meta}, nil
+}
+
+// List returns conversations filtered by status.
+// If status is empty, all conversations are returned.
+func (c *ConversationManager) List(status string) ([]Conversation, error) {
+	recs, err := c.Store.ListConversations(status)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []Conversation
+	for _, rec := range recs {
+		dir := filepath.Join(c.BaseDir, rec.ID)
+		result = append(result, Conversation{
+			ID:   rec.ID,
+			Dir:  dir,
+			Meta: recordToMeta(&rec),
+		})
+	}
+	return result, nil
+}
+
+// --- Conversion helpers ---
+
+func metaToRecord(id, title string, meta ConversationMeta) *store.ConversationRecord {
+	rec := &store.ConversationRecord{
+		ID:             id,
+		Title:          title,
+		Status:         meta.Status,
+		SessionID:      meta.SessionID,
+		TaskID:         meta.TaskID,
+		AmbiguityScore: meta.AmbiguityScore,
+		UpdatedAt:      time.Now(),
+	}
+
+	if meta.StartedAt != "" {
+		if t, err := time.Parse(time.RFC3339, meta.StartedAt); err == nil {
+			rec.StartedAt = t
+		}
+	}
+	if meta.CompletedAt != "" {
+		if t, err := time.Parse(time.RFC3339, meta.CompletedAt); err == nil {
+			rec.CompletedAt = &t
+		}
+	}
+	if len(meta.Projects) > 0 {
+		rec.Projects = strings.Join(meta.Projects, ",")
+	}
+	if meta.ClarityScores != nil {
+		rec.ClarityScores = marshalClarityScores(meta.ClarityScores)
+	}
+
+	return rec
+}
+
+func recordToMeta(rec *store.ConversationRecord) ConversationMeta {
+	meta := ConversationMeta{
+		Status:         rec.Status,
+		StartedAt:      rec.StartedAt.Format(time.RFC3339),
+		SessionID:      rec.SessionID,
+		TaskID:         rec.TaskID,
+		AmbiguityScore: rec.AmbiguityScore,
+	}
+	if rec.CompletedAt != nil {
+		meta.CompletedAt = rec.CompletedAt.Format(time.RFC3339)
+	}
+	if rec.Projects != "" {
+		meta.Projects = strings.Split(rec.Projects, ",")
+	}
+	if rec.ClarityScores != "" {
+		meta.ClarityScores = unmarshalClarityScores(rec.ClarityScores)
+	}
+	return meta
+}
+
+func marshalClarityScores(scores *ClarityScores) string {
+	data, err := json.Marshal(scores)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func unmarshalClarityScores(s string) *ClarityScores {
+	if s == "" {
+		return nil
+	}
+	var scores ClarityScores
+	if err := json.Unmarshal([]byte(s), &scores); err != nil {
+		return nil
+	}
+	return &scores
 }
 
 // ComputeAmbiguity calculates the ambiguity score from clarity dimensions.

@@ -146,11 +146,20 @@ func (o *Orchestrator) Recover() error {
 	if err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() {
-				agentDir := filepath.Join(outboxDir, entry.Name())
+				agentName := entry.Name()
+				agentDir := filepath.Join(outboxDir, agentName)
 				files, _ := os.ReadDir(agentDir)
 				for _, f := range files {
-					if strings.HasSuffix(f.Name(), ".result.json") && !isProcessed(agentDir, f.Name()) {
-						fmt.Printf("[recovery] unprocessed result: %s/%s\n", entry.Name(), f.Name())
+					if strings.HasSuffix(f.Name(), ".result.json") {
+						taskID := strings.TrimSuffix(f.Name(), ".result.json")
+						processed, chkErr := o.Store.IsResultProcessed(agentName, taskID)
+						if chkErr != nil {
+							fmt.Printf("[recovery] failed to check result status for %s/%s: %v\n", agentName, f.Name(), chkErr)
+							continue
+						}
+						if !processed {
+							fmt.Printf("[recovery] unprocessed result: %s/%s\n", agentName, f.Name())
+						}
 					}
 				}
 			}
@@ -158,20 +167,6 @@ func (o *Orchestrator) Recover() error {
 	}
 
 	return o.savePipelineState()
-}
-
-// isProcessed checks whether a result file has been marked as processed.
-// Convention: processed files have a companion ".done" marker file.
-func isProcessed(dir, filename string) bool {
-	donePath := filepath.Join(dir, filename+".done")
-	_, err := os.Stat(donePath)
-	return err == nil
-}
-
-// markProcessed creates a ".done" marker for a processed result file.
-func markProcessed(dir, filename string) error {
-	donePath := filepath.Join(dir, filename+".done")
-	return os.WriteFile(donePath, []byte{}, 0644)
 }
 
 // GetStatus returns a summary of the current orchestrator state.

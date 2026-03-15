@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kyago/pylon/internal/protocol"
+	"github.com/kyago/pylon/internal/store"
 )
 
 // WatchResult holds a parsed outbox result with its file path.
@@ -23,16 +24,19 @@ type WatchResult struct {
 type OutboxWatcher struct {
 	OutboxDir    string
 	PollInterval time.Duration
+	Store        *store.Store
 }
 
-// NewOutboxWatcher creates a new watcher with the given outbox directory and poll interval.
-func NewOutboxWatcher(outboxDir string, interval time.Duration) *OutboxWatcher {
+// NewOutboxWatcher creates a new watcher with the given outbox directory, poll interval, and store.
+// If store is nil, falls back to .done marker file checks.
+func NewOutboxWatcher(outboxDir string, interval time.Duration, s *store.Store) *OutboxWatcher {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
 	return &OutboxWatcher{
 		OutboxDir:    outboxDir,
 		PollInterval: interval,
+		Store:        s,
 	}
 }
 
@@ -64,7 +68,7 @@ func (w *OutboxWatcher) PollOnce() ([]WatchResult, error) {
 			if !strings.HasSuffix(f.Name(), ".result.json") {
 				continue
 			}
-			if isProcessed(agentDir, f.Name()) {
+			if w.isProcessed(agentName, agentDir, f.Name()) {
 				continue
 			}
 
@@ -126,4 +130,22 @@ func (w *OutboxWatcher) WaitForResults(ctx context.Context, expectedAgents []str
 			}
 		}
 	}
+}
+
+// isProcessed checks whether a result file has already been processed.
+// Uses Store.IsResultProcessed if Store is available, otherwise falls back to .done marker files.
+func (w *OutboxWatcher) isProcessed(agentName, agentDir, filename string) bool {
+	if w.Store != nil {
+		taskID := strings.TrimSuffix(filename, ".result.json")
+		processed, err := w.Store.IsResultProcessed(agentName, taskID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ failed to check processed status via store: %v\n", err)
+			return false
+		}
+		return processed
+	}
+	// Fallback: .done marker file
+	donePath := filepath.Join(agentDir, filename+".done")
+	_, err := os.Stat(donePath)
+	return err == nil
 }
