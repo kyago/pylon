@@ -10,6 +10,7 @@ import (
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/executor"
 	"github.com/kyago/pylon/internal/orchestrator"
+	"github.com/kyago/pylon/internal/store"
 )
 
 func newResumeCmd() *cobra.Command {
@@ -41,9 +42,21 @@ func runResume(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a pylon workspace: %w", err)
 	}
 
+	// Open store
+	dbPath := filepath.Join(root, ".pylon", "pylon.db")
+	s, err := store.NewStore(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open store: %w", err)
+	}
+	defer s.Close()
+
+	if err := s.Migrate(); err != nil {
+		return fmt.Errorf("failed to migrate database: %w", err)
+	}
+
 	// Load conversation
 	convDir := filepath.Join(root, ".pylon", "conversations")
-	convMgr := orchestrator.NewConversationManager(convDir)
+	convMgr := orchestrator.NewConversationManager(convDir, s)
 
 	conv, err := convMgr.Load(conversationID)
 	if err != nil {

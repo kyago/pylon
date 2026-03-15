@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -53,7 +54,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 	return &Loop{
 		cfg:      cfg,
 		orch:     orch,
-		watcher:  NewOutboxWatcher(filepath.Join(runtimeDir, "outbox"), 2*time.Second),
+		watcher:  NewOutboxWatcher(filepath.Join(runtimeDir, "outbox"), 2*time.Second, cfg.Store),
 		inboxDir: filepath.Join(runtimeDir, "inbox"),
 	}
 }
@@ -250,9 +251,7 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 			data := l.extractAgentResult(wr)
 			l.storeAgentResult(data)
 			foundOutbox = true
-			if err := markProcessed(filepath.Dir(wr.FilePath), filepath.Base(wr.FilePath)); err != nil {
-				fmt.Fprintf(os.Stderr, "⚠ failed to mark processed %s: %v\n", wr.FilePath, err)
-			}
+			l.enqueueResultAck(agentName, taskID)
 		}
 	}
 
@@ -540,7 +539,28 @@ func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgCo
 		Description: l.cfg.Requirement,
 		Branch:      l.cfg.Branch,
 	}
-	return protocol.WriteTask(l.inboxDir, agentName, msg)
+	if err := protocol.WriteTask(l.inboxDir, agentName, msg); err != nil {
+		return err
+	}
+
+	// Record task assignment in message_queue (log-and-continue)
+	if l.cfg.Store != nil {
+		body, _ := json.Marshal(map[string]string{"task_id": taskID})
+		ctx, _ := json.Marshal(map[string]string{"task_id": taskID, "pipeline_id": l.cfg.PipelineID})
+		if enqErr := l.cfg.Store.Enqueue(&store.QueuedMessage{
+			Type:      "task_assign",
+			FromAgent: "orchestrator",
+			ToAgent:   agentName,
+			Subject:   msg.Subject,
+			Body:      string(body),
+			Context:   string(ctx),
+			Status:    "acked",
+		}); enqErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠ failed to record task assignment for %s: %v\n", agentName, enqErr)
+		}
+	}
+
+	return nil
 }
 
 func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, outboxDir string) (string, error) {
@@ -667,14 +687,12 @@ func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
 		return
 	}
 
-	// Mark as processed to prevent duplicate processing by future PollOnce() calls
-	agentDir := filepath.Join(l.watcher.OutboxDir, agentName)
-	resultFile := taskID + ".result.json"
-	if err := markProcessed(agentDir, resultFile); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠ failed to mark processed fallback outbox for %s: %v\n", agentName, err)
-	}
+	// Record as processed in message_queue to prevent duplicate processing by future PollOnce() calls
+	l.enqueueResultAck(agentName, taskID)
 
 	// Process the result we just wrote
+	agentDir := filepath.Join(l.watcher.OutboxDir, agentName)
+	resultFile := taskID + ".result.json"
 	wr := WatchResult{
 		AgentName: agentName,
 		FilePath:  filepath.Join(agentDir, resultFile),
@@ -743,6 +761,38 @@ func (l *Loop) GetOrchestrator() *Orchestrator {
 // SetPipeline allows setting the pipeline directly (for resume scenarios).
 func (l *Loop) SetPipeline(p *Pipeline) {
 	l.orch.Pipeline = p
+}
+
+// enqueueResultAck records a result as processed (acked) in the message_queue.
+// On Store failure, falls back to writing a .done marker file to prevent duplicate processing.
+func (l *Loop) enqueueResultAck(agentName, taskID string) {
+	if l.cfg.Store == nil {
+		l.writeDoneFallback(agentName, taskID)
+		return
+	}
+	body, _ := json.Marshal(map[string]string{"task_id": taskID})
+	ctx, _ := json.Marshal(map[string]string{"task_id": taskID, "pipeline_id": l.cfg.PipelineID})
+	if err := l.cfg.Store.Enqueue(&store.QueuedMessage{
+		Type:      "result",
+		FromAgent: agentName,
+		ToAgent:   "orchestrator",
+		Subject:   fmt.Sprintf("Result: %s", taskID),
+		Body:      string(body),
+		Context:   string(ctx),
+		Status:    "acked",
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to record result ack for %s/%s: %v, writing .done fallback\n", agentName, taskID, err)
+		l.writeDoneFallback(agentName, taskID)
+	}
+}
+
+// writeDoneFallback creates a .done marker file as a fallback when Store is unavailable.
+func (l *Loop) writeDoneFallback(agentName, taskID string) {
+	agentDir := filepath.Join(l.watcher.OutboxDir, agentName)
+	donePath := filepath.Join(agentDir, taskID+".result.json.done")
+	if err := os.WriteFile(donePath, []byte{}, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to write .done fallback for %s/%s: %v\n", agentName, taskID, err)
+	}
 }
 
 func containsStr(ss []string, s string) bool {

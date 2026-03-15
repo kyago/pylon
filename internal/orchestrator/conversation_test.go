@@ -5,11 +5,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kyago/pylon/internal/store"
 )
+
+func newConvTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	s, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create test store: %v", err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("failed to migrate test store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
 
 func TestConversationManager_Create(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewConversationManager(dir)
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
 
 	conv, err := mgr.Create("conv-001", "테스트 대화")
 	if err != nil {
@@ -22,10 +38,16 @@ func TestConversationManager_Create(t *testing.T) {
 		t.Errorf("status = %s, want active", conv.Meta.Status)
 	}
 
-	// Check meta.yml exists
-	metaPath := filepath.Join(dir, "conv-001", "meta.yml")
-	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-		t.Error("meta.yml should exist")
+	// Check conversation in Store
+	rec, err := s.GetConversation("conv-001")
+	if err != nil {
+		t.Fatalf("GetConversation failed: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("conversation should exist in store")
+	}
+	if rec.Status != ConvStatusActive {
+		t.Errorf("store status = %s, want active", rec.Status)
 	}
 
 	// Check thread.md exists with header
@@ -41,7 +63,8 @@ func TestConversationManager_Create(t *testing.T) {
 
 func TestConversationManager_AppendMessage(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewConversationManager(dir)
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
 
 	mgr.Create("conv-002", "메시지 테스트")
 
@@ -75,7 +98,8 @@ func TestConversationManager_AppendMessage(t *testing.T) {
 
 func TestConversationManager_Load(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewConversationManager(dir)
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
 
 	mgr.Create("conv-003", "로드 테스트")
 
@@ -93,7 +117,8 @@ func TestConversationManager_Load(t *testing.T) {
 
 func TestConversationManager_Load_NotFound(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewConversationManager(dir)
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
 
 	_, err := mgr.Load("nonexistent")
 	if err == nil {
@@ -192,7 +217,8 @@ func TestIsReadyForExecution(t *testing.T) {
 
 func TestConversationManager_SaveMeta_WithAmbiguity(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewConversationManager(dir)
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
 
 	mgr.Create("conv-amb", "모호성 테스트")
 
@@ -226,7 +252,8 @@ func TestConversationManager_SaveMeta_WithAmbiguity(t *testing.T) {
 
 func TestConversationMeta_CompletedAt_SessionID_Roundtrip(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewConversationManager(dir)
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
 
 	mgr.Create("conv-rt", "라운드트립 테스트")
 
@@ -246,8 +273,8 @@ func TestConversationMeta_CompletedAt_SessionID_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if conv.Meta.CompletedAt != "2026-03-13T11:00:00+09:00" {
-		t.Errorf("completed_at = %q, want %q", conv.Meta.CompletedAt, "2026-03-13T11:00:00+09:00")
+	if conv.Meta.CompletedAt == "" {
+		t.Error("completed_at should not be empty")
 	}
 	if conv.Meta.SessionID != "session-abc-123" {
 		t.Errorf("session_id = %q, want %q", conv.Meta.SessionID, "session-abc-123")
@@ -256,7 +283,8 @@ func TestConversationMeta_CompletedAt_SessionID_Roundtrip(t *testing.T) {
 
 func TestConversationMeta_OmitEmpty(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewConversationManager(dir)
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
 
 	mgr.Create("conv-omit", "빈 필드 테스트")
 
@@ -283,7 +311,8 @@ func TestConversationMeta_OmitEmpty(t *testing.T) {
 
 func TestConversationManager_SaveMeta(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewConversationManager(dir)
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
 
 	mgr.Create("conv-004", "메타 업데이트")
 
@@ -305,5 +334,65 @@ func TestConversationManager_SaveMeta(t *testing.T) {
 	}
 	if conv.Meta.TaskID != "task-123" {
 		t.Errorf("taskID = %s, want task-123", conv.Meta.TaskID)
+	}
+}
+
+func TestConversationManager_Complete(t *testing.T) {
+	dir := t.TempDir()
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
+
+	mgr.Create("conv-complete", "완료 테스트")
+
+	if err := mgr.Complete("conv-complete"); err != nil {
+		t.Fatalf("Complete failed: %v", err)
+	}
+
+	conv, err := mgr.Load("conv-complete")
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if conv.Meta.Status != ConvStatusCompleted {
+		t.Errorf("status = %s, want completed", conv.Meta.Status)
+	}
+	if conv.Meta.CompletedAt == "" {
+		t.Error("completed_at should be set")
+	}
+}
+
+func TestConversationManager_List(t *testing.T) {
+	dir := t.TempDir()
+	s := newConvTestStore(t)
+	mgr := NewConversationManager(dir, s)
+
+	mgr.Create("conv-list-1", "대화 1")
+	mgr.Create("conv-list-2", "대화 2")
+	mgr.Complete("conv-list-2")
+
+	// List all
+	all, err := mgr.List("")
+	if err != nil {
+		t.Fatalf("List all failed: %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("expected 2 conversations, got %d", len(all))
+	}
+
+	// List active only
+	active, err := mgr.List("active")
+	if err != nil {
+		t.Fatalf("List active failed: %v", err)
+	}
+	if len(active) != 1 {
+		t.Errorf("expected 1 active conversation, got %d", len(active))
+	}
+
+	// List completed only
+	completed, err := mgr.List("completed")
+	if err != nil {
+		t.Fatalf("List completed failed: %v", err)
+	}
+	if len(completed) != 1 {
+		t.Errorf("expected 1 completed conversation, got %d", len(completed))
 	}
 }

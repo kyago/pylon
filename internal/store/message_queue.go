@@ -157,6 +157,23 @@ func (s *Store) GetPending(agentName string) ([]QueuedMessage, error) {
 	return scanMessages(rows)
 }
 
+// IsResultProcessed checks whether a result from the given agent for the specified task
+// has already been acknowledged (acked) in the message queue.
+func (s *Store) IsResultProcessed(agentName, taskID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM message_queue
+		WHERE from_agent = ? AND type = 'result' AND status = 'acked'
+		  AND ((json_valid(body) AND json_extract(body, '$.task_id') = ?)
+		    OR (json_valid(context) AND json_extract(context, '$.task_id') = ?))`,
+		agentName, taskID, taskID,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check result processed: %w", err)
+	}
+	return count > 0, nil
+}
+
 func scanMessages(rows *sql.Rows) ([]QueuedMessage, error) {
 	var messages []QueuedMessage
 	for rows.Next() {

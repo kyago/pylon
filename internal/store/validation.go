@@ -59,3 +59,20 @@ func validateMessageStatus(status string) error {
 	}
 	return nil
 }
+
+// ErrInvalidConversationStatus is returned when a conversation status value is not recognized.
+var ErrInvalidConversationStatus = errors.New("invalid conversation status")
+
+var validConversationStatuses = map[string]bool{
+	"active":    true,
+	"completed": true,
+	"cancelled": true,
+}
+
+// validateConversationStatus checks that a status is one of the valid conversation statuses.
+func validateConversationStatus(status string) error {
+	if !validConversationStatuses[status] {
+		return fmt.Errorf("%w: %q", ErrInvalidConversationStatus, status)
+	}
+	return nil
+}

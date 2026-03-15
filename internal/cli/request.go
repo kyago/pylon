@@ -103,7 +103,7 @@ func runRequest(cmd *cobra.Command, args []string) error {
 
 	// Create conversation (if new pipeline)
 	convDir := filepath.Join(root, ".pylon", "conversations")
-	convMgr := orchestrator.NewConversationManager(convDir)
+	convMgr := orchestrator.NewConversationManager(convDir, s)
 
 	if flagContinue == "" {
 		fmt.Printf("📋 Pipeline: %s\n", pipelineID)
