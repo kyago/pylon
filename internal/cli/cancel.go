@@ -64,7 +64,7 @@ func runCancel(cmd *cobra.Command, args []string) error {
 
 	// Transition to failed
 	if err := orch.TransitionTo(orchestrator.StageFailed); err != nil {
-		fmt.Printf("⚠ Failed to transition state: %v\n", err)
+		return fmt.Errorf("failed to cancel pipeline %s: %w", pipelineID, err)
 	}
 
 	fmt.Printf("✓ Pipeline %s cancelled\n", pipelineID)

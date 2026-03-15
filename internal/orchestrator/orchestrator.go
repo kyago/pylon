@@ -134,6 +134,9 @@ func (o *Orchestrator) Recover() error {
 		if err != nil {
 			return fmt.Errorf("failed to parse pipeline state: %w", err)
 		}
+		if pipeline.IsTerminal() {
+			return nil
+		}
 		o.Pipeline = pipeline
 	}
 
