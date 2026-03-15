@@ -6,23 +6,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/kyago/pylon/internal/domain"
 )
 
-// Stage represents a pipeline execution stage.
-type Stage string
+// Stage is an alias for domain.Stage to maintain backward compatibility.
+type Stage = domain.Stage
 
+// Stage constants re-exported from domain package.
 const (
-	StageInit              Stage = "init"
-	StagePOConversation    Stage = "po_conversation"
-	StageArchitectAnalysis Stage = "architect_analysis"
-	StagePMTaskBreakdown   Stage = "pm_task_breakdown"
-	StageAgentExecuting    Stage = "agent_executing"
-	StageVerification      Stage = "verification"
-	StagePRCreation        Stage = "pr_creation"
-	StagePOValidation      Stage = "po_validation"
-	StageWikiUpdate        Stage = "wiki_update"
-	StageCompleted         Stage = "completed"
-	StageFailed            Stage = "failed"
+	StageInit              = domain.StageInit
+	StagePOConversation    = domain.StagePOConversation
+	StageArchitectAnalysis = domain.StageArchitectAnalysis
+	StagePMTaskBreakdown   = domain.StagePMTaskBreakdown
+	StageAgentExecuting    = domain.StageAgentExecuting
+	StageVerification      = domain.StageVerification
+	StagePRCreation        = domain.StagePRCreation
+	StagePOValidation      = domain.StagePOValidation
+	StageWikiUpdate        = domain.StageWikiUpdate
+	StageCompleted         = domain.StageCompleted
+	StageFailed            = domain.StageFailed
 )
 
 // validTransitions defines which stage transitions are allowed.

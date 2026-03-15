@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+
+	"github.com/kyago/pylon/internal/domain"
 )
 
 // Validation errors returned when input values violate constraints.
@@ -13,20 +15,15 @@ var (
 	ErrInvalidMessageStatus = errors.New("invalid message queue status")
 )
 
-// NOTE: 이 목록은 반드시 internal/orchestrator/pipeline.go의 Stage 상수와 동기화해야 합니다.
-var validPipelineStages = map[string]bool{
-	"init":               true,
-	"po_conversation":    true,
-	"architect_analysis": true,
-	"pm_task_breakdown":  true,
-	"agent_executing":    true,
-	"verification":       true,
-	"pr_creation":        true,
-	"po_validation":      true,
-	"wiki_update":        true,
-	"completed":          true,
-	"failed":             true,
-}
+// validPipelineStages is built from domain.AllStages() to guarantee
+// compile-time synchronization with the Stage constants.
+var validPipelineStages = func() map[string]bool {
+	m := make(map[string]bool)
+	for _, s := range domain.AllStages() {
+		m[string(s)] = true
+	}
+	return m
+}()
 
 var validMessageStatuses = map[string]bool{
 	"queued":    true,
