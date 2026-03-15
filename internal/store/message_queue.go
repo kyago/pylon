@@ -35,6 +35,10 @@ func (s *Store) Enqueue(msg *QueuedMessage) error {
 		msg.Status = "queued"
 	}
 
+	if err := validateMessageStatus(msg.Status); err != nil {
+		return fmt.Errorf("invalid message: %w", err)
+	}
+
 	_, err := s.db.Exec(`
 		INSERT INTO message_queue (id, type, priority, from_agent, to_agent, subject, body, context, status, reply_to, ttl_seconds)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

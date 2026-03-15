@@ -33,6 +33,10 @@ type MemorySearchResult struct {
 // InsertMemory adds a new entry to project memory.
 // FTS 인덱스는 트리거에 의해 자동으로 동기화된다.
 func (s *Store) InsertMemory(entry *MemoryEntry) error {
+	if err := validateConfidence(entry.Confidence); err != nil {
+		return fmt.Errorf("invalid memory entry: %w", err)
+	}
+
 	if entry.ID == "" {
 		entry.ID = uuid.New().String()
 	}

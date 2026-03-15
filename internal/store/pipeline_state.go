@@ -16,6 +16,10 @@ type PipelineRecord struct {
 
 // UpsertPipeline inserts or updates a pipeline state record.
 func (s *Store) UpsertPipeline(rec *PipelineRecord) error {
+	if err := validatePipelineStage(rec.Stage); err != nil {
+		return fmt.Errorf("invalid pipeline record: %w", err)
+	}
+
 	_, err := s.db.Exec(`
 		INSERT INTO pipeline_state (pipeline_id, stage, state_json, updated_at)
 		VALUES (?, ?, ?, ?)

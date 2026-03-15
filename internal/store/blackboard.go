@@ -25,6 +25,10 @@ type BlackboardEntry struct {
 // PutBlackboard inserts or updates a blackboard entry.
 // If a matching (project_id, category, key) exists, it supersedes the old entry.
 func (s *Store) PutBlackboard(entry *BlackboardEntry) error {
+	if err := validateConfidence(entry.Confidence); err != nil {
+		return fmt.Errorf("invalid blackboard entry: %w", err)
+	}
+
 	if entry.ID == "" {
 		entry.ID = uuid.New().String()
 	}
