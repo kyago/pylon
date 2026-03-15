@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,10 +15,11 @@ import (
 // Orchestrator coordinates the pylon pipeline execution.
 // Spec Reference: Section 8 "Orchestrator Core"
 type Orchestrator struct {
-	Config   *config.Config
-	Store    *store.Store
-	WorkDir  string // workspace root
-	Pipeline *Pipeline
+	Config     *config.Config
+	Store      *store.Store
+	WorkDir    string // workspace root
+	Pipeline   *Pipeline
+	pipelineID string // optional: used by Recover() to target a specific pipeline
 }
 
 // NewOrchestrator creates a new orchestrator instance.
@@ -29,6 +29,11 @@ func NewOrchestrator(cfg *config.Config, s *store.Store, workDir string) *Orches
 		Store:   s,
 		WorkDir: workDir,
 	}
+}
+
+// SetPipelineID sets the pipeline ID for targeted recovery.
+func (o *Orchestrator) SetPipelineID(id string) {
+	o.pipelineID = id
 }
 
 // StartPipeline creates a new pipeline and persists its initial state.
@@ -71,14 +76,13 @@ func (o *Orchestrator) ForceStage(stage Stage) error {
 	return o.savePipelineState()
 }
 
-// savePipelineState persists the pipeline to both SQLite and state.json.
+// savePipelineState persists the pipeline state to SQLite (single source of truth).
 func (o *Orchestrator) savePipelineState() error {
 	data, err := o.Pipeline.Snapshot()
 	if err != nil {
 		return err
 	}
 
-	// Save to SQLite
 	if o.Store != nil {
 		if err := o.Store.UpsertPipeline(&store.PipelineRecord{
 			PipelineID: o.Pipeline.ID,
@@ -90,42 +94,51 @@ func (o *Orchestrator) savePipelineState() error {
 		}
 	}
 
-	// Save to state.json (SPOF recovery)
-	stateDir := filepath.Join(o.WorkDir, ".pylon", "runtime")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		return fmt.Errorf("failed to create state dir: %w", err)
-	}
-	statePath := filepath.Join(stateDir, "state.json")
-
-	tmp := statePath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, statePath)
+	return nil
 }
 
-// Recover restores pipeline state after orchestrator crash.
+// Recover restores pipeline state from SQLite after orchestrator crash.
 // Spec Reference: Section 8 "SPOF Recovery"
 func (o *Orchestrator) Recover() error {
-	statePath := filepath.Join(o.WorkDir, ".pylon", "runtime", "state.json")
-	data, err := os.ReadFile(statePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil // no state to recover
+	if o.Store == nil {
+		return nil // no store available
+	}
+
+	// If a specific pipeline ID is known, recover it directly
+	if o.pipelineID != "" {
+		rec, err := o.Store.GetPipeline(o.pipelineID)
+		if err != nil {
+			return fmt.Errorf("failed to get pipeline from store: %w", err)
 		}
-		return fmt.Errorf("failed to read state.json: %w", err)
+		if rec == nil {
+			return nil // not found, fresh start
+		}
+		pipeline, err := LoadPipeline([]byte(rec.StateJSON))
+		if err != nil {
+			return fmt.Errorf("failed to parse pipeline state: %w", err)
+		}
+		if pipeline.IsTerminal() {
+			return nil // already done
+		}
+		o.Pipeline = pipeline
+	} else {
+		// Recover the most recent active pipeline
+		actives, err := o.Store.GetActivePipelines()
+		if err != nil {
+			return fmt.Errorf("failed to get active pipelines: %w", err)
+		}
+		if len(actives) == 0 {
+			return nil // no active pipeline
+		}
+		pipeline, err := LoadPipeline([]byte(actives[0].StateJSON))
+		if err != nil {
+			return fmt.Errorf("failed to parse pipeline state: %w", err)
+		}
+		if pipeline.IsTerminal() {
+			return nil
+		}
+		o.Pipeline = pipeline
 	}
-
-	pipeline, err := LoadPipeline(data)
-	if err != nil {
-		return fmt.Errorf("failed to parse state.json: %w", err)
-	}
-
-	if pipeline.IsTerminal() {
-		return nil // already done
-	}
-
-	o.Pipeline = pipeline
 
 	// Scan for unprocessed outbox results
 	outboxDir := filepath.Join(o.WorkDir, ".pylon", "runtime", "outbox")
@@ -137,7 +150,6 @@ func (o *Orchestrator) Recover() error {
 				files, _ := os.ReadDir(agentDir)
 				for _, f := range files {
 					if strings.HasSuffix(f.Name(), ".result.json") && !isProcessed(agentDir, f.Name()) {
-						// Mark as needing processing
 						fmt.Printf("[recovery] unprocessed result: %s/%s\n", entry.Name(), f.Name())
 					}
 				}

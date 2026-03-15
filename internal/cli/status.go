@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/kyago/pylon/internal/config"
@@ -31,37 +32,41 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a pylon workspace: %w", err)
 	}
 
-	// Load config
-	cfg, err := config.LoadConfig(root + "/.pylon/config.yml")
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
 	fmt.Println("Pylon Status")
 	fmt.Println("─────────────────────────")
 
 	// Show pipeline status from store
-	dbPath := root + "/.pylon/pylon.db"
+	dbPath := filepath.Join(root, ".pylon", "pylon.db")
 	s, err := store.NewStore(dbPath)
 	if err == nil {
 		defer s.Close()
 		s.Migrate()
 
-		orch := orchestrator.NewOrchestrator(cfg, s, root)
-		orch.Recover()
-
-		if orch.Pipeline != nil {
-			fmt.Printf("Pipeline: %s\n", orch.Pipeline.ID)
-			fmt.Printf("  Stage:    %s\n", orch.Pipeline.CurrentStage)
-			fmt.Printf("  Attempts: %d/%d\n", orch.Pipeline.Attempts, orch.Pipeline.MaxAttempts)
-			if len(orch.Pipeline.Agents) > 0 {
-				fmt.Println("  Agents:")
-				for name, agent := range orch.Pipeline.Agents {
-					fmt.Printf("    %-15s %s\n", name, agent.Status)
+		actives, listErr := s.GetActivePipelines()
+		if listErr != nil {
+			fmt.Printf("⚠ Failed to query pipelines: %v\n", listErr)
+		} else if len(actives) == 0 {
+			fmt.Println("No active pipeline.")
+		} else {
+			for i, rec := range actives {
+				pipeline, pErr := orchestrator.LoadPipeline([]byte(rec.StateJSON))
+				if pErr != nil {
+					fmt.Printf("Pipeline: %s (state parse error: %v)\n", rec.PipelineID, pErr)
+					continue
+				}
+				if i > 0 {
+					fmt.Println()
+				}
+				fmt.Printf("Pipeline: %s\n", pipeline.ID)
+				fmt.Printf("  Stage:    %s\n", pipeline.CurrentStage)
+				fmt.Printf("  Attempts: %d/%d\n", pipeline.Attempts, pipeline.MaxAttempts)
+				if len(pipeline.Agents) > 0 {
+					fmt.Println("  Agents:")
+					for name, agent := range pipeline.Agents {
+						fmt.Printf("    %-15s %s\n", name, agent.Status)
+					}
 				}
 			}
-		} else {
-			fmt.Println("No active pipeline.")
 		}
 	} else {
 		fmt.Println("No active pipeline.")

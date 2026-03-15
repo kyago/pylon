@@ -10,6 +10,7 @@ import (
 	"github.com/kyago/pylon/internal/agent"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/executor"
+	"github.com/kyago/pylon/internal/store"
 )
 
 var _ executor.ProcessExecutor = (*testExecutor)(nil)
@@ -47,8 +48,21 @@ func newTestConfig() *config.Config {
 	return cfg
 }
 
-func newTestLoopConfig(workDir string, exec executor.ProcessExecutor) LoopConfig {
-	return LoopConfig{
+func newTestStore(t testing.TB) *store.Store {
+	t.Helper()
+	s, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create test store: %v", err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("failed to migrate test store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func newTestLoopConfig(workDir string, exec executor.ProcessExecutor, extras ...testing.TB) LoopConfig {
+	lcfg := LoopConfig{
 		Config:      newTestConfig(),
 		WorkDir:     workDir,
 		PipelineID:  "test-pipeline",
@@ -73,6 +87,10 @@ func newTestLoopConfig(workDir string, exec executor.ProcessExecutor) LoopConfig
 			{Name: "test-project", Path: workDir},
 		},
 	}
+	if len(extras) > 0 {
+		lcfg.Store = newTestStore(extras[0])
+	}
+	return lcfg
 }
 
 func TestNewLoop(t *testing.T) {
