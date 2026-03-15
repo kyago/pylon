@@ -47,6 +47,7 @@ type Loop struct {
 // NewLoop creates a new orchestration loop.
 func NewLoop(cfg LoopConfig) *Loop {
 	orch := NewOrchestrator(cfg.Config, cfg.Store, cfg.WorkDir)
+	orch.SetPipelineID(cfg.PipelineID)
 	runtimeDir := filepath.Join(cfg.WorkDir, ".pylon", "runtime")
 
 	return &Loop{

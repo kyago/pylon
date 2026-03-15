@@ -12,6 +12,7 @@ import (
 	"github.com/kyago/pylon/internal/agent"
 	"github.com/kyago/pylon/internal/executor"
 	"github.com/kyago/pylon/internal/protocol"
+	"github.com/kyago/pylon/internal/store"
 )
 
 // --- Integration Tests ---
@@ -147,31 +148,42 @@ func TestIntegration_ContextCancellation_GracefulShutdown(t *testing.T) {
 func TestIntegration_CrashRecovery(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create runtime directories
-	runtimeDir := filepath.Join(dir, ".pylon", "runtime")
-	os.MkdirAll(runtimeDir, 0755)
+	// Create a store and simulate a crashed pipeline by writing to SQLite
+	s, err := store.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
 
-	// Simulate a crashed pipeline by writing state.json
 	pipeline := NewPipeline("crash-test", 2)
 	pipeline.Transition(StagePOConversation)
 	pipeline.Transition(StageArchitectAnalysis)
 	pipeline.TaskSpec = "크래시 테스트"
 
 	data, _ := pipeline.Snapshot()
-	os.WriteFile(filepath.Join(runtimeDir, "state.json"), data, 0644)
+	s.UpsertPipeline(&store.PipelineRecord{
+		PipelineID: "crash-test",
+		Stage:      string(StageArchitectAnalysis),
+		StateJSON:  string(data),
+		UpdatedAt:  time.Now(),
+	})
 
-	// Create new loop — should recover from state.json
+	// Create new loop — should recover from SQLite
 	exec := &testExecutor{exitCode: 0}
 	lcfg := newTestLoopConfig(dir, exec)
-	lcfg.PipelineID = "crash-test" // match the crashed pipeline ID for recovery
+	lcfg.PipelineID = "crash-test"
+	lcfg.Store = s
 	loop := NewLoop(lcfg)
 
-	err := loop.Run(context.Background())
+	runErr := loop.Run(context.Background())
 
 	// Recovery should succeed and agents should be called.
 	// Pipeline will eventually fail at PR creation (no git repo in temp dir), which is expected.
-	if err != nil && !strings.Contains(err.Error(), "push branch") && !strings.Contains(err.Error(), "create PR") {
-		t.Fatalf("unexpected error (not PR-related): %v", err)
+	if runErr != nil && !strings.Contains(runErr.Error(), "push branch") && !strings.Contains(runErr.Error(), "create PR") {
+		t.Fatalf("unexpected error (not PR-related): %v", runErr)
 	}
 
 	// Verify agents were called (recovered pipeline continues from architect stage)

@@ -2,9 +2,8 @@ package orchestrator
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/store"
@@ -48,7 +47,7 @@ func TestNewOrchestrator(t *testing.T) {
 }
 
 func TestStartPipeline(t *testing.T) {
-	orch, dir := setupTestOrchestrator(t)
+	orch, _ := setupTestOrchestrator(t)
 
 	if err := orch.StartPipeline("test-001"); err != nil {
 		t.Fatalf("StartPipeline failed: %v", err)
@@ -64,10 +63,16 @@ func TestStartPipeline(t *testing.T) {
 		t.Errorf("stage = %s, want %s", orch.Pipeline.CurrentStage, StageInit)
 	}
 
-	// Check state.json was written
-	statePath := filepath.Join(dir, ".pylon", "runtime", "state.json")
-	if _, err := os.Stat(statePath); os.IsNotExist(err) {
-		t.Error("state.json should exist after StartPipeline")
+	// Verify state was persisted to SQLite
+	rec, err := orch.Store.GetPipeline("test-001")
+	if err != nil {
+		t.Fatalf("failed to get pipeline from store: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("pipeline should be persisted in SQLite after StartPipeline")
+	}
+	if rec.Stage != string(StageInit) {
+		t.Errorf("stored stage = %s, want %s", rec.Stage, StageInit)
 	}
 }
 
@@ -143,17 +148,21 @@ func TestRecover_WithState(t *testing.T) {
 }
 
 func TestRecover_TerminalState(t *testing.T) {
-	orch, dir := setupTestOrchestrator(t)
+	orch, _ := setupTestOrchestrator(t)
 
-	// Create completed pipeline
+	// Create completed pipeline in SQLite
 	pipeline := NewPipeline("done-001", 3)
 	pipeline.CurrentStage = StageCompleted
 	data, _ := pipeline.Snapshot()
 
-	stateDir := filepath.Join(dir, ".pylon", "runtime")
-	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "state.json"), data, 0644)
+	orch.Store.UpsertPipeline(&store.PipelineRecord{
+		PipelineID: "done-001",
+		Stage:      string(StageCompleted),
+		StateJSON:  string(data),
+		UpdatedAt:  time.Now(),
+	})
 
+	orch.SetPipelineID("done-001")
 	if err := orch.Recover(); err != nil {
 		t.Fatalf("Recover failed: %v", err)
 	}
