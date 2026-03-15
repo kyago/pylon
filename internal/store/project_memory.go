@@ -10,16 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// fts5Operators는 FTS5 연산자 키워드 목록이다 (대소문자 무관하게 비교).
+var fts5Operators = map[string]struct{}{
+	"AND":  {},
+	"OR":   {},
+	"NOT":  {},
+	"NEAR": {},
+}
+
 // sanitizeFTS5Query는 FTS5 쿼리 문자열을 안전하게 변환합니다.
 // 특수 연산자를 제거하고 각 토큰을 큰따옴표로 감싸 리터럴 매칭합니다.
 func sanitizeFTS5Query(query string) string {
-	// FTS5 연산자 키워드 목록 (대소문자 무관하게 비교)
-	operators := map[string]struct{}{
-		"AND":  {},
-		"OR":   {},
-		"NOT":  {},
-		"NEAR": {},
-	}
 
 	// 따옴표를 모두 제거하고 특수문자를 공백으로 치환
 	var cleaned strings.Builder
@@ -28,7 +29,7 @@ func sanitizeFTS5Query(query string) string {
 		case r == '"' || r == '\'':
 			// 따옴표 제거
 			cleaned.WriteRune(' ')
-		case r == '*' || r == '^' || r == ':' || r == '+' || r == '-' || r == '(' || r == ')' || r == '{' || r == '}':
+		case r == '*' || r == '^' || r == ':' || r == '+' || r == '(' || r == ')' || r == '{' || r == '}':
 			// FTS5 특수문자를 공백으로 치환
 			cleaned.WriteRune(' ')
 		default:
@@ -41,7 +42,7 @@ func sanitizeFTS5Query(query string) string {
 	var tokens []string
 	for _, w := range words {
 		upper := strings.ToUpper(w)
-		if _, isOp := operators[upper]; isOp {
+		if _, isOp := fts5Operators[upper]; isOp {
 			continue
 		}
 		// 공백이나 문자가 아닌 것만으로 이루어진 토큰은 건너뛰기

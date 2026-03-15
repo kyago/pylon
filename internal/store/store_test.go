@@ -554,6 +554,8 @@ func TestSanitizeFTS5Query(t *testing.T) {
 		{"한글 쿼리", "인증 시스템", `"인증" "시스템"`},
 		{"콜론 포함", "category:learning", `"category" "learning"`},
 		{"중괄호 제거", "{test}", `"test"`},
+		{"하이픈 포함 키 유지", "sqlc-nullable", `"sqlc-nullable"`},
+		{"하이픈 여러 개 유지", "my-long-key-name", `"my-long-key-name"`},
 	}
 
 	for _, tt := range tests {
@@ -679,6 +681,31 @@ func TestSearchMemory_NormalQueryStillWorks(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Errorf("expected 1 result, got %d", len(results))
+	}
+}
+
+func TestSearchMemory_HyphenatedKeyMatch(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "sqlc-nullable",
+		Content:    "sqlc에서 nullable 필드는 sql.NullString 사용 필요",
+		Confidence: 0.9,
+		Author:     "backend-dev",
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// 하이픈 포함 키로 검색 시 매칭되어야 함
+	results, err := s.SearchMemory("proj-1", "sqlc-nullable", 10)
+	if err != nil {
+		t.Fatalf("search with hyphenated key failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result for hyphenated key search, got %d", len(results))
 	}
 }
 
