@@ -444,6 +444,89 @@ func TestProjectMemory_IncrementAccess(t *testing.T) {
 	}
 }
 
+func TestProjectMemory_FTSTrigger_UpdateSync(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "original-key",
+		Content:    "original content about authentication",
+		Confidence: 0.8,
+		Author:     "backend-dev",
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// UPDATE를 직접 실행하여 트리거 동작을 검증
+	_, err := s.DB().Exec(
+		`UPDATE project_memory SET content = ?, key = ? WHERE id = ?`,
+		"updated content about authorization", "updated-key", entry.ID,
+	)
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	// 기존 검색어로는 결과 없어야 함
+	results, err := s.SearchMemory("proj-1", "authentication", 10)
+	if err != nil {
+		t.Fatalf("search old term failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for old content, got %d", len(results))
+	}
+
+	// 새 검색어로는 결과 있어야 함
+	results, err = s.SearchMemory("proj-1", "authorization", 10)
+	if err != nil {
+		t.Fatalf("search new term failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result for updated content, got %d", len(results))
+	}
+}
+
+func TestProjectMemory_FTSTrigger_DeleteSync(t *testing.T) {
+	s := setupTestStore(t)
+
+	entry := &MemoryEntry{
+		ProjectID:  "proj-1",
+		Category:   "learning",
+		Key:        "delete-test",
+		Content:    "content to be deleted about middleware",
+		Confidence: 0.8,
+		Author:     "backend-dev",
+	}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// 삭제 전 검색 가능 확인
+	results, err := s.SearchMemory("proj-1", "middleware", 10)
+	if err != nil {
+		t.Fatalf("search before delete failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result before delete, got %d", len(results))
+	}
+
+	// DELETE를 직접 실행하여 트리거 동작을 검증
+	_, err = s.DB().Exec(`DELETE FROM project_memory WHERE id = ?`, entry.ID)
+	if err != nil {
+		t.Fatalf("delete failed: %v", err)
+	}
+
+	// 삭제 후 검색 결과 없어야 함
+	results, err = s.SearchMemory("proj-1", "middleware", 10)
+	if err != nil {
+		t.Fatalf("search after delete failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results after delete, got %d", len(results))
+	}
+}
+
 // --- Session Archive Tests ---
 
 func TestSessionArchive_ArchiveAndGet(t *testing.T) {

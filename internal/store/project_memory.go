@@ -31,19 +31,14 @@ type MemorySearchResult struct {
 }
 
 // InsertMemory adds a new entry to project memory.
+// FTS 인덱스는 트리거에 의해 자동으로 동기화된다.
 func (s *Store) InsertMemory(entry *MemoryEntry) error {
 	if entry.ID == "" {
 		entry.ID = uuid.New().String()
 	}
 	now := time.Now()
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	_, err = tx.Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO project_memory (id, project_id, category, key, content, metadata, author, confidence, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.ID, entry.ProjectID, entry.Category, entry.Key,
@@ -52,18 +47,7 @@ func (s *Store) InsertMemory(entry *MemoryEntry) error {
 	if err != nil {
 		return fmt.Errorf("failed to insert memory: %w", err)
 	}
-
-	// Update FTS index within the same transaction
-	_, err = tx.Exec(`
-		INSERT INTO project_memory_fts (rowid, key, content, category)
-		SELECT rowid, key, content, category FROM project_memory WHERE id = ?`,
-		entry.ID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update FTS index: %w", err)
-	}
-
-	return tx.Commit()
+	return nil
 }
 
 // SearchMemory performs BM25 full-text search on project memory.
