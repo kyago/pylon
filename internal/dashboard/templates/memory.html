@@ -1,0 +1,126 @@
+{{define "memory.html"}}
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<body>
+{{template "nav" .}}
+<main id="main">
+{{template "memory_content" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "memory_content"}}
+<div class="container">
+    <h1 class="page-title">Project Memory &amp; Blackboard</h1>
+
+    {{/* Search */}}
+    <div class="section">
+        <form hx-get="/memory" hx-target="#main" hx-push-url="true" class="filter-form">
+            <input type="text" name="project" placeholder="Project ID" value="{{.ProjectID}}" class="input" required>
+            <input type="text" name="query" placeholder="Search memory..." value="{{.Query}}" class="input"
+                   hx-get="/memory" hx-trigger="keyup changed delay:300ms" hx-target="#main" hx-include="closest form">
+            <button type="submit" class="btn btn-primary">Search</button>
+        </form>
+    </div>
+
+    {{if .ProjectID}}
+    {{/* Search Results */}}
+    {{if .SearchResults}}
+    <div class="card">
+        <h2 class="card-title">Search Results ({{len .SearchResults}})</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Key</th>
+                    <th>Content</th>
+                    <th>Confidence</th>
+                    <th>Rank</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .SearchResults}}
+                <tr>
+                    <td><span class="badge badge-sm">{{.Category}}</span></td>
+                    <td>{{.Key}}</td>
+                    <td>{{truncate .Content 100}}</td>
+                    <td>{{printf "%.2f" .Confidence}}</td>
+                    <td>{{printf "%.4f" .Rank}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+
+    {{/* Memory Entries */}}
+    {{if .Entries}}
+    <div class="card">
+        <h2 class="card-title">Memory Entries ({{len .Entries}})</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Key</th>
+                    <th>Content</th>
+                    <th>Author</th>
+                    <th>Confidence</th>
+                    <th>Access</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Entries}}
+                <tr>
+                    <td><span class="badge badge-sm">{{.Category}}</span></td>
+                    <td>{{.Key}}</td>
+                    <td>{{truncate .Content 100}}</td>
+                    <td>{{.Author}}</td>
+                    <td>{{printf "%.2f" .Confidence}}</td>
+                    <td>{{.AccessCount}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+
+    {{/* Blackboard */}}
+    {{if .Blackboard}}
+    <div class="card">
+        <h2 class="card-title">Blackboard ({{len .Blackboard}})</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Key</th>
+                    <th>Value</th>
+                    <th>Author</th>
+                    <th>Confidence</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Blackboard}}
+                <tr>
+                    <td><span class="badge badge-sm">{{.Category}}</span></td>
+                    <td>{{.Key}}</td>
+                    <td>{{truncate .Value 100}}</td>
+                    <td>{{.Author}}</td>
+                    <td>{{printf "%.2f" .Confidence}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+
+    {{if and (not .Entries) (not .SearchResults) (not .Blackboard)}}
+    <div class="empty-state">No data found for project "{{.ProjectID}}"</div>
+    {{end}}
+
+    {{else}}
+    <div class="empty-state">Enter a project ID to view memory and blackboard data</div>
+    {{end}}
+</div>
+{{end}}
