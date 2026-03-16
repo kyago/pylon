@@ -145,5 +145,14 @@ func (p *Poller) poll() {
 		})
 	}
 
+	// Terminal 파이프라인은 더 이상 변경되지 않으므로 스냅샷에서 제거하여
+	// 메모리 누적을 방지한다. 이번 poll에서 이미 completion 이벤트를 발행했으므로
+	// 다음 poll에서는 추적할 필요가 없다.
+	for id, snap := range current {
+		if snap.Stage == "completed" || snap.Stage == "failed" {
+			delete(current, id)
+		}
+	}
+
 	p.prev = current
 }

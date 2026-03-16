@@ -255,6 +255,12 @@ func (srv *Server) handleAPIPipelineDetail(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, pipelineRecordToView(*rec))
 }
 
+// handleAPIPipelineCancel forces a pipeline into the failed state.
+//
+// NOTE: 대시보드는 별도 프로세스로 실행되므로 오케스트레이터의 컨텍스트/채널에
+// 직접 접근할 수 없다. DB 상태를 직접 변경하는 "best-effort" 강제 취소이며,
+// 오케스트레이터가 동시에 같은 파이프라인을 실행 중이면 상태를 덮어쓸 수 있다.
+// 실행 중인 에이전트 프로세스는 이 API로 중단되지 않는다.
 func (srv *Server) handleAPIPipelineCancel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	rec, err := srv.store.GetPipeline(id)
@@ -278,7 +284,7 @@ func (srv *Server) handleAPIPipelineCancel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Force transition to failed
+	// Force transition to failed (bypasses state machine validation)
 	pipeline.History = append(pipeline.History, orchestrator.StageTransition{
 		From:        pipeline.CurrentStage,
 		To:          orchestrator.StageFailed,

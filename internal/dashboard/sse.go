@@ -21,6 +21,7 @@ type SSEHub struct {
 	register   chan chan SSEEvent
 	unregister chan chan SSEEvent
 	broadcast  chan SSEEvent
+	done       chan struct{} // closed when Run() exits
 }
 
 // NewSSEHub creates a new SSE hub.
@@ -30,11 +31,14 @@ func NewSSEHub() *SSEHub {
 		register:   make(chan chan SSEEvent),
 		unregister: make(chan chan SSEEvent),
 		broadcast:  make(chan SSEEvent, 64),
+		done:       make(chan struct{}),
 	}
 }
 
 // Run starts the hub event loop. It blocks until ctx is cancelled.
 func (h *SSEHub) Run(ctx context.Context) {
+	defer close(h.done)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -71,11 +75,21 @@ func (h *SSEHub) Run(ctx context.Context) {
 }
 
 // Subscribe returns an event channel and an unsubscribe function.
+// The unsubscribe function is safe to call after the hub has shut down.
 func (h *SSEHub) Subscribe() (chan SSEEvent, func()) {
 	ch := make(chan SSEEvent, 16)
-	h.register <- ch
+	select {
+	case h.register <- ch:
+	case <-h.done:
+		close(ch)
+		return ch, func() {}
+	}
 	return ch, func() {
-		h.unregister <- ch
+		select {
+		case h.unregister <- ch:
+		case <-h.done:
+			// Hub already shut down; clients were cleaned up in Run().
+		}
 	}
 }
 
