@@ -131,8 +131,11 @@ func (w *WorktreeManager) HeadSHA(projectDir string) (string, error) {
 
 // ResetHard resets the working tree to the given commit SHA.
 func (w *WorktreeManager) ResetHard(projectDir, commitSHA string) error {
-	_, err := w.runner().Run(projectDir, "git", "reset", "--hard", commitSHA)
-	return err
+	output, err := w.runner().Run(projectDir, "git", "reset", "--hard", commitSHA)
+	if err != nil {
+		return fmt.Errorf("git reset --hard %s failed: %w\n%s", commitSHA, err, output)
+	}
+	return nil
 }
 
 // AbortMerge aborts an in-progress merge.

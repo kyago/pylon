@@ -43,7 +43,7 @@ type Loop struct {
 	watcher    *OutboxWatcher
 	inboxDir   string
 	lastResult *protocol.MessageEnvelope // last completed agent result for handoff
-	mu         sync.Mutex               // protects Pipeline.Agents writes and saveState calls
+	mu         sync.Mutex               // protects Pipeline.Agents writes, saveState calls, and lastResult
 }
 
 // NewLoop creates a new orchestration loop.
