@@ -82,7 +82,7 @@ func TestRecover_FromSQLite(t *testing.T) {
 	orch2 := NewOrchestrator(orch.Config, orch.Store, orch.WorkDir)
 	orch2.SetPipelineID("recover-sqlite-001")
 
-	if err := orch2.Recover(); err != nil {
+	if _, err := orch2.Recover(); err != nil {
 		t.Fatalf("Recover failed: %v", err)
 	}
 	if orch2.Pipeline == nil {
@@ -104,7 +104,7 @@ func TestRecover_NoState_SQLite(t *testing.T) {
 
 	// No pipeline in SQLite — Recover should return nil with no pipeline
 	orch.SetPipelineID("nonexistent-001")
-	if err := orch.Recover(); err != nil {
+	if _, err := orch.Recover(); err != nil {
 		t.Fatalf("Recover with no state should succeed: %v", err)
 	}
 	if orch.Pipeline != nil {
@@ -142,7 +142,7 @@ func TestRecover_ActivePipeline(t *testing.T) {
 
 	// Recover without specific ID — should get the most recently updated active pipeline
 	orch2 := NewOrchestrator(orch.Config, orch.Store, orch.WorkDir)
-	if err := orch2.Recover(); err != nil {
+	if _, err := orch2.Recover(); err != nil {
 		t.Fatalf("Recover failed: %v", err)
 	}
 	if orch2.Pipeline == nil {
@@ -175,7 +175,7 @@ func TestRecover_SpecificPipelineID(t *testing.T) {
 	orch2 := NewOrchestrator(orch.Config, orch.Store, orch.WorkDir)
 	orch2.SetPipelineID("pipeline-a")
 
-	if err := orch2.Recover(); err != nil {
+	if _, err := orch2.Recover(); err != nil {
 		t.Fatalf("Recover failed: %v", err)
 	}
 	if orch2.Pipeline == nil {

@@ -38,11 +38,12 @@ type LoopConfig struct {
 
 // Loop drives the pipeline stage-by-stage execution.
 type Loop struct {
-	cfg      LoopConfig
-	orch     *Orchestrator
-	watcher  *OutboxWatcher
-	inboxDir string
-	mu       sync.Mutex // protects Pipeline.Agents writes and saveState calls
+	cfg        LoopConfig
+	orch       *Orchestrator
+	watcher    *OutboxWatcher
+	inboxDir   string
+	lastResult *protocol.MessageEnvelope // last completed agent result for handoff
+	mu         sync.Mutex               // protects Pipeline.Agents writes and saveState calls
 }
 
 // NewLoop creates a new orchestration loop.
@@ -65,8 +66,21 @@ func (l *Loop) Run(ctx context.Context) error {
 	// Try to recover existing state (for --continue scenarios).
 	// Skip recovery if a pipeline was pre-set via SetPipeline() to avoid clobbering it.
 	if l.orch.Pipeline == nil {
-		if err := l.orch.Recover(); err != nil {
+		unprocessed, err := l.orch.Recover()
+		if err != nil {
 			return fmt.Errorf("recovery failed: %w", err)
+		}
+
+		// Process any unprocessed outbox results from before crash
+		for _, ur := range unprocessed {
+			env, readErr := protocol.ReadResult(ur.FilePath)
+			if readErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠ failed to read unprocessed result %s: %v\n", ur.FilePath, readErr)
+				continue
+			}
+			data := l.extractAgentResult(WatchResult{AgentName: ur.AgentName, Envelope: env})
+			l.storeAgentResult(data)
+			l.enqueueResultAck(ur.AgentName, ur.TaskID)
 		}
 
 		// If the recovered pipeline ID doesn't match, start fresh.
@@ -215,9 +229,17 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	l.saveState()
 	l.mu.Unlock()
 
-	// Launch agent with context propagation
+	// Apply task timeout from config
+	agentCtx := ctx
+	if timeout := l.cfg.Config.Runtime.ParseTaskTimeout(); timeout > 0 {
+		var cancel context.CancelFunc
+		agentCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	// Launch agent with context propagation (timeout-wrapped)
 	result, err := l.cfg.Runner.Start(agent.RunConfig{
-		Ctx:        ctx,
+		Ctx:        agentCtx,
 		Agent:      agentCfg,
 		Global:     l.cfg.Config,
 		TaskPrompt: taskPrompt,
@@ -250,6 +272,7 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 		if wr.AgentName == agentName {
 			data := l.extractAgentResult(wr)
 			l.storeAgentResult(data)
+			l.lastResult = wr.Envelope
 			foundOutbox = true
 			l.enqueueResultAck(agentName, taskID)
 		}
@@ -301,6 +324,13 @@ func (l *Loop) runAgentExecution(ctx context.Context) error {
 
 	if err := g.Wait(); err != nil {
 		return err
+	}
+
+	// Merge agent worktree branches back into task branch
+	if l.cfg.WorktreeMgr != nil && l.cfg.WorktreeMgr.Enabled && len(devAgents) > 1 {
+		if err := l.mergeAgentBranches(devAgents); err != nil {
+			return fmt.Errorf("agent branch merge failed: %w", err)
+		}
 	}
 
 	return l.transitionTo(StageVerification)
@@ -511,23 +541,54 @@ func (l *Loop) findDevAgents() []string {
 }
 
 func (l *Loop) buildHandoffContext(taskID string) *protocol.MsgContext {
-	ctx := &protocol.MsgContext{
-		TaskID:     taskID,
-		PipelineID: l.cfg.PipelineID,
-		Summary:    l.cfg.Requirement,
-	}
+	prevResult := l.lastResult
+	var blackboard []store.BlackboardEntry
+	var memories []store.MemorySearchResult
 
-	// Add blackboard decisions
 	if l.cfg.Store != nil && len(l.cfg.Projects) > 0 {
-		entries, err := l.cfg.Store.GetBlackboardByCategory(l.cfg.Projects[0].Name, "decision")
-		if err == nil {
-			for _, e := range entries {
-				ctx.Decisions = append(ctx.Decisions, fmt.Sprintf("%s: %s", e.Key, e.Value))
-			}
+		projectName := l.cfg.Projects[0].Name
+		blackboard, _ = l.cfg.Store.GetBlackboardByCategory(projectName, "decision")
+
+		if l.cfg.MemManager != nil {
+			memories, _ = l.cfg.Store.SearchMemory(projectName, l.cfg.Requirement, 5)
 		}
 	}
 
+	ctx := protocol.BuildHandoffContext(prevResult, blackboard, memories)
+	ctx.TaskID = taskID
+	ctx.PipelineID = l.cfg.PipelineID
+	if ctx.Summary == "" {
+		ctx.Summary = l.cfg.Requirement
+	}
 	return ctx
+}
+
+// mergeAgentBranches merges each agent's worktree branch into the task branch.
+// On failure, it resets to the pre-merge state to avoid partial merge artifacts.
+func (l *Loop) mergeAgentBranches(agentNames []string) error {
+	projectDir := l.cfg.WorkDir
+	if len(l.cfg.Projects) > 0 {
+		projectDir = l.cfg.Projects[0].Path
+	}
+
+	// Save restore point before merging
+	restorePoint, err := l.cfg.WorktreeMgr.HeadSHA(projectDir)
+	if err != nil {
+		return fmt.Errorf("failed to get HEAD for restore point: %w", err)
+	}
+
+	for _, name := range agentNames {
+		agentBranch := fmt.Sprintf("%s/%s", l.cfg.Branch, git.SanitizeBranchName(name))
+		if err := l.cfg.WorktreeMgr.MergeBranch(projectDir, agentBranch); err != nil {
+			// Rollback to pre-merge state
+			l.cfg.WorktreeMgr.AbortMerge(projectDir)
+			l.cfg.WorktreeMgr.ResetHard(projectDir, restorePoint)
+			return err
+		}
+		// Best-effort cleanup
+		_ = l.cfg.WorktreeMgr.DeleteBranch(projectDir, agentBranch)
+	}
+	return nil
 }
 
 func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgContext) error {

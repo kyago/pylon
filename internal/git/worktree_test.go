@@ -149,6 +149,92 @@ func TestWorktreeManager_Cleanup_NoWorktreeDir(t *testing.T) {
 	}
 }
 
+func TestWorktreeManager_MergeBranch(t *testing.T) {
+	dir := initTestRepo(t)
+	wm := NewWorktreeManager(true, false)
+
+	// Create a worktree (creates agent branch)
+	wtPath, err := wm.Create(dir, "merge-agent", "task/merge")
+	if err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	// Make a commit in the worktree so merge has something to do
+	testFile := filepath.Join(wtPath, "agent-work.txt")
+	if err := os.WriteFile(testFile, []byte("agent work"), 0644); err != nil {
+		t.Fatalf("WriteFile() unexpected error: %v", err)
+	}
+	wm.runner().Run(wtPath, "git", "add", "agent-work.txt")
+	wm.runner().Run(wtPath, "git", "commit", "-m", "agent work commit")
+
+	// Remove worktree before merge (merge requires branch, not worktree)
+	if err := wm.Remove(dir, wtPath); err != nil {
+		t.Fatalf("Remove() unexpected error: %v", err)
+	}
+
+	// Merge agent branch back into main branch
+	agentBranch := "task/merge/merge-agent"
+	if err := wm.MergeBranch(dir, agentBranch); err != nil {
+		t.Fatalf("MergeBranch() unexpected error: %v", err)
+	}
+
+	// Verify file from agent branch is now in main repo
+	if _, err := os.Stat(filepath.Join(dir, "agent-work.txt")); os.IsNotExist(err) {
+		t.Error("merged file should exist in project dir after MergeBranch")
+	}
+}
+
+func TestWorktreeManager_DeleteBranch(t *testing.T) {
+	dir := initTestRepo(t)
+	wm := NewWorktreeManager(true, false)
+
+	// Create and remove a worktree to leave the branch behind
+	wtPath, err := wm.Create(dir, "del-agent", "task/del")
+	if err != nil {
+		t.Fatalf("Create() unexpected error: %v", err)
+	}
+
+	// Make a commit so the branch has content to merge
+	testFile := filepath.Join(wtPath, "del-work.txt")
+	os.WriteFile(testFile, []byte("work"), 0644)
+	wm.runner().Run(wtPath, "git", "add", "del-work.txt")
+	wm.runner().Run(wtPath, "git", "commit", "-m", "del work")
+
+	if err := wm.Remove(dir, wtPath); err != nil {
+		t.Fatalf("Remove() unexpected error: %v", err)
+	}
+
+	// Merge first (required before -d delete)
+	agentBranch := "task/del/del-agent"
+	if err := wm.MergeBranch(dir, agentBranch); err != nil {
+		t.Fatalf("MergeBranch() unexpected error: %v", err)
+	}
+
+	// Delete the branch
+	if err := wm.DeleteBranch(dir, agentBranch); err != nil {
+		t.Errorf("DeleteBranch() unexpected error: %v", err)
+	}
+
+	// Verify branch no longer exists
+	output, _ := wm.runner().Run(dir, "git", "branch", "--list", agentBranch)
+	if len(output) > 0 && string(output) != "" {
+		trimmed := string(output)
+		if trimmed != "" && trimmed != "\n" {
+			t.Errorf("branch %q should be deleted, but git branch output: %q", agentBranch, trimmed)
+		}
+	}
+}
+
+func TestWorktreeManager_MergeBranch_NonexistentBranch(t *testing.T) {
+	dir := initTestRepo(t)
+	wm := NewWorktreeManager(true, false)
+
+	err := wm.MergeBranch(dir, "nonexistent/branch")
+	if err == nil {
+		t.Error("MergeBranch() should fail for nonexistent branch")
+	}
+}
+
 func TestSanitizeBranchName(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -165,9 +251,9 @@ func TestSanitizeBranchName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeBranchName(tt.input)
+			got := SanitizeBranchName(tt.input)
 			if got != tt.want {
-				t.Errorf("sanitizeBranchName(%q) = %q, want %q", tt.input, got, tt.want)
+				t.Errorf("SanitizeBranchName(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}

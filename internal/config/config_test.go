@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseConfig_FullConfig(t *testing.T) {
@@ -176,6 +177,33 @@ func TestParseConfig_VersionOnly(t *testing.T) {
 	}
 	if cfg.Runtime.MaxConcurrent != 5 {
 		t.Errorf("expected default max_concurrent 5, got %d", cfg.Runtime.MaxConcurrent)
+	}
+}
+
+func TestParseTaskTimeout(t *testing.T) {
+	tests := []struct {
+		name     string
+		timeout  string
+		expected time.Duration
+	}{
+		{"기본 30분", "30m", 30 * time.Minute},
+		{"1시간", "1h", time.Hour},
+		{"10초", "10s", 10 * time.Second},
+		{"2시간30분", "2h30m", 2*time.Hour + 30*time.Minute},
+		{"0초 fallback", "0s", 30 * time.Minute},
+		{"음수 fallback", "-5m", 30 * time.Minute},
+		{"잘못된 형식 fallback", "invalid", 30 * time.Minute},
+		{"빈 문자열 fallback", "", 30 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rc := RuntimeConfig{TaskTimeout: tt.timeout}
+			got := rc.ParseTaskTimeout()
+			if got != tt.expected {
+				t.Errorf("ParseTaskTimeout(%q) = %v, want %v", tt.timeout, got, tt.expected)
+			}
+		})
 	}
 }
 

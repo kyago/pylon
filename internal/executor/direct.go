@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // buildEnv merges os.Environ() with cfg.Env, ensuring cfg.Env values
@@ -86,6 +87,12 @@ func (d *DirectExecutor) RunHeadless(cfg ExecConfig) (*ExecResult, error) {
 	var cmd *exec.Cmd
 	if cfg.Ctx != nil {
 		cmd = exec.CommandContext(cfg.Ctx, binPath, cfg.Args...)
+		// Graceful shutdown: send SIGTERM first, wait 10s, then SIGKILL.
+		// Cancel is only invoked after Start() succeeds, so cmd.Process is guaranteed non-nil.
+		cmd.Cancel = func() error {
+			return cmd.Process.Signal(syscall.SIGTERM)
+		}
+		cmd.WaitDelay = 10 * time.Second
 	} else {
 		cmd = exec.Command(binPath, cfg.Args...)
 	}
