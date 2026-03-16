@@ -1,0 +1,53 @@
+{{define "messages.html"}}
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<body>
+{{template "nav" .}}
+<main id="main">
+{{template "messages_content" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "messages_content"}}
+<div class="container">
+    <h1 class="page-title">Message Queue</h1>
+
+    {{/* Queue Depth per Agent */}}
+    {{if .QueueStats}}
+    <div class="card-grid queue-row">
+        {{range .QueueStats}}
+        <div class="metric-card small">
+            <div class="metric-label">{{.ToAgent}} ({{.Status}})</div>
+            <div class="metric-value">{{.Count}}</div>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+
+    {{/* Filters */}}
+    <div class="section">
+        <div class="filter-bar">
+            <form hx-get="/messages" hx-target="#main" hx-push-url="true" class="filter-form">
+                <input type="text" name="agent" placeholder="Filter by agent..." value="{{.FilterAgent}}" class="input">
+                <select name="status" class="input">
+                    <option value="">All Status</option>
+                    <option value="queued" {{if eq .FilterStatus "queued"}}selected{{end}}>Queued</option>
+                    <option value="delivered" {{if eq .FilterStatus "delivered"}}selected{{end}}>Delivered</option>
+                    <option value="acked" {{if eq .FilterStatus "acked"}}selected{{end}}>Acked</option>
+                    <option value="expired" {{if eq .FilterStatus "expired"}}selected{{end}}>Expired</option>
+                    <option value="failed" {{if eq .FilterStatus "failed"}}selected{{end}}>Failed</option>
+                </select>
+                <button type="submit" class="btn btn-primary">Filter</button>
+            </form>
+        </div>
+    </div>
+
+    {{/* Message Table */}}
+    <div class="card" hx-get="/messages?agent={{.FilterAgent}}&status={{.FilterStatus}}" hx-trigger="every 5s" hx-target="#main" hx-swap="innerHTML" hx-push-url="false">
+        {{template "message_table" .}}
+    </div>
+</div>
+{{end}}

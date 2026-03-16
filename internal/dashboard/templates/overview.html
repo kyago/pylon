@@ -1,0 +1,82 @@
+{{define "overview.html"}}
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<body>
+{{template "nav" .}}
+<main id="main" hx-ext="sse" sse-connect="/api/events">
+{{template "overview_content" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "overview_content"}}
+<div class="container">
+    <h1 class="page-title">Dashboard Overview</h1>
+
+    {{/* Concurrency Gauge */}}
+    <div class="card-grid metrics-row">
+        <div class="metric-card" sse-swap="concurrency_update" hx-swap="innerHTML">
+            {{template "concurrency_gauge" .Concurrency}}
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Total Pipelines</div>
+            <div class="metric-value">{{.Metrics.TotalPipelines}}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Active</div>
+            <div class="metric-value active-text">{{.Metrics.ActivePipelines}}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Completed</div>
+            <div class="metric-value completed-text">{{.Metrics.CompletedPipelines}}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Failed</div>
+            <div class="metric-value failed-text">{{.Metrics.FailedPipelines}}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Success Rate</div>
+            <div class="metric-value">{{printf "%.0f" .Metrics.SuccessRate}}%</div>
+        </div>
+    </div>
+
+    {{/* Queue Stats */}}
+    {{if .QueueStats}}
+    <div class="section">
+        <h2 class="section-title">Message Queue</h2>
+        <div class="card-grid queue-row">
+            {{range $status, $count := .QueueStats}}
+            <div class="metric-card small">
+                <div class="metric-label">{{$status}}</div>
+                <div class="metric-value">{{$count}}</div>
+            </div>
+            {{end}}
+        </div>
+    </div>
+    {{end}}
+
+    {{/* Pipeline Filter */}}
+    <div class="section">
+        <div class="section-header">
+            <h2 class="section-title">Pipelines</h2>
+            <div class="filter-group">
+                <button class="filter-btn active" hx-get="/" hx-target="#main" hx-push-url="true">All</button>
+                <button class="filter-btn" hx-get="/api/pipelines?status=active" hx-target="#pipeline-grid" hx-swap="innerHTML">Active</button>
+                <button class="filter-btn" hx-get="/api/pipelines?status=completed" hx-target="#pipeline-grid" hx-swap="innerHTML">Completed</button>
+                <button class="filter-btn" hx-get="/api/pipelines?status=failed" hx-target="#pipeline-grid" hx-swap="innerHTML">Failed</button>
+            </div>
+        </div>
+
+        <div id="pipeline-grid" class="card-grid pipeline-grid">
+            {{range .Pipelines}}
+            {{template "pipeline_card" .}}
+            {{end}}
+            {{if not .Pipelines}}
+            <div class="empty-state">No pipelines found</div>
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}
