@@ -75,6 +75,7 @@ func init() {
 	rootCmd.AddCommand(newMemCmd())
 	rootCmd.AddCommand(newSyncMemoryCmd())
 	rootCmd.AddCommand(newSyncProjectsCmd())
+	rootCmd.AddCommand(newSyncAgentsCmd())
 	rootCmd.AddCommand(newResumeCmd())
 }
 
