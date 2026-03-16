@@ -190,12 +190,17 @@ git:
 		return fmt.Errorf("failed to migrate: %w", err)
 	}
 
-	projects, _ := config.DiscoverProjects(workDir)
+	projects, err := config.DiscoverProjects(workDir)
+	if err != nil {
+		fmt.Printf("⚠ 프로젝트 탐색 실패: %v\n", err)
+	}
 	for _, p := range projects {
-		s.UpsertProject(&store.ProjectRecord{
+		if err := s.UpsertProject(&store.ProjectRecord{
 			ProjectID: p.Name,
 			Path:      p.Path,
-		})
+		}); err != nil {
+			fmt.Printf("⚠ %s 등록 실패: %v\n", p.Name, err)
+		}
 	}
 	if len(projects) > 0 {
 		fmt.Printf("✓ %d project(s) registered in DB\n", len(projects))

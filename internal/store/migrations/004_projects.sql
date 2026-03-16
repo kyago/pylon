@@ -3,5 +3,5 @@ CREATE TABLE IF NOT EXISTS projects (
     project_id  TEXT PRIMARY KEY,
     path        TEXT NOT NULL,
     stack       TEXT DEFAULT '',
-    added_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );

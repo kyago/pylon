@@ -10,7 +10,7 @@ type ProjectRecord struct {
 	ProjectID string
 	Path      string
 	Stack     string
-	AddedAt   time.Time
+	CreatedAt time.Time
 }
 
 // UpsertProject inserts or updates a project record.
@@ -32,7 +32,7 @@ func (s *Store) UpsertProject(rec *ProjectRecord) error {
 // ListProjects returns all registered projects.
 func (s *Store) ListProjects() ([]ProjectRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT project_id, path, stack, added_at
+		SELECT project_id, path, stack, created_at
 		FROM projects
 		ORDER BY project_id`)
 	if err != nil {
@@ -43,7 +43,7 @@ func (s *Store) ListProjects() ([]ProjectRecord, error) {
 	var projects []ProjectRecord
 	for rows.Next() {
 		var p ProjectRecord
-		if err := rows.Scan(&p.ProjectID, &p.Path, &p.Stack, &p.AddedAt); err != nil {
+		if err := rows.Scan(&p.ProjectID, &p.Path, &p.Stack, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)

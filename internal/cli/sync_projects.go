@@ -31,8 +31,6 @@ func runSyncProjects(cmd *cobra.Command, args []string) error {
 	}
 	defer s.Close()
 
-	synced := 0
-
 	// 1. config.yml의 projects 맵에서 등록
 	for name, proj := range cfg.Projects {
 		projectPath := filepath.Join(root, name)
@@ -42,9 +40,7 @@ func runSyncProjects(cmd *cobra.Command, args []string) error {
 			Stack:     proj.Stack,
 		}); err != nil {
 			fmt.Printf("⚠ %s 등록 실패: %v\n", name, err)
-			continue
 		}
-		synced++
 	}
 
 	// 2. 파일시스템 스캔 (.pylon/ 디렉토리를 가진 서브디렉토리)
@@ -55,7 +51,6 @@ func runSyncProjects(cmd *cobra.Command, args []string) error {
 
 	for _, p := range discovered {
 		stack := ""
-		// config.yml에 이미 있으면 stack 정보 가져오기
 		if proj, ok := cfg.Projects[p.Name]; ok {
 			stack = proj.Stack
 		}
@@ -65,9 +60,7 @@ func runSyncProjects(cmd *cobra.Command, args []string) error {
 			Stack:     stack,
 		}); err != nil {
 			fmt.Printf("⚠ %s 등록 실패: %v\n", p.Name, err)
-			continue
 		}
-		synced++
 	}
 
 	// 중복 제거된 최종 결과 표시
