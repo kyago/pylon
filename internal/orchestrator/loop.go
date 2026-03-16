@@ -229,7 +229,9 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	l.saveState()
 	l.mu.Unlock()
 
-	// Apply task timeout from config
+	// Apply task timeout from config.
+	// ParseTaskTimeout always returns >= 30m (fallback), so this guard is defensive.
+	// To disable timeout entirely, this condition would need to be extended.
 	agentCtx := ctx
 	if timeout := l.cfg.Config.Runtime.ParseTaskTimeout(); timeout > 0 {
 		var cancel context.CancelFunc
@@ -268,11 +270,12 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	if pollErr != nil {
 		fmt.Fprintf(os.Stderr, "⚠ failed to poll outbox: %v\n", pollErr)
 	}
+	var lastEnvelope *protocol.MessageEnvelope
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
 			data := l.extractAgentResult(wr)
 			l.storeAgentResult(data)
-			l.lastResult = wr.Envelope
+			lastEnvelope = wr.Envelope
 			foundOutbox = true
 			l.enqueueResultAck(agentName, taskID)
 		}
@@ -285,6 +288,9 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 
 	l.mu.Lock()
 	l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusCompleted}
+	if lastEnvelope != nil {
+		l.lastResult = lastEnvelope
+	}
 	l.saveState()
 	l.mu.Unlock()
 
@@ -303,31 +309,30 @@ func (l *Loop) runAgentExecution(ctx context.Context) error {
 		if err := l.executeAgent(ctx, devAgents[0]); err != nil {
 			return err
 		}
-		return l.transitionTo(StageVerification)
+	} else {
+		// Multiple agents: run in parallel with concurrency limit
+		maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
+		if maxConcurrent <= 0 {
+			maxConcurrent = 5
+		}
+
+		g, gctx := errgroup.WithContext(ctx)
+		g.SetLimit(maxConcurrent)
+
+		for _, name := range devAgents {
+			agentName := name // capture loop variable
+			g.Go(func() error {
+				return l.executeAgent(gctx, agentName)
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			return err
+		}
 	}
 
-	// Multiple agents: run in parallel with concurrency limit
-	maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
-	if maxConcurrent <= 0 {
-		maxConcurrent = 5
-	}
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(maxConcurrent)
-
-	for _, name := range devAgents {
-		agentName := name // capture loop variable
-		g.Go(func() error {
-			return l.executeAgent(gctx, agentName)
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		return err
-	}
-
-	// Merge agent worktree branches back into task branch
-	if l.cfg.WorktreeMgr != nil && l.cfg.WorktreeMgr.Enabled && len(devAgents) > 1 {
+	// Merge agent worktree branches back into task branch (single or multi)
+	if l.cfg.WorktreeMgr != nil && l.cfg.WorktreeMgr.Enabled {
 		if err := l.mergeAgentBranches(devAgents); err != nil {
 			return fmt.Errorf("agent branch merge failed: %w", err)
 		}
@@ -541,7 +546,9 @@ func (l *Loop) findDevAgents() []string {
 }
 
 func (l *Loop) buildHandoffContext(taskID string) *protocol.MsgContext {
+	l.mu.Lock()
 	prevResult := l.lastResult
+	l.mu.Unlock()
 	var blackboard []store.BlackboardEntry
 	var memories []store.MemorySearchResult
 
@@ -581,8 +588,12 @@ func (l *Loop) mergeAgentBranches(agentNames []string) error {
 		agentBranch := fmt.Sprintf("%s/%s", l.cfg.Branch, git.SanitizeBranchName(name))
 		if err := l.cfg.WorktreeMgr.MergeBranch(projectDir, agentBranch); err != nil {
 			// Rollback to pre-merge state
-			l.cfg.WorktreeMgr.AbortMerge(projectDir)
-			l.cfg.WorktreeMgr.ResetHard(projectDir, restorePoint)
+			if abortErr := l.cfg.WorktreeMgr.AbortMerge(projectDir); abortErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠ merge --abort failed: %v\n", abortErr)
+			}
+			if resetErr := l.cfg.WorktreeMgr.ResetHard(projectDir, restorePoint); resetErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠ git reset --hard failed: %v (repository may be in dirty state)\n", resetErr)
+			}
 			return err
 		}
 		// Best-effort cleanup
