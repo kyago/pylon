@@ -206,6 +206,56 @@ func TestPollerConcurrencyUpdate(t *testing.T) {
 	}
 }
 
+func TestPollerNoSpuriousCreatedForTerminal(t *testing.T) {
+	// 회귀 테스트: terminal 파이프라인이 매초 pipeline_created를 재발행하지 않아야 함
+	mock := &mockStore{
+		pipelines: []store.PipelineRecord{
+			{PipelineID: "p1", Stage: "wiki_update", StateJSON: `{"pipeline_id":"p1","current_stage":"wiki_update","created_at":"2025-01-01T00:00:00Z"}`, UpdatedAt: time.Now()},
+		},
+	}
+	hub := NewSSEHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run(ctx)
+	time.Sleep(10 * time.Millisecond)
+
+	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
+	poller := NewPoller(mock, hub, runtimeCfg)
+
+	// 첫 poll: pipeline_created 발행
+	poller.poll()
+
+	ch, unsub := hub.Subscribe()
+	defer unsub()
+	time.Sleep(10 * time.Millisecond)
+
+	// 파이프라인 완료
+	mock.pipelines[0].Stage = "completed"
+	mock.pipelines[0].StateJSON = `{"pipeline_id":"p1","current_stage":"completed","created_at":"2025-01-01T00:00:00Z"}`
+
+	// 두번째 poll: pipeline_completed 발행
+	poller.poll()
+	events := drainEvents(ch, 200*time.Millisecond)
+	foundCompleted := false
+	for _, e := range events {
+		if e.Type == "pipeline_completed" {
+			foundCompleted = true
+		}
+	}
+	if !foundCompleted {
+		t.Error("expected pipeline_completed event")
+	}
+
+	// 세번째 poll: 같은 terminal 파이프라인에 대해 이벤트가 없어야 함
+	poller.poll()
+	events = drainEvents(ch, 200*time.Millisecond)
+	for _, e := range events {
+		if e.Type == "pipeline_created" || e.Type == "pipeline_completed" {
+			t.Errorf("unexpected spurious event after terminal: %s", e.Type)
+		}
+	}
+}
+
 func drainEvents(ch chan SSEEvent, timeout time.Duration) []SSEEvent {
 	var events []SSEEvent
 	timer := time.After(timeout)

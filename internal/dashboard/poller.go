@@ -17,19 +17,21 @@ type pipelineSnapshot struct {
 
 // Poller periodically queries the store and publishes SSE events on changes.
 type Poller struct {
-	store      DashboardStore
-	hub        *SSEHub
-	runtimeCfg *config.RuntimeConfig
-	prev       map[string]pipelineSnapshot
+	store          DashboardStore
+	hub            *SSEHub
+	runtimeCfg     *config.RuntimeConfig
+	prev           map[string]pipelineSnapshot
+	knownTerminals map[string]bool // terminal 상태 도달 후 재감지 방지
 }
 
 // NewPoller creates a new poller.
 func NewPoller(s DashboardStore, hub *SSEHub, runtimeCfg *config.RuntimeConfig) *Poller {
 	return &Poller{
-		store:      s,
-		hub:        hub,
-		runtimeCfg: runtimeCfg,
-		prev:       make(map[string]pipelineSnapshot),
+		store:          s,
+		hub:            hub,
+		runtimeCfg:     runtimeCfg,
+		prev:           make(map[string]pipelineSnapshot),
+		knownTerminals: make(map[string]bool),
 	}
 }
 
@@ -80,6 +82,10 @@ func (p *Poller) poll() {
 
 		prev, existed := p.prev[rec.PipelineID]
 		if !existed {
+			// 이미 completion 이벤트를 발행한 terminal 파이프라인은 건너뜀
+			if p.knownTerminals[rec.PipelineID] {
+				continue
+			}
 			p.hub.Publish(SSEEvent{
 				Type: "pipeline_created",
 				Data: map[string]any{
@@ -145,11 +151,12 @@ func (p *Poller) poll() {
 		})
 	}
 
-	// Terminal 파이프라인은 더 이상 변경되지 않으므로 스냅샷에서 제거하여
-	// 메모리 누적을 방지한다. 이번 poll에서 이미 completion 이벤트를 발행했으므로
-	// 다음 poll에서는 추적할 필요가 없다.
+	// Terminal 파이프라인은 knownTerminals에 기록하고 prev에서 제거하여
+	// 메모리 누적을 방지한다. knownTerminals가 있으므로 다음 poll에서
+	// pipeline_created 이벤트가 재발행되지 않는다.
 	for id, snap := range current {
 		if snap.Stage == "completed" || snap.Stage == "failed" {
+			p.knownTerminals[id] = true
 			delete(current, id)
 		}
 	}
