@@ -77,7 +77,7 @@ type MessagesData struct {
 
 // MemoryData is the view model for the memory page.
 type MemoryData struct {
-	Projects      []string
+	Projects      []store.ProjectRecord
 	Entries       []store.MemoryEntry
 	SearchResults []store.MemorySearchResult
 	Blackboard    []store.BlackboardEntry
@@ -418,7 +418,7 @@ func (srv *Server) buildMemoryData(r *http.Request) (*MemoryData, error) {
 	projectID := r.URL.Query().Get("project")
 	query := r.URL.Query().Get("query")
 
-	projects, err := srv.store.ListDistinctProjects()
+	projects, err := srv.store.ListProjects()
 	if err != nil {
 		return nil, err
 	}

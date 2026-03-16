@@ -21,7 +21,7 @@
             <select name="project" class="input" hx-get="/memory" hx-target="#main" hx-push-url="true" hx-include="closest form" hx-trigger="change">
                 <option value="">-- Select Project --</option>
                 {{range .Projects}}
-                <option value="{{.}}" {{if eq . $.ProjectID}}selected{{end}}>{{.}}</option>
+                <option value="{{.ProjectID}}" {{if eq .ProjectID $.ProjectID}}selected{{end}}>{{.ProjectID}}{{if .Stack}} ({{.Stack}}){{end}}</option>
                 {{end}}
             </select>
             <input type="text" name="query" placeholder="Search memory..." value="{{.Query}}" class="input"

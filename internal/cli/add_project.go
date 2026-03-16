@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/store"
 )
 
 func newAddProjectCmd() *cobra.Command {
@@ -173,6 +175,20 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		fmt.Printf("✓ %d agent(s) created\n", len(agents))
 	} else {
 		fmt.Println("Skipped agent creation. Create manually in .pylon/agents/")
+	}
+
+	// Register project in SQLite
+	dbPath := filepath.Join(root, ".pylon", "pylon.db")
+	s, err := store.NewStore(dbPath)
+	if err == nil {
+		if err := s.Migrate(); err == nil {
+			s.UpsertProject(&store.ProjectRecord{
+				ProjectID: projectName,
+				Path:      projectDir,
+				Stack:     stack.Language,
+			})
+		}
+		s.Close()
 	}
 
 	fmt.Println()
