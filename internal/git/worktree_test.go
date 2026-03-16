@@ -3,6 +3,7 @@ package git
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -217,11 +218,8 @@ func TestWorktreeManager_DeleteBranch(t *testing.T) {
 
 	// Verify branch no longer exists
 	output, _ := wm.runner().Run(dir, "git", "branch", "--list", agentBranch)
-	if len(output) > 0 && string(output) != "" {
-		trimmed := string(output)
-		if trimmed != "" && trimmed != "\n" {
-			t.Errorf("branch %q should be deleted, but git branch output: %q", agentBranch, trimmed)
-		}
+	if strings.TrimSpace(string(output)) != "" {
+		t.Errorf("branch %q should be deleted, but git branch output: %q", agentBranch, string(output))
 	}
 }
 

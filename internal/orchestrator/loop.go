@@ -585,6 +585,10 @@ func (l *Loop) mergeAgentBranches(agentNames []string) error {
 	}
 
 	for _, name := range agentNames {
+		// Skip agents that don't use worktree isolation (no branch was created)
+		if agentCfg := l.findAgent(name); agentCfg == nil || agentCfg.Isolation != "worktree" {
+			continue
+		}
 		agentBranch := fmt.Sprintf("%s/%s", l.cfg.Branch, git.SanitizeBranchName(name))
 		if err := l.cfg.WorktreeMgr.MergeBranch(projectDir, agentBranch); err != nil {
 			// Rollback to pre-merge state
