@@ -99,6 +99,30 @@ func (s *Store) GetPipelineMetrics() (*PipelineMetrics, error) {
 	return m, nil
 }
 
+// ListDistinctProjects returns all distinct project IDs from project_memory and blackboard.
+func (s *Store) ListDistinctProjects() ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT project_id FROM (
+			SELECT project_id FROM project_memory
+			UNION
+			SELECT project_id FROM blackboard
+		) ORDER BY project_id`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects: %w", err)
+	}
+	defer rows.Close()
+
+	var projects []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		projects = append(projects, id)
+	}
+	return projects, rows.Err()
+}
+
 // GetRecentMessages returns the most recent messages ordered by creation time.
 func (s *Store) GetRecentMessages(limit int) ([]QueuedMessage, error) {
 	if limit <= 0 {

@@ -20,6 +20,7 @@ type mockStore struct {
 	queueStats     []store.MessageQueueStat
 	statusCounts   map[string]int
 	metrics        *store.PipelineMetrics
+	projects       []string
 	memoryEntries  []store.MemoryEntry
 	searchResults  []store.MemorySearchResult
 	blackboard     []store.BlackboardEntry
@@ -87,6 +88,10 @@ func (m *mockStore) SearchMemory(projectID, query string, limit int) ([]store.Me
 
 func (m *mockStore) GetBlackboardByCategory(projectID, category string) ([]store.BlackboardEntry, error) {
 	return m.blackboard, nil
+}
+
+func (m *mockStore) ListDistinctProjects() ([]string, error) {
+	return m.projects, nil
 }
 
 func (m *mockStore) GetPipelineMetrics() (*store.PipelineMetrics, error) {
