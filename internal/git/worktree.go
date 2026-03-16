@@ -44,11 +44,11 @@ func (w *WorktreeManager) Create(projectDir, agentName, taskBranch string) (stri
 		return "", fmt.Errorf("failed to create worktree base: %w", err)
 	}
 
-	slug := sanitizeBranchName(agentName)
+	slug := SanitizeBranchName(agentName)
 	worktreePath := filepath.Join(worktreeBase, slug)
 
 	// Each agent gets its own branch: {taskBranch}/{agentName}
-	agentBranch := fmt.Sprintf("%s/%s", taskBranch, sanitizeBranchName(agentName))
+	agentBranch := fmt.Sprintf("%s/%s", taskBranch, SanitizeBranchName(agentName))
 
 	// Create worktree with new branch
 	output, err := w.runner().Run(projectDir, "git", "worktree", "add", "-b", agentBranch, worktreePath)
@@ -100,8 +100,52 @@ func (w *WorktreeManager) Cleanup(projectDir string) error {
 	return nil
 }
 
-// sanitizeBranchName makes a string safe for use as a branch/directory name.
-func sanitizeBranchName(name string) string {
+// MergeBranch merges an agent branch into the current branch (task branch).
+func (w *WorktreeManager) MergeBranch(projectDir, agentBranch string) error {
+	output, err := w.runner().Run(projectDir,
+		"git", "merge", "--no-ff", agentBranch,
+		"-m", fmt.Sprintf("merge: %s 에이전트 작업 통합", agentBranch))
+	if err != nil {
+		return fmt.Errorf("merge failed for %s: %w\n%s", agentBranch, err, output)
+	}
+	return nil
+}
+
+// DeleteBranch deletes a local branch after successful merge.
+func (w *WorktreeManager) DeleteBranch(projectDir, branchName string) error {
+	output, err := w.runner().Run(projectDir, "git", "branch", "-d", branchName)
+	if err != nil {
+		return fmt.Errorf("failed to delete branch %s: %w\n%s", branchName, err, output)
+	}
+	return nil
+}
+
+// HeadSHA returns the current HEAD commit SHA in the given directory.
+func (w *WorktreeManager) HeadSHA(projectDir string) (string, error) {
+	output, err := w.runner().Run(projectDir, "git", "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("failed to get HEAD SHA: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// ResetHard resets the working tree to the given commit SHA.
+func (w *WorktreeManager) ResetHard(projectDir, commitSHA string) error {
+	output, err := w.runner().Run(projectDir, "git", "reset", "--hard", commitSHA)
+	if err != nil {
+		return fmt.Errorf("git reset --hard %s failed: %w\n%s", commitSHA, err, output)
+	}
+	return nil
+}
+
+// AbortMerge aborts an in-progress merge.
+func (w *WorktreeManager) AbortMerge(projectDir string) error {
+	_, err := w.runner().Run(projectDir, "git", "merge", "--abort")
+	return err
+}
+
+// SanitizeBranchName makes a string safe for use as a branch/directory name.
+func SanitizeBranchName(name string) string {
 	replacer := strings.NewReplacer("/", "-", " ", "-", ":", "-")
 	return replacer.Replace(name)
 }

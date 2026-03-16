@@ -60,8 +60,12 @@ func runReview(cmd *cobra.Command, args []string) error {
 	orch := orchestrator.NewOrchestrator(cfg, s, root)
 
 	// Recover state
-	if err := orch.Recover(); err != nil {
+	unprocessed, err := orch.Recover()
+	if err != nil {
 		fmt.Printf("⚠ Recovery warning: %v\n", err)
+	}
+	if len(unprocessed) > 0 {
+		fmt.Printf("ℹ %d개의 미처리 에이전트 결과 발견\n", len(unprocessed))
 	}
 
 	fmt.Printf("📝 Processing PR review: %s\n", prURL)

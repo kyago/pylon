@@ -54,7 +54,7 @@ func runCancel(cmd *cobra.Command, args []string) error {
 	orch.SetPipelineID(pipelineID)
 
 	// Recover current state
-	if err := orch.Recover(); err != nil {
+	if _, err := orch.Recover(); err != nil {
 		return fmt.Errorf("recovery failed: %w", err)
 	}
 

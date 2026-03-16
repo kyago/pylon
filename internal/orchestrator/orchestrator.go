@@ -97,50 +97,59 @@ func (o *Orchestrator) savePipelineState() error {
 	return nil
 }
 
+// UnprocessedResult represents an outbox result that was not processed before crash.
+type UnprocessedResult struct {
+	AgentName string
+	FilePath  string
+	TaskID    string
+}
+
 // Recover restores pipeline state from SQLite after orchestrator crash.
+// Returns any unprocessed outbox results found during recovery.
 // Spec Reference: Section 8 "SPOF Recovery"
-func (o *Orchestrator) Recover() error {
+func (o *Orchestrator) Recover() ([]UnprocessedResult, error) {
 	if o.Store == nil {
-		return nil // no store available
+		return nil, nil // no store available
 	}
 
 	// If a specific pipeline ID is known, recover it directly
 	if o.pipelineID != "" {
 		rec, err := o.Store.GetPipeline(o.pipelineID)
 		if err != nil {
-			return fmt.Errorf("failed to get pipeline from store: %w", err)
+			return nil, fmt.Errorf("failed to get pipeline from store: %w", err)
 		}
 		if rec == nil {
-			return nil // not found, fresh start
+			return nil, nil // not found, fresh start
 		}
 		pipeline, err := LoadPipeline([]byte(rec.StateJSON))
 		if err != nil {
-			return fmt.Errorf("failed to parse pipeline state: %w", err)
+			return nil, fmt.Errorf("failed to parse pipeline state: %w", err)
 		}
 		if pipeline.IsTerminal() {
-			return nil // already done
+			return nil, nil // already done
 		}
 		o.Pipeline = pipeline
 	} else {
 		// Recover the most recent active pipeline
 		actives, err := o.Store.GetActivePipelines()
 		if err != nil {
-			return fmt.Errorf("failed to get active pipelines: %w", err)
+			return nil, fmt.Errorf("failed to get active pipelines: %w", err)
 		}
 		if len(actives) == 0 {
-			return nil // no active pipeline
+			return nil, nil // no active pipeline
 		}
 		pipeline, err := LoadPipeline([]byte(actives[0].StateJSON))
 		if err != nil {
-			return fmt.Errorf("failed to parse pipeline state: %w", err)
+			return nil, fmt.Errorf("failed to parse pipeline state: %w", err)
 		}
 		if pipeline.IsTerminal() {
-			return nil
+			return nil, nil
 		}
 		o.Pipeline = pipeline
 	}
 
 	// Scan for unprocessed outbox results
+	var unprocessed []UnprocessedResult
 	outboxDir := filepath.Join(o.WorkDir, ".pylon", "runtime", "outbox")
 	entries, err := os.ReadDir(outboxDir)
 	if err == nil {
@@ -159,6 +168,11 @@ func (o *Orchestrator) Recover() error {
 						}
 						if !processed {
 							fmt.Printf("[recovery] unprocessed result: %s/%s\n", agentName, f.Name())
+							unprocessed = append(unprocessed, UnprocessedResult{
+								AgentName: agentName,
+								FilePath:  filepath.Join(agentDir, f.Name()),
+								TaskID:    taskID,
+							})
 						}
 					}
 				}
@@ -166,7 +180,7 @@ func (o *Orchestrator) Recover() error {
 		}
 	}
 
-	return o.savePipelineState()
+	return unprocessed, o.savePipelineState()
 }
 
 // GetStatus returns a summary of the current orchestrator state.

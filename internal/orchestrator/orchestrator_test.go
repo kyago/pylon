@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -102,7 +104,7 @@ func TestTransitionTo_NoPipeline(t *testing.T) {
 func TestRecover_NoState(t *testing.T) {
 	orch, _ := setupTestOrchestrator(t)
 
-	if err := orch.Recover(); err != nil {
+	if _, err := orch.Recover(); err != nil {
 		t.Fatalf("Recover with no state should succeed: %v", err)
 	}
 	if orch.Pipeline != nil {
@@ -132,7 +134,7 @@ func TestRecover_WithState(t *testing.T) {
 
 	// Create a new orchestrator and recover
 	orch2 := NewOrchestrator(orch.Config, orch.Store, dir)
-	if err := orch2.Recover(); err != nil {
+	if _, err := orch2.Recover(); err != nil {
 		t.Fatalf("Recover failed: %v", err)
 	}
 
@@ -163,11 +165,53 @@ func TestRecover_TerminalState(t *testing.T) {
 	})
 
 	orch.SetPipelineID("done-001")
-	if err := orch.Recover(); err != nil {
+	if _, err := orch.Recover(); err != nil {
 		t.Fatalf("Recover failed: %v", err)
 	}
 	if orch.Pipeline != nil {
 		t.Error("pipeline should remain nil for terminal state")
+	}
+}
+
+func TestRecover_ReturnsUnprocessedResults(t *testing.T) {
+	orch, dir := setupTestOrchestrator(t)
+
+	// Create an active pipeline
+	if err := orch.StartPipeline("unprocessed-001"); err != nil {
+		t.Fatalf("StartPipeline failed: %v", err)
+	}
+	if err := orch.TransitionTo(StagePOConversation); err != nil {
+		t.Fatalf("TransitionTo failed: %v", err)
+	}
+
+	// Create an unprocessed outbox result file
+	outboxDir := filepath.Join(dir, ".pylon", "runtime", "outbox", "backend-dev")
+	if err := os.MkdirAll(outboxDir, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	resultFile := filepath.Join(outboxDir, "task-123.result.json")
+	resultJSON := `{"type":"result","from":"backend-dev","to":"orchestrator","body":{"summary":"done"}}`
+	if err := os.WriteFile(resultFile, []byte(resultJSON), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Recover with a new orchestrator
+	orch2 := NewOrchestrator(orch.Config, orch.Store, dir)
+	orch2.SetPipelineID("unprocessed-001")
+
+	unprocessed, err := orch2.Recover()
+	if err != nil {
+		t.Fatalf("Recover failed: %v", err)
+	}
+
+	if len(unprocessed) != 1 {
+		t.Fatalf("expected 1 unprocessed result, got %d", len(unprocessed))
+	}
+	if unprocessed[0].AgentName != "backend-dev" {
+		t.Errorf("agent name = %s, want backend-dev", unprocessed[0].AgentName)
+	}
+	if unprocessed[0].TaskID != "task-123" {
+		t.Errorf("task ID = %s, want task-123", unprocessed[0].TaskID)
 	}
 }
 

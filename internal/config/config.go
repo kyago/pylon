@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -94,6 +95,16 @@ type MemoryConfig struct {
 // Spec Reference: Section 16 "conversation"
 type ConversationConfig struct {
 	RetentionDays int `yaml:"retention_days"`
+}
+
+// ParseTaskTimeout parses the TaskTimeout string into a time.Duration.
+// Returns 30 minutes as fallback if parsing fails or the value is non-positive.
+func (r RuntimeConfig) ParseTaskTimeout() time.Duration {
+	d, err := time.ParseDuration(r.TaskTimeout)
+	if err != nil || d <= 0 {
+		return 30 * time.Minute
+	}
+	return d
 }
 
 // LoadConfig reads and parses a config.yml file, applying defaults for missing fields.

@@ -38,11 +38,12 @@ type LoopConfig struct {
 
 // Loop drives the pipeline stage-by-stage execution.
 type Loop struct {
-	cfg      LoopConfig
-	orch     *Orchestrator
-	watcher  *OutboxWatcher
-	inboxDir string
-	mu       sync.Mutex // protects Pipeline.Agents writes and saveState calls
+	cfg        LoopConfig
+	orch       *Orchestrator
+	watcher    *OutboxWatcher
+	inboxDir   string
+	lastResult *protocol.MessageEnvelope // last completed agent result for handoff
+	mu         sync.Mutex               // protects Pipeline.Agents writes, saveState calls, and lastResult
 }
 
 // NewLoop creates a new orchestration loop.
@@ -65,8 +66,21 @@ func (l *Loop) Run(ctx context.Context) error {
 	// Try to recover existing state (for --continue scenarios).
 	// Skip recovery if a pipeline was pre-set via SetPipeline() to avoid clobbering it.
 	if l.orch.Pipeline == nil {
-		if err := l.orch.Recover(); err != nil {
+		unprocessed, err := l.orch.Recover()
+		if err != nil {
 			return fmt.Errorf("recovery failed: %w", err)
+		}
+
+		// Process any unprocessed outbox results from before crash
+		for _, ur := range unprocessed {
+			env, readErr := protocol.ReadResult(ur.FilePath)
+			if readErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠ failed to read unprocessed result %s: %v\n", ur.FilePath, readErr)
+				continue
+			}
+			data := l.extractAgentResult(WatchResult{AgentName: ur.AgentName, Envelope: env})
+			l.storeAgentResult(data)
+			l.enqueueResultAck(ur.AgentName, ur.TaskID)
 		}
 
 		// If the recovered pipeline ID doesn't match, start fresh.
@@ -215,9 +229,19 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	l.saveState()
 	l.mu.Unlock()
 
-	// Launch agent with context propagation
+	// Apply task timeout from config.
+	// ParseTaskTimeout always returns >= 30m (fallback), so this guard is defensive.
+	// To disable timeout entirely, this condition would need to be extended.
+	agentCtx := ctx
+	if timeout := l.cfg.Config.Runtime.ParseTaskTimeout(); timeout > 0 {
+		var cancel context.CancelFunc
+		agentCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	// Launch agent with context propagation (timeout-wrapped)
 	result, err := l.cfg.Runner.Start(agent.RunConfig{
-		Ctx:        ctx,
+		Ctx:        agentCtx,
 		Agent:      agentCfg,
 		Global:     l.cfg.Config,
 		TaskPrompt: taskPrompt,
@@ -246,10 +270,12 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	if pollErr != nil {
 		fmt.Fprintf(os.Stderr, "⚠ failed to poll outbox: %v\n", pollErr)
 	}
+	var lastEnvelope *protocol.MessageEnvelope
 	for _, wr := range watchResults {
 		if wr.AgentName == agentName {
 			data := l.extractAgentResult(wr)
 			l.storeAgentResult(data)
+			lastEnvelope = wr.Envelope
 			foundOutbox = true
 			l.enqueueResultAck(agentName, taskID)
 		}
@@ -262,6 +288,9 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 
 	l.mu.Lock()
 	l.orch.Pipeline.Agents[agentName] = AgentStatus{TaskID: taskID, AgentID: agentName, Status: AgentStatusCompleted}
+	if lastEnvelope != nil {
+		l.lastResult = lastEnvelope
+	}
 	l.saveState()
 	l.mu.Unlock()
 
@@ -280,27 +309,33 @@ func (l *Loop) runAgentExecution(ctx context.Context) error {
 		if err := l.executeAgent(ctx, devAgents[0]); err != nil {
 			return err
 		}
-		return l.transitionTo(StageVerification)
+	} else {
+		// Multiple agents: run in parallel with concurrency limit
+		maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
+		if maxConcurrent <= 0 {
+			maxConcurrent = 5
+		}
+
+		g, gctx := errgroup.WithContext(ctx)
+		g.SetLimit(maxConcurrent)
+
+		for _, name := range devAgents {
+			agentName := name // capture loop variable
+			g.Go(func() error {
+				return l.executeAgent(gctx, agentName)
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			return err
+		}
 	}
 
-	// Multiple agents: run in parallel with concurrency limit
-	maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
-	if maxConcurrent <= 0 {
-		maxConcurrent = 5
-	}
-
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(maxConcurrent)
-
-	for _, name := range devAgents {
-		agentName := name // capture loop variable
-		g.Go(func() error {
-			return l.executeAgent(gctx, agentName)
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		return err
+	// Merge agent worktree branches back into task branch (single or multi)
+	if l.cfg.WorktreeMgr != nil && l.cfg.WorktreeMgr.Enabled {
+		if err := l.mergeAgentBranches(devAgents); err != nil {
+			return fmt.Errorf("agent branch merge failed: %w", err)
+		}
 	}
 
 	return l.transitionTo(StageVerification)
@@ -511,23 +546,64 @@ func (l *Loop) findDevAgents() []string {
 }
 
 func (l *Loop) buildHandoffContext(taskID string) *protocol.MsgContext {
-	ctx := &protocol.MsgContext{
-		TaskID:     taskID,
-		PipelineID: l.cfg.PipelineID,
-		Summary:    l.cfg.Requirement,
-	}
+	l.mu.Lock()
+	prevResult := l.lastResult
+	l.mu.Unlock()
+	var blackboard []store.BlackboardEntry
+	var memories []store.MemorySearchResult
 
-	// Add blackboard decisions
 	if l.cfg.Store != nil && len(l.cfg.Projects) > 0 {
-		entries, err := l.cfg.Store.GetBlackboardByCategory(l.cfg.Projects[0].Name, "decision")
-		if err == nil {
-			for _, e := range entries {
-				ctx.Decisions = append(ctx.Decisions, fmt.Sprintf("%s: %s", e.Key, e.Value))
-			}
+		projectName := l.cfg.Projects[0].Name
+		blackboard, _ = l.cfg.Store.GetBlackboardByCategory(projectName, "decision")
+
+		if l.cfg.MemManager != nil {
+			memories, _ = l.cfg.Store.SearchMemory(projectName, l.cfg.Requirement, 5)
 		}
 	}
 
+	ctx := protocol.BuildHandoffContext(prevResult, blackboard, memories)
+	ctx.TaskID = taskID
+	ctx.PipelineID = l.cfg.PipelineID
+	if ctx.Summary == "" {
+		ctx.Summary = l.cfg.Requirement
+	}
 	return ctx
+}
+
+// mergeAgentBranches merges each agent's worktree branch into the task branch.
+// On failure, it resets to the pre-merge state to avoid partial merge artifacts.
+func (l *Loop) mergeAgentBranches(agentNames []string) error {
+	projectDir := l.cfg.WorkDir
+	if len(l.cfg.Projects) > 0 {
+		projectDir = l.cfg.Projects[0].Path
+	}
+
+	// Save restore point before merging
+	restorePoint, err := l.cfg.WorktreeMgr.HeadSHA(projectDir)
+	if err != nil {
+		return fmt.Errorf("failed to get HEAD for restore point: %w", err)
+	}
+
+	for _, name := range agentNames {
+		// Skip agents that don't use worktree isolation (no branch was created)
+		if agentCfg := l.findAgent(name); agentCfg == nil || agentCfg.Isolation != "worktree" {
+			continue
+		}
+		agentBranch := fmt.Sprintf("%s/%s", l.cfg.Branch, git.SanitizeBranchName(name))
+		if err := l.cfg.WorktreeMgr.MergeBranch(projectDir, agentBranch); err != nil {
+			// Rollback to pre-merge state
+			if abortErr := l.cfg.WorktreeMgr.AbortMerge(projectDir); abortErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠ merge --abort failed: %v\n", abortErr)
+			}
+			if resetErr := l.cfg.WorktreeMgr.ResetHard(projectDir, restorePoint); resetErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠ git reset --hard failed: %v (repository may be in dirty state)\n", resetErr)
+			}
+			return err
+		}
+		// Best-effort cleanup
+		_ = l.cfg.WorktreeMgr.DeleteBranch(projectDir, agentBranch)
+	}
+	return nil
 }
 
 func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgContext) error {
