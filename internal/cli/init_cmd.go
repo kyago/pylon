@@ -137,7 +137,7 @@ git:
 	}
 
 	// Create symlinks in .claude/agents/ for Claude CLI native discovery
-	if err := linkAgentsToClaude(workDir, pylonDir); err != nil {
+	if err := syncClaudeAgentLinks(workDir, pylonDir); err != nil {
 		return err
 	}
 
@@ -227,37 +227,6 @@ git:
 	return nil
 }
 
-// linkAgentsToClaude creates .claude/agents/ with symlinks pointing to .pylon/agents/,
-// enabling Claude CLI native agent discovery without duplicating files.
-func linkAgentsToClaude(workDir, pylonDir string) error {
-	claudeAgentsDir := filepath.Join(workDir, ".claude", "agents")
-	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .claude/agents/: %w", err)
-	}
-
-	pylonAgentsDir := filepath.Join(pylonDir, "agents")
-	entries, err := os.ReadDir(pylonAgentsDir)
-	if err != nil {
-		return fmt.Errorf("failed to read .pylon/agents/: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
-			continue
-		}
-		// Relative symlink: .claude/agents/foo.md -> ../../.pylon/agents/foo.md
-		relTarget := filepath.Join("..", "..", ".pylon", "agents", entry.Name())
-		linkPath := filepath.Join(claudeAgentsDir, entry.Name())
-		if err := os.Symlink(relTarget, linkPath); err != nil {
-			if os.IsExist(err) {
-				continue
-			}
-			return fmt.Errorf("failed to create symlink for %s: %w", entry.Name(), err)
-		}
-	}
-
-	return nil
-}
 
 func writeAgentTemplates(pylonDir string) error {
 	entries, err := embeddedAgents.ReadDir("agents")
