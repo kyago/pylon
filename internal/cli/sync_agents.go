@@ -67,6 +67,11 @@ func runSyncAgents(force bool) error {
 		agentPath := filepath.Join(agentsDir, entry.Name())
 
 		_, statErr := os.Stat(agentPath)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			fmt.Printf("⚠ %s 상태 확인 실패: %v\n", entry.Name(), statErr)
+			skipped++
+			continue
+		}
 		exists := statErr == nil
 
 		if exists && !force {
@@ -124,7 +129,10 @@ func syncClaudeAgentLinks(workDir, pylonDir string) error {
 		// 기존 심링크가 있으면 제거 후 재생성 (대상이 변경됐을 수 있음)
 		if info, err := os.Lstat(linkPath); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
-				os.Remove(linkPath)
+				if err := os.Remove(linkPath); err != nil {
+					fmt.Printf("⚠ 심링크 제거 실패 %s: %v\n", entry.Name(), err)
+					continue
+				}
 			} else {
 				continue // 일반 파일이면 건드리지 않음
 			}
