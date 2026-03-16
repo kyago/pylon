@@ -15,10 +15,15 @@
 <div class="container">
     <h1 class="page-title">Project Memory &amp; Blackboard</h1>
 
-    {{/* Search */}}
+    {{/* Project Select + Search */}}
     <div class="section">
         <form hx-get="/memory" hx-target="#main" hx-push-url="true" class="filter-form">
-            <input type="text" name="project" placeholder="Project ID" value="{{.ProjectID}}" class="input" required>
+            <select name="project" class="input" hx-get="/memory" hx-target="#main" hx-push-url="true" hx-include="closest form" hx-trigger="change">
+                <option value="">-- Select Project --</option>
+                {{range .Projects}}
+                <option value="{{.ProjectID}}" {{if eq .ProjectID $.ProjectID}}selected{{end}}>{{.ProjectID}}{{if .Stack}} ({{.Stack}}){{end}}</option>
+                {{end}}
+            </select>
             <input type="text" name="query" placeholder="Search memory..." value="{{.Query}}" class="input"
                    hx-get="/memory" hx-trigger="keyup changed delay:300ms" hx-target="#main" hx-include="closest form">
             <button type="submit" class="btn btn-primary">Search</button>
@@ -120,7 +125,11 @@
     {{end}}
 
     {{else}}
-    <div class="empty-state">Enter a project ID to view memory and blackboard data</div>
+    {{if .Projects}}
+    <div class="empty-state">Select a project to view memory and blackboard data</div>
+    {{else}}
+    <div class="empty-state">No projects found</div>
+    {{end}}
     {{end}}
 </div>
 {{end}}

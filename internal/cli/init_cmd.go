@@ -10,6 +10,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/store"
 )
 
 //go:embed agents/*.md
@@ -173,6 +176,34 @@ git:
 		if out, err := gitInit.CombinedOutput(); err != nil {
 			fmt.Printf("Warning: git init failed: %s\n", string(out))
 		}
+	}
+
+	// Step 7: Initialize DB and sync discovered projects
+	dbPath := filepath.Join(pylonDir, "pylon.db")
+	s, err := store.NewStore(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open store: %w", err)
+	}
+	defer s.Close()
+
+	if err := s.Migrate(); err != nil {
+		return fmt.Errorf("failed to migrate: %w", err)
+	}
+
+	projects, err := config.DiscoverProjects(workDir)
+	if err != nil {
+		fmt.Printf("⚠ 프로젝트 탐색 실패: %v\n", err)
+	}
+	for _, p := range projects {
+		if err := s.UpsertProject(&store.ProjectRecord{
+			ProjectID: p.Name,
+			Path:      p.Path,
+		}); err != nil {
+			fmt.Printf("⚠ %s 등록 실패: %v\n", p.Name, err)
+		}
+	}
+	if len(projects) > 0 {
+		fmt.Printf("✓ %d project(s) registered in DB\n", len(projects))
 	}
 
 	fmt.Println()

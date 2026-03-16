@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/store"
 )
 
 func newAddProjectCmd() *cobra.Command {
@@ -173,6 +175,11 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		fmt.Printf("✓ %d agent(s) created\n", len(agents))
 	} else {
 		fmt.Println("Skipped agent creation. Create manually in .pylon/agents/")
+	}
+
+	// Register project in SQLite
+	if err := registerProjectInDB(root, projectName, projectDir, stack.Language); err != nil {
+		fmt.Printf("⚠ DB 등록 실패: %v\n", err)
 	}
 
 	fmt.Println()
@@ -574,6 +581,27 @@ func generateVerifyYML(stack techStack) string {
 	}
 
 	return b.String()
+}
+
+func registerProjectInDB(root, projectName, projectDir, stackLang string) error {
+	dbPath := filepath.Join(root, ".pylon", "pylon.db")
+	s, err := store.NewStore(dbPath)
+	if err != nil {
+		return fmt.Errorf("store open: %w", err)
+	}
+	defer s.Close()
+
+	if err := s.Migrate(); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	if err := s.UpsertProject(&store.ProjectRecord{
+		ProjectID: projectName,
+		Path:      projectDir,
+		Stack:     stackLang,
+	}); err != nil {
+		return fmt.Errorf("upsert: %w", err)
+	}
+	return nil
 }
 
 func fileExists(path string) bool {

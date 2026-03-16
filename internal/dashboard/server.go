@@ -35,6 +35,9 @@ type DashboardStore interface {
 	// Blackboard methods
 	GetBlackboardByCategory(projectID, category string) ([]store.BlackboardEntry, error)
 
+	// Project registry
+	ListProjects() ([]store.ProjectRecord, error)
+
 	// Metrics
 	GetPipelineMetrics() (*store.PipelineMetrics, error)
 }
