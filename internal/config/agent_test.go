@@ -324,6 +324,78 @@ func TestAgentConfig_ResolveDefaults(t *testing.T) {
 	}
 }
 
+func TestInferAgentType(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected string
+	}{
+		{"backend-dev", "dev"},
+		{"frontend-dev", "dev"},
+		{"fullstack", "dev"},
+		{"architect", ""},
+		{"pm", ""},
+		{"po", ""},
+		{"my-custom-agent", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := InferAgentType(tt.name)
+			if got != tt.expected {
+				t.Errorf("InferAgentType(%q) = %q, want %q", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAgentConfig_ResolveDefaults_TypeInference(t *testing.T) {
+	cfg := &Config{
+		Runtime: RuntimeConfig{
+			Backend:        "claude-code",
+			MaxTurns:       50,
+			PermissionMode: "acceptEdits",
+		},
+	}
+
+	// Type is inferred from name
+	agent := &AgentConfig{Name: "backend-dev", Role: "Backend Dev"}
+	agent.ResolveDefaults(cfg)
+	if agent.Type != "dev" {
+		t.Errorf("expected inferred type 'dev', got %q", agent.Type)
+	}
+
+	// Explicit type is preserved
+	agent2 := &AgentConfig{Name: "backend-dev", Role: "Backend Dev", Type: "infra"}
+	agent2.ResolveDefaults(cfg)
+	if agent2.Type != "infra" {
+		t.Errorf("expected explicit type 'infra' to be preserved, got %q", agent2.Type)
+	}
+
+	// Unknown name → empty type
+	agent3 := &AgentConfig{Name: "custom-agent", Role: "Custom"}
+	agent3.ResolveDefaults(cfg)
+	if agent3.Type != "" {
+		t.Errorf("expected empty type for unknown name, got %q", agent3.Type)
+	}
+}
+
+func TestParseAgentData_TypeField(t *testing.T) {
+	data := []byte(`---
+name: my-dev
+role: Developer
+type: dev
+---
+Custom dev agent.
+`)
+	agent, err := ParseAgentData(data)
+	if err != nil {
+		t.Fatalf("ParseAgentData failed: %v", err)
+	}
+	if agent.Type != "dev" {
+		t.Errorf("expected type 'dev', got %q", agent.Type)
+	}
+}
+
 func TestAgentConfig_ResolveDefaults_EnvMerge(t *testing.T) {
 	cfg := &Config{
 		Runtime: RuntimeConfig{

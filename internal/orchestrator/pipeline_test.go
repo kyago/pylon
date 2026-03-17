@@ -32,6 +32,7 @@ func TestPipeline_ValidTransitions(t *testing.T) {
 		StagePOConversation,
 		StageArchitectAnalysis,
 		StagePMTaskBreakdown,
+		StageTaskReview,
 		StageAgentExecuting,
 		StageVerification,
 		StagePRCreation,
@@ -74,6 +75,7 @@ func TestPipeline_FailFromAnyStage(t *testing.T) {
 		StagePOConversation,
 		StageArchitectAnalysis,
 		StagePMTaskBreakdown,
+		StageTaskReview,
 		StageAgentExecuting,
 		StageVerification,
 		StagePRCreation,
@@ -151,6 +153,81 @@ func TestPipeline_Snapshot_Load(t *testing.T) {
 	}
 	if loaded.Agents["backend-dev"].AgentID != "backend-dev" {
 		t.Error("agent status not preserved")
+	}
+}
+
+func TestPipeline_PMTaskBreakdown_TransitionsToTaskReview(t *testing.T) {
+	p := NewPipeline("test-tr", 2)
+	p.Transition(StagePOConversation)
+	p.Transition(StageArchitectAnalysis)
+	p.Transition(StagePMTaskBreakdown)
+
+	// pm_task_breakdown should NOT transition directly to agent_executing
+	if p.CanTransition(StageAgentExecuting) {
+		t.Error("pm_task_breakdown should not transition directly to agent_executing")
+	}
+
+	// pm_task_breakdown should transition to task_review
+	if !p.CanTransition(StageTaskReview) {
+		t.Error("pm_task_breakdown should transition to task_review")
+	}
+
+	if err := p.Transition(StageTaskReview); err != nil {
+		t.Fatalf("transition to task_review failed: %v", err)
+	}
+
+	// task_review should transition to agent_executing
+	if !p.CanTransition(StageAgentExecuting) {
+		t.Error("task_review should transition to agent_executing")
+	}
+}
+
+func TestPipeline_TaskGraph_Snapshot(t *testing.T) {
+	p := NewPipeline("test-tg", 2)
+	p.TaskGraph = &TaskGraph{
+		Tasks: []TaskItem{
+			{ID: "t1", Description: "task 1"},
+			{ID: "t2", Description: "task 2", DependsOn: []string{"t1"}},
+		},
+	}
+
+	data, err := p.Snapshot()
+	if err != nil {
+		t.Fatalf("snapshot failed: %v", err)
+	}
+
+	loaded, err := LoadPipeline(data)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	if loaded.TaskGraph == nil {
+		t.Fatal("TaskGraph should be preserved after snapshot/load")
+	}
+	if len(loaded.TaskGraph.Tasks) != 2 {
+		t.Errorf("expected 2 tasks, got %d", len(loaded.TaskGraph.Tasks))
+	}
+	if loaded.TaskGraph.Tasks[1].DependsOn[0] != "t1" {
+		t.Errorf("expected dependency on t1, got %v", loaded.TaskGraph.Tasks[1].DependsOn)
+	}
+}
+
+func TestPipeline_TaskGraph_OmitEmpty(t *testing.T) {
+	p := NewPipeline("test-nil-tg", 2)
+	// TaskGraph is nil by default
+
+	data, err := p.Snapshot()
+	if err != nil {
+		t.Fatalf("snapshot failed: %v", err)
+	}
+
+	loaded, err := LoadPipeline(data)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	if loaded.TaskGraph != nil {
+		t.Error("nil TaskGraph should remain nil after snapshot/load")
 	}
 }
 

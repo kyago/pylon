@@ -124,6 +124,7 @@ func TestLoop_Run_HeadlessFromArchitect(t *testing.T) {
 	dir := t.TempDir()
 	exec := &testExecutor{exitCode: 0}
 	lcfg := newTestLoopConfig(dir, exec)
+	lcfg.Config.Runtime.AutoApproveTaskReview = true
 	loop := NewLoop(lcfg)
 
 	// Manually set pipeline to architect stage
@@ -131,7 +132,7 @@ func TestLoop_Run_HeadlessFromArchitect(t *testing.T) {
 	loop.orch.TransitionTo(StagePOConversation)
 	loop.orch.TransitionTo(StageArchitectAnalysis)
 
-	// Run from architect stage — should execute architect, then pm, then dev agents.
+	// Run from architect stage — should execute architect, then pm, task_review (auto-approve), then dev agents.
 	// PR creation failure is non-fatal; pipeline skips to wiki update and completes.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -232,6 +233,53 @@ func TestLoop_findDevAgents(t *testing.T) {
 	}
 }
 
+func TestLoop_findDevAgents_ByType(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{}
+	lcfg := newTestLoopConfig(dir, exec)
+
+	// Add a custom-named agent with explicit type: dev
+	lcfg.Agents["my-custom-dev"] = &config.AgentConfig{
+		Name: "my-custom-dev", Role: "커스텀 개발자",
+		Type: "dev",
+	}
+
+	loop := NewLoop(lcfg)
+	devs := loop.findDevAgents()
+
+	// Should find both backend-dev (inferred) and my-custom-dev (explicit)
+	if len(devs) != 2 {
+		t.Errorf("expected 2 dev agents, got %d: %v", len(devs), devs)
+	}
+
+	found := make(map[string]bool)
+	for _, d := range devs {
+		found[d] = true
+	}
+	if !found["backend-dev"] {
+		t.Error("expected backend-dev in dev agents")
+	}
+	if !found["my-custom-dev"] {
+		t.Error("expected my-custom-dev in dev agents")
+	}
+}
+
+func TestLoop_findDevAgents_ExplicitTypeOverride(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{}
+	lcfg := newTestLoopConfig(dir, exec)
+
+	// Override backend-dev with type != dev → should NOT be found
+	lcfg.Agents["backend-dev"].Type = "infra"
+
+	loop := NewLoop(lcfg)
+	devs := loop.findDevAgents()
+
+	if len(devs) != 0 {
+		t.Errorf("expected 0 dev agents when type overridden, got %d: %v", len(devs), devs)
+	}
+}
+
 func TestLoop_buildPRBody(t *testing.T) {
 	dir := t.TempDir()
 	exec := &testExecutor{}
@@ -259,6 +307,7 @@ func TestLoop_Run_ParallelDevAgents(t *testing.T) {
 	loop.orch.TransitionTo(StagePOConversation)
 	loop.orch.TransitionTo(StageArchitectAnalysis)
 	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageTaskReview)
 	loop.orch.TransitionTo(StageAgentExecuting)
 
 	err := loop.runAgentExecution(context.Background())
@@ -273,6 +322,162 @@ func TestLoop_Run_ParallelDevAgents(t *testing.T) {
 	}
 }
 
+func TestLoop_runTaskReview_AutoApprove(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{exitCode: 0}
+	lcfg := newTestLoopConfig(dir, exec)
+	lcfg.Config.Runtime.AutoApproveTaskReview = true
+	loop := NewLoop(lcfg)
+
+	loop.orch.StartPipeline("review-auto")
+	loop.orch.TransitionTo(StagePOConversation)
+	loop.orch.TransitionTo(StageArchitectAnalysis)
+	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageTaskReview)
+
+	err := loop.runTaskReview(context.Background())
+	if err != nil {
+		t.Fatalf("expected auto-approve, got: %v", err)
+	}
+	if loop.orch.Pipeline.CurrentStage != StageAgentExecuting {
+		t.Errorf("stage = %s, want agent_executing", loop.orch.Pipeline.CurrentStage)
+	}
+}
+
+func TestLoop_runTaskReview_NoPOAgent(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{exitCode: 0}
+	lcfg := newTestLoopConfig(dir, exec)
+	// AutoApproveTaskReview=false (default), no PO agent configured
+	loop := NewLoop(lcfg)
+
+	loop.orch.StartPipeline("review-no-po")
+	loop.orch.TransitionTo(StagePOConversation)
+	loop.orch.TransitionTo(StageArchitectAnalysis)
+	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageTaskReview)
+
+	err := loop.runTaskReview(context.Background())
+	if err != nil {
+		t.Fatalf("expected auto-approve when no PO agent, got: %v", err)
+	}
+	if loop.orch.Pipeline.CurrentStage != StageAgentExecuting {
+		t.Errorf("stage = %s, want agent_executing", loop.orch.Pipeline.CurrentStage)
+	}
+}
+
+func TestLoop_runTaskReview_InteractiveRequired(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{exitCode: 0}
+	lcfg := newTestLoopConfig(dir, exec)
+	// Add PO agent and don't auto-approve
+	lcfg.Agents["po"] = &config.AgentConfig{
+		Name: "po", Role: "프로덕트 오너",
+	}
+	loop := NewLoop(lcfg)
+
+	loop.orch.StartPipeline("review-interactive")
+	loop.orch.TransitionTo(StagePOConversation)
+	loop.orch.TransitionTo(StageArchitectAnalysis)
+	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageTaskReview)
+
+	err := loop.runTaskReview(context.Background())
+	if !errors.Is(err, ErrInteractiveRequired) {
+		t.Errorf("expected ErrInteractiveRequired, got: %v", err)
+	}
+}
+
+func TestLoop_Run_HeadlessFromArchitect_WithTaskReview(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{exitCode: 0}
+	lcfg := newTestLoopConfig(dir, exec)
+	lcfg.Config.Runtime.AutoApproveTaskReview = true
+	loop := NewLoop(lcfg)
+
+	loop.orch.StartPipeline("tr-headless")
+	loop.orch.TransitionTo(StagePOConversation)
+	loop.orch.TransitionTo(StageArchitectAnalysis)
+
+	err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("expected pipeline to complete, got: %v", err)
+	}
+
+	if loop.orch.Pipeline.CurrentStage != StageCompleted {
+		t.Errorf("expected completed stage, got %s", loop.orch.Pipeline.CurrentStage)
+	}
+}
+
+func TestLoop_runAgentExecution_WaveBased(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{exitCode: 0}
+	lcfg := newTestLoopConfig(dir, exec)
+	loop := NewLoop(lcfg)
+
+	loop.orch.StartPipeline("wave-test")
+	loop.orch.TransitionTo(StagePOConversation)
+	loop.orch.TransitionTo(StageArchitectAnalysis)
+	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageTaskReview)
+	loop.orch.TransitionTo(StageAgentExecuting)
+
+	// Set up a task graph with 2 waves
+	loop.orch.Pipeline.TaskGraph = &TaskGraph{
+		Tasks: []TaskItem{
+			{ID: "t1", Description: "first", AgentName: "backend-dev"},
+			{ID: "t2", Description: "second", AgentName: "backend-dev", DependsOn: []string{"t1"}},
+		},
+	}
+
+	err := loop.runAgentExecution(context.Background())
+	if err != nil {
+		t.Logf("error (may be expected in test): %v", err)
+	}
+
+	// Should have executed 2 agent calls (one per wave)
+	if len(exec.runCalls) < 2 {
+		t.Errorf("expected at least 2 agent calls for 2 waves, got %d", len(exec.runCalls))
+	}
+}
+
+func TestLoop_runAgentExecution_LegacyFallback(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{exitCode: 0}
+	lcfg := newTestLoopConfig(dir, exec)
+	loop := NewLoop(lcfg)
+
+	loop.orch.StartPipeline("legacy-test")
+	loop.orch.TransitionTo(StagePOConversation)
+	loop.orch.TransitionTo(StageArchitectAnalysis)
+	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageTaskReview)
+	loop.orch.TransitionTo(StageAgentExecuting)
+
+	// No TaskGraph → legacy parallel path
+	err := loop.runAgentExecution(context.Background())
+	if err != nil {
+		t.Logf("error (may be expected in test): %v", err)
+	}
+
+	// Should have at least 1 agent call
+	if len(exec.runCalls) < 1 {
+		t.Errorf("expected at least 1 agent call, got %d", len(exec.runCalls))
+	}
+}
+
+func TestLoop_extractTaskGraph_Nil(t *testing.T) {
+	dir := t.TempDir()
+	exec := &testExecutor{}
+	loop := NewLoop(newTestLoopConfig(dir, exec))
+
+	// No lastResult → nil graph
+	graph := loop.extractTaskGraph()
+	if graph != nil {
+		t.Error("expected nil task graph when no last result")
+	}
+}
+
 func TestLoop_Verification_NoVerifyYml(t *testing.T) {
 	dir := t.TempDir()
 	exec := &testExecutor{exitCode: 0}
@@ -282,6 +487,7 @@ func TestLoop_Verification_NoVerifyYml(t *testing.T) {
 	loop.orch.TransitionTo(StagePOConversation)
 	loop.orch.TransitionTo(StageArchitectAnalysis)
 	loop.orch.TransitionTo(StagePMTaskBreakdown)
+	loop.orch.TransitionTo(StageTaskReview)
 	loop.orch.TransitionTo(StageAgentExecuting)
 	loop.orch.TransitionTo(StageVerification)
 

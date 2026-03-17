@@ -11,6 +11,7 @@ const (
 	StagePOConversation    Stage = "po_conversation"
 	StageArchitectAnalysis Stage = "architect_analysis"
 	StagePMTaskBreakdown   Stage = "pm_task_breakdown"
+	StageTaskReview        Stage = "task_review"
 	StageAgentExecuting    Stage = "agent_executing"
 	StageVerification      Stage = "verification"
 	StagePRCreation        Stage = "pr_creation"
@@ -27,6 +28,7 @@ func AllStages() []Stage {
 		StagePOConversation,
 		StageArchitectAnalysis,
 		StagePMTaskBreakdown,
+		StageTaskReview,
 		StageAgentExecuting,
 		StageVerification,
 		StagePRCreation,

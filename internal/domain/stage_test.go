@@ -9,6 +9,7 @@ func TestAllStages_ContainsAllConstants(t *testing.T) {
 		StagePOConversation,
 		StageArchitectAnalysis,
 		StagePMTaskBreakdown,
+		StageTaskReview,
 		StageAgentExecuting,
 		StageVerification,
 		StagePRCreation,

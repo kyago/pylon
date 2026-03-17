@@ -124,7 +124,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		case StageArchitectAnalysis:
 			err = l.runHeadlessAgent(ctx, "architect", StageArchitectAnalysis, StagePMTaskBreakdown)
 		case StagePMTaskBreakdown:
-			err = l.runHeadlessAgent(ctx, "pm", StagePMTaskBreakdown, StageAgentExecuting)
+			err = l.runPMTaskBreakdown(ctx)
+		case StageTaskReview:
+			err = l.runTaskReview(ctx)
 		case StageAgentExecuting:
 			err = l.runAgentExecution(ctx)
 		case StageVerification:
@@ -175,6 +177,13 @@ func (l *Loop) runHeadlessAgent(ctx context.Context, agentName string, currentSt
 
 // executeAgent handles the common agent execution pattern without stage transition.
 func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
+	return l.executeAgentWithSuffix(ctx, agentName, "", "")
+}
+
+// executeAgentWithSuffix runs an agent with an optional task ID suffix to disambiguate
+// multiple tasks assigned to the same agent within a single wave.
+// taskDescription overrides l.cfg.Requirement for inbox/CLAUDE.md when non-empty.
+func (l *Loop) executeAgentWithSuffix(ctx context.Context, agentName, taskSuffix, taskDescription string) error {
 	agentCfg := l.findAgent(agentName)
 	if agentCfg == nil {
 		return fmt.Errorf("agent config not found: %s", agentName)
@@ -183,12 +192,21 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	agentCfg.ResolveDefaults(l.cfg.Config)
 
 	taskID := fmt.Sprintf("%s-%s", l.cfg.PipelineID, agentName)
+	if taskSuffix != "" {
+		taskID = fmt.Sprintf("%s-%s-%s", l.cfg.PipelineID, agentName, taskSuffix)
+	}
+
+	// Use task-specific description when provided (wave execution), else fall back to global requirement
+	description := l.cfg.Requirement
+	if taskDescription != "" {
+		description = taskDescription
+	}
 
 	// Build handoff context from blackboard
 	handoffCtx := l.buildHandoffContext(taskID)
 
 	// Write task to inbox
-	if err := l.writeTaskToInbox(agentName, taskID, handoffCtx); err != nil {
+	if err := l.writeTaskToInbox(agentName, taskID, description, handoffCtx); err != nil {
 		return fmt.Errorf("failed to write task for %s: %w", agentName, err)
 	}
 
@@ -197,7 +215,7 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	outboxPath := filepath.Join(outboxDir, taskID+".result.json")
 
 	// Build CLAUDE.md with concrete outbox path
-	claudeMD, err := l.buildClaudeMD(agentCfg, taskID, outboxPath, outboxDir)
+	claudeMD, err := l.buildClaudeMD(agentCfg, taskID, outboxPath, outboxDir, description)
 	if err != nil {
 		return fmt.Errorf("failed to build CLAUDE.md for %s: %w", agentName, err)
 	}
@@ -283,7 +301,9 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 
 	// Fallback: if agent didn't write outbox result, create one from stream-json output
 	if !foundOutbox && result.Stdout != "" {
-		l.createOutboxFromStream(agentName, taskID, result.Stdout)
+		if env := l.createOutboxFromStream(agentName, taskID, result.Stdout); env != nil {
+			lastEnvelope = env
+		}
 	}
 
 	l.mu.Lock()
@@ -297,36 +317,97 @@ func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
 	return nil
 }
 
+// runPMTaskBreakdown executes the PM agent and transitions to task review.
+func (l *Loop) runPMTaskBreakdown(ctx context.Context) error {
+	if err := l.executeAgent(ctx, "pm"); err != nil {
+		return err
+	}
+
+	// Extract task graph from PM outbox result (if available)
+	graph := l.extractTaskGraph()
+	if graph != nil {
+		if err := graph.Validate(); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ PM task graph validation failed, falling back to parallel execution: %v\n", err)
+			graph = nil
+		}
+	}
+	l.orch.Pipeline.TaskGraph = graph
+
+	return l.transitionTo(StageTaskReview)
+}
+
+// runTaskReview handles the task review gate between PM breakdown and agent execution.
+// If AutoApproveTaskReview is true or no PO agent is configured, it auto-approves.
+// Otherwise, it returns ErrInteractiveRequired for PO review.
+func (l *Loop) runTaskReview(ctx context.Context) error {
+	// Auto-approve if configured or PO agent not available
+	if l.cfg.Config.Runtime.AutoApproveTaskReview || l.findAgent("po") == nil {
+		fmt.Println("✓ Task review: auto-approved")
+		return l.transitionTo(StageAgentExecuting)
+	}
+
+	return ErrInteractiveRequired
+}
+
+// extractTaskGraph attempts to parse a TaskGraph from the last PM outbox result.
+// Returns nil if no task graph is found (legacy PM output).
+func (l *Loop) extractTaskGraph() *TaskGraph {
+	l.mu.Lock()
+	lastResult := l.lastResult
+	l.mu.Unlock()
+
+	if lastResult == nil {
+		return nil
+	}
+
+	bodyMap, ok := lastResult.Body.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	tasksRaw, ok := bodyMap["tasks"]
+	if !ok {
+		return nil
+	}
+
+	// Marshal/unmarshal through JSON for robust type conversion
+	data, err := json.Marshal(tasksRaw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to marshal PM tasks for task graph: %v\n", err)
+		return nil
+	}
+
+	var items []TaskItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to parse PM tasks as TaskGraph: %v\n", err)
+		return nil
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+
+	return &TaskGraph{Tasks: items}
+}
+
 // runAgentExecution runs implementation agents (potentially in parallel).
+// If a TaskGraph is available, it uses wave-based execution respecting dependencies.
+// Otherwise, it falls back to running all dev agents in parallel (legacy behavior).
 func (l *Loop) runAgentExecution(ctx context.Context) error {
 	devAgents := l.findDevAgents()
 	if len(devAgents) == 0 {
-		return fmt.Errorf("no dev agents configured (expected agents with name: backend-dev, frontend-dev, or fullstack)")
+		return fmt.Errorf("no dev agents configured (expected agents with type: dev)")
 	}
 
-	// Single agent: no need for goroutine overhead
-	if len(devAgents) == 1 {
-		if err := l.executeAgent(ctx, devAgents[0]); err != nil {
+	graph := l.orch.Pipeline.TaskGraph
+	if graph != nil {
+		// Assign agents to unassigned tasks
+		graph.AssignAgents(devAgents)
+		if err := l.runAgentsWave(ctx, graph, devAgents); err != nil {
 			return err
 		}
 	} else {
-		// Multiple agents: run in parallel with concurrency limit
-		maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
-		if maxConcurrent <= 0 {
-			maxConcurrent = 5
-		}
-
-		g, gctx := errgroup.WithContext(ctx)
-		g.SetLimit(maxConcurrent)
-
-		for _, name := range devAgents {
-			agentName := name // capture loop variable
-			g.Go(func() error {
-				return l.executeAgent(gctx, agentName)
-			})
-		}
-
-		if err := g.Wait(); err != nil {
+		if err := l.runAgentsParallel(ctx, devAgents); err != nil {
 			return err
 		}
 	}
@@ -339,6 +420,80 @@ func (l *Loop) runAgentExecution(ctx context.Context) error {
 	}
 
 	return l.transitionTo(StageVerification)
+}
+
+// runAgentsParallel runs all dev agents in parallel (legacy path).
+func (l *Loop) runAgentsParallel(ctx context.Context, devAgents []string) error {
+	if len(devAgents) == 1 {
+		return l.executeAgent(ctx, devAgents[0])
+	}
+
+	maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = min(len(devAgents), 5)
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrent)
+
+	for _, name := range devAgents {
+		agentName := name
+		g.Go(func() error {
+			return l.executeAgent(gctx, agentName)
+		})
+	}
+
+	return g.Wait()
+}
+
+// runAgentsWave executes tasks wave-by-wave respecting dependency order.
+// Tasks within the same wave run in parallel.
+func (l *Loop) runAgentsWave(ctx context.Context, graph *TaskGraph, devAgents []string) error {
+	waves, err := graph.TopoSort()
+	if err != nil {
+		return fmt.Errorf("task graph toposort failed: %w", err)
+	}
+
+	maxConcurrent := l.cfg.Config.Runtime.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = min(len(devAgents), 5)
+	}
+
+	for i, wave := range waves {
+		fmt.Printf("▶ Wave %d: %d tasks\n", i+1, len(wave))
+
+		if len(wave) == 1 {
+			agentName := wave[0].AgentName
+			if agentName == "" {
+				agentName = devAgents[0]
+			}
+			if err := l.executeAgentWithSuffix(ctx, agentName, wave[0].ID, wave[0].Description); err != nil {
+				return err
+			}
+			continue
+		}
+
+		g, gctx := errgroup.WithContext(ctx)
+		g.SetLimit(maxConcurrent)
+
+		for _, task := range wave {
+			agentName := task.AgentName
+			if agentName == "" {
+				agentName = devAgents[0]
+			}
+			taskID := task.ID
+			taskDesc := task.Description
+			g.Go(func() error {
+				return l.executeAgentWithSuffix(gctx, agentName, taskID, taskDesc)
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // runVerification executes build/test/lint commands.
@@ -512,28 +667,29 @@ func (l *Loop) findAgent(name string) *config.AgentConfig {
 	return nil
 }
 
-// findDevAgents returns agent names matching known dev agent names.
-// Recognized names: backend-dev, frontend-dev, fullstack.
+// findDevAgents returns agent names with type "dev".
+// Agents are resolved via ResolveDefaults which infers type from name for backward compatibility.
 func (l *Loop) findDevAgents() []string {
 	var devs []string
-	devAgentNames := map[string]bool{
-		"backend-dev":  true,
-		"frontend-dev": true,
-		"fullstack":    true,
-	}
 
-	for name := range l.cfg.Agents {
-		if devAgentNames[name] {
+	for name, agentCfg := range l.cfg.Agents {
+		agentCfg.ResolveDefaults(l.cfg.Config)
+		if agentCfg.Type == "dev" {
 			devs = append(devs, name)
 		}
 	}
 
-	// Also check project-assigned agents (only if they match devAgentNames)
+	// Also check project-assigned agents with type "dev"
 	if len(l.cfg.Projects) > 0 {
 		for _, p := range l.cfg.Projects {
 			if pCfg, ok := l.cfg.Config.Projects[p.Name]; ok {
 				for _, a := range pCfg.Agents {
-					if devAgentNames[a] && l.findAgent(a) != nil && !containsStr(devs, a) {
+					ac := l.findAgent(a)
+					if ac == nil {
+						continue
+					}
+					ac.ResolveDefaults(l.cfg.Config)
+					if ac.Type == "dev" && !containsStr(devs, a) {
 						devs = append(devs, a)
 					}
 				}
@@ -606,13 +762,13 @@ func (l *Loop) mergeAgentBranches(agentNames []string) error {
 	return nil
 }
 
-func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgContext) error {
+func (l *Loop) writeTaskToInbox(agentName, taskID, description string, msgCtx *protocol.MsgContext) error {
 	msg := protocol.NewMessage(protocol.MsgTaskAssign, "orchestrator", agentName)
-	msg.Subject = fmt.Sprintf("Task: %s", l.cfg.Requirement)
+	msg.Subject = fmt.Sprintf("Task: %s", description)
 	msg.Context = msgCtx
 	msg.Body = protocol.TaskAssignBody{
 		TaskID:      taskID,
-		Description: l.cfg.Requirement,
+		Description: description,
 		Branch:      l.cfg.Branch,
 	}
 	if err := protocol.WriteTask(l.inboxDir, agentName, msg); err != nil {
@@ -639,7 +795,7 @@ func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgCo
 	return nil
 }
 
-func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, outboxDir string) (string, error) {
+func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, outboxDir, description string) (string, error) {
 	builder := &agent.ClaudeMDBuilder{MaxLines: 200}
 
 	var projectMemory string
@@ -654,7 +810,7 @@ func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, o
 
 	return builder.Build(agent.BuildInput{
 		CommunicationRules: agent.CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir),
-		TaskContext:        fmt.Sprintf("태스크: %s\n역할: %s", l.cfg.Requirement, agentCfg.Role),
+		TaskContext:        fmt.Sprintf("태스크: %s\n역할: %s", description, agentCfg.Role),
 		CompactionRules:    agent.DefaultCompactionRules(),
 		ProjectMemory:      projectMemory,
 	})
@@ -730,7 +886,8 @@ func (l *Loop) storeAgentResult(data *agentResultData) {
 
 // createOutboxFromStream parses stream-json output and creates an outbox result file.
 // This is the fallback when the agent doesn't write its own outbox result.
-func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
+// Returns the created envelope so callers can use it as lastResult.
+func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) *protocol.MessageEnvelope {
 	sr := ParseStreamJSON(stdout)
 
 	summary := sr.Summary
@@ -760,7 +917,7 @@ func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
 
 	if err := protocol.WriteResult(l.watcher.OutboxDir, agentName, msg); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ failed to write fallback outbox for %s: %v\n", agentName, err)
-		return
+		return nil
 	}
 
 	// Record as processed in message_queue to prevent duplicate processing by future PollOnce() calls
@@ -776,6 +933,8 @@ func (l *Loop) createOutboxFromStream(agentName, taskID, stdout string) {
 	}
 	data := l.extractAgentResult(wr)
 	l.storeAgentResult(data)
+
+	return msg
 }
 
 func (l *Loop) writeFixRequest(results []VerifyResult) error {

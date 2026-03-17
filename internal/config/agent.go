@@ -14,6 +14,7 @@ type AgentConfig struct {
 	// YAML frontmatter fields (between --- delimiters)
 	Name           string            `yaml:"name"`
 	Role           string            `yaml:"role"`
+	Type           string            `yaml:"type"`
 	Backend        string            `yaml:"backend"`
 	Scope          []string          `yaml:"scope"`
 	Tools          []string          `yaml:"tools"`
@@ -114,16 +115,35 @@ func splitFrontmatter(content string) (string, string, error) {
 	return frontmatter, body, nil
 }
 
+// InferAgentType infers the agent type from the agent name.
+// Known dev agent names map to "dev" type for backward compatibility
+// with configurations that don't specify the type field explicitly.
+func InferAgentType(name string) string {
+	devNames := map[string]bool{
+		"backend-dev":  true,
+		"frontend-dev": true,
+		"fullstack":    true,
+	}
+	if devNames[name] {
+		return "dev"
+	}
+	return ""
+}
+
 // ResolveDefaults fills in missing agent fields with values from the global config.
 // Spec Reference: Section 5 "frontmatter field spec" - default value inheritance
 //
 // Inheritance rules:
+//   - type <- InferAgentType(name) if empty
 //   - backend <- config.yml runtime.backend
 //   - maxTurns <- config.yml runtime.max_turns
 //   - permissionMode <- config.yml runtime.permission_mode
 //   - isolation <- "worktree" (hardcoded default)
 //   - env <- config.yml runtime.env merged with agent env (agent takes precedence)
 func (a *AgentConfig) ResolveDefaults(cfg *Config) {
+	if a.Type == "" {
+		a.Type = InferAgentType(a.Name)
+	}
 	if a.Backend == "" {
 		a.Backend = cfg.Runtime.Backend
 	}
