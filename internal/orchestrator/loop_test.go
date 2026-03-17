@@ -29,6 +29,10 @@ func (m *testExecutor) ExecInteractive(cfg executor.ExecConfig) error {
 	return fmt.Errorf("interactive not supported in test")
 }
 
+func (m *testExecutor) RunInteractive(cfg executor.ExecConfig) error {
+	return fmt.Errorf("run interactive not supported in test")
+}
+
 func (m *testExecutor) RunHeadless(cfg executor.ExecConfig) (*executor.ExecResult, error) {
 	m.mu.Lock()
 	m.runCalls = append(m.runCalls, cfg)

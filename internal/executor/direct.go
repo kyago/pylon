@@ -77,6 +77,29 @@ func (d *DirectExecutor) ExecInteractive(cfg ExecConfig) error {
 	return syscall.Exec(binPath, argv, env)
 }
 
+// RunInteractive runs a child process with inherited stdin/stdout/stderr.
+// The parent process remains alive, unlike ExecInteractive which replaces it.
+func (d *DirectExecutor) RunInteractive(cfg ExecConfig) error {
+	binPath, err := exec.LookPath(cfg.Command)
+	if err != nil {
+		return fmt.Errorf("command not found: %s: %w", cfg.Command, err)
+	}
+
+	cmd := exec.Command(binPath, cfg.Args...)
+	if cfg.WorkDir != "" {
+		cmd.Dir = cfg.WorkDir
+	}
+	if env := buildEnv(cfg.Env); env != nil {
+		cmd.Env = env
+	}
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
 // RunHeadless runs a child process and captures its output.
 func (d *DirectExecutor) RunHeadless(cfg ExecConfig) (*ExecResult, error) {
 	binPath, err := exec.LookPath(cfg.Command)

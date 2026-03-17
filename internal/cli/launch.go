@@ -1,15 +1,20 @@
 package cli
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/dashboard"
 	"github.com/kyago/pylon/internal/executor"
 	"github.com/kyago/pylon/internal/store"
 )
@@ -50,9 +55,9 @@ func runLaunch() error {
 	if _, err := os.Stat(dbPath); err == nil {
 		s, err := store.NewStore(dbPath)
 		if err == nil {
-			defer s.Close()
 			_ = s.Migrate()
 			memoryContext = buildMemoryContext(s, projects)
+			s.Close() // 즉시 닫기 — runWithDashboard에서 별도 Store를 열므로 동시 연결 방지
 		}
 	}
 
@@ -70,9 +75,13 @@ func runLaunch() error {
 		return err
 	}
 
-	// Step 7: Launch Claude Code directly
-	exec := executor.NewDirectExecutor()
+	// Step 7: Launch Claude Code
+	if cfg.Dashboard.AutoDashboard {
+		return runWithDashboard(root, cfg, permMode)
+	}
 
+	// Default: replace process with claude (no dashboard)
+	exec := executor.NewDirectExecutor()
 	fmt.Println("Claude Code를 시작합니다...")
 	return exec.ExecInteractive(executor.ExecConfig{
 		Name:    "claude",
@@ -81,6 +90,93 @@ func runLaunch() error {
 		WorkDir: root,
 		Env:     cfg.Runtime.Env,
 	})
+}
+
+// runWithDashboard launches the dashboard in background and Claude Code as a child process.
+// When Claude Code exits, the dashboard is automatically shut down via context cancellation.
+func runWithDashboard(root string, cfg *config.Config, permMode string) error {
+	// Check if a dashboard is already running for this workspace
+	if existing := checkExistingDashboard(root); existing != nil {
+		fmt.Printf("📊 대시보드 이미 실행 중: http://%s:%d\n", existing.Host, existing.Port)
+		fmt.Println("Claude Code를 시작합니다...")
+
+		// Use ExecInteractive (no need to keep parent alive)
+		exec := executor.NewDirectExecutor()
+		return exec.ExecInteractive(executor.ExecConfig{
+			Name:    "claude",
+			Command: "claude",
+			Args:    buildClaudeArgs(cfg, permMode),
+			WorkDir: root,
+			Env:     cfg.Runtime.Env,
+		})
+	}
+
+	// Open store for dashboard
+	dbPath := filepath.Join(root, ".pylon", "pylon.db")
+	s, err := store.NewStore(dbPath)
+	if err != nil {
+		return fmt.Errorf("대시보드용 스토어 열기 실패: %w", err)
+	}
+	defer s.Close()
+	_ = s.Migrate()
+
+	// Derive workspace name from directory basename
+	wsName := filepath.Base(root)
+
+	// Create dashboard server
+	srv, err := dashboard.NewServer(s, &cfg.Dashboard, &cfg.Runtime, wsName)
+	if err != nil {
+		return fmt.Errorf("대시보드 서버 생성 실패: %w", err)
+	}
+
+	// Listen with port fallback (configured port → OS-assigned free port)
+	ln, err := srv.Listen()
+	if err != nil {
+		return fmt.Errorf("대시보드 포트 바인딩 실패: %w", err)
+	}
+	actualPort := ln.Addr().(*net.TCPAddr).Port
+
+	// Write dashboard info for other pylon instances to discover
+	if err := writeDashboardInfo(root, cfg.Dashboard.Host, actualPort); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ 대시보드 정보 기록 실패: %v\n", err)
+	}
+	defer removeDashboardInfo(root)
+
+	// Start dashboard in background goroutine
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dashDone := make(chan struct{})
+	go func() {
+		defer close(dashDone)
+		if err := srv.Serve(ctx, ln); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠ 대시보드 오류: %v\n", err)
+		}
+	}()
+
+	// Ignore SIGINT/SIGTERM in parent — let Claude Code (child) handle them.
+	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Reset(syscall.SIGINT, syscall.SIGTERM)
+
+	fmt.Printf("📊 대시보드: http://%s:%d (%s)\n", cfg.Dashboard.Host, actualPort, wsName)
+	fmt.Println("Claude Code를 시작합니다...")
+
+	// Launch Claude Code as child process (parent stays alive for dashboard)
+	exec := executor.NewDirectExecutor()
+	claudeErr := exec.RunInteractive(executor.ExecConfig{
+		Name:    "claude",
+		Command: "claude",
+		Args:    buildClaudeArgs(cfg, permMode),
+		WorkDir: root,
+		Env:     cfg.Runtime.Env,
+	})
+
+	// Claude exited → stop dashboard
+	fmt.Println("\n📊 대시보드를 종료합니다...")
+	cancel()
+	<-dashDone
+
+	return claudeErr
 }
 
 // selectPermissionMode presents an interactive selector for Claude Code permission mode.

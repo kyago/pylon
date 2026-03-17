@@ -138,15 +138,11 @@ func (p *Poller) poll() {
 	}
 
 	if runningAgents != prevRunning {
-		maxConcurrent := 5
-		if p.runtimeCfg != nil {
-			maxConcurrent = p.runtimeCfg.MaxConcurrent
-		}
 		p.hub.Publish(SSEEvent{
 			Type: "concurrency_update",
 			Data: map[string]any{
 				"running_agents": runningAgents,
-				"max_concurrent": maxConcurrent,
+				"max_concurrent": p.runtimeCfg.MaxConcurrent,
 			},
 		})
 	}

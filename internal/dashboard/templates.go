@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/kyago/pylon/internal/domain"
@@ -28,7 +29,7 @@ type TemplateRenderer struct {
 }
 
 // NewTemplateRenderer parses all embedded templates with helper functions.
-func NewTemplateRenderer() (*TemplateRenderer, error) {
+func NewTemplateRenderer(workspaceName string) (*TemplateRenderer, error) {
 	funcMap := template.FuncMap{
 		"stageIndex": stageIndex,
 		"stageLabel": stageLabel,
@@ -51,6 +52,12 @@ func NewTemplateRenderer() (*TemplateRenderer, error) {
 				return s
 			}
 			return s[:n] + "..."
+		},
+		"join": func(ss []string, sep string) string {
+			return strings.Join(ss, sep)
+		},
+		"workspaceName": func() string {
+			return workspaceName
 		},
 		"statusClass": func(status string) string {
 			switch status {
@@ -96,6 +103,7 @@ func stageLabel(stage string) string {
 		"po_conversation":    "PO Conv",
 		"architect_analysis": "Architect",
 		"pm_task_breakdown":  "PM Tasks",
+		"task_review":        "Task Review",
 		"agent_executing":    "Executing",
 		"verification":       "Verify",
 		"pr_creation":        "PR Create",

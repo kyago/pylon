@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -15,6 +16,14 @@ import (
 
 // --- View Models ---
 
+// TaskItemView represents a task within a task graph for template rendering.
+type TaskItemView struct {
+	ID          string
+	Description string
+	AgentName   string
+	DependsOn   []string
+}
+
 // PipelineView is the template-friendly representation of a pipeline.
 type PipelineView struct {
 	ID           string
@@ -24,6 +33,7 @@ type PipelineView struct {
 	TaskSpec     string
 	Agents       map[string]AgentView
 	History      []TransitionView
+	TaskGraph    []TaskItemView
 	Attempts     int
 	MaxAttempts  int
 	CreatedAt    time.Time
@@ -117,6 +127,16 @@ func pipelineRecordToView(rec store.PipelineRecord) PipelineView {
 				To:          string(h.To),
 				CompletedAt: h.CompletedAt,
 			})
+		}
+		if pipeline.TaskGraph != nil {
+			for _, t := range pipeline.TaskGraph.Tasks {
+				view.TaskGraph = append(view.TaskGraph, TaskItemView{
+					ID:          t.ID,
+					Description: t.Description,
+					AgentName:   t.AgentName,
+					DependsOn:   t.DependsOn,
+				})
+			}
 		}
 	}
 
@@ -360,10 +380,7 @@ func (srv *Server) buildOverviewData(r *http.Request) (*OverviewData, error) {
 		return nil, err
 	}
 
-	maxConcurrent := 5
-	if srv.runtimeCfg != nil {
-		maxConcurrent = srv.runtimeCfg.MaxConcurrent
-	}
+	maxConcurrent := srv.runtimeCfg.MaxConcurrent
 
 	return &OverviewData{
 		Pipelines: views,
@@ -469,10 +486,12 @@ func (srv *Server) renderHTML(w http.ResponseWriter, tmplName string, data any) 
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	buf.WriteTo(w)
+	_, _ = buf.WriteTo(w)
 }
 
 func writeJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("writeJSON encode error: %v", err)
+	}
 }

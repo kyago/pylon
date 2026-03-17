@@ -52,6 +52,13 @@ func TestTaskGraph_TopoSort_Parallel(t *testing.T) {
 	if len(waves[0]) != 2 {
 		t.Errorf("wave 0: expected 2 tasks, got %d", len(waves[0]))
 	}
+	// Verify deterministic ordering within wave (follows g.Tasks input order)
+	if waves[0][0].ID != "a" {
+		t.Errorf("wave 0[0]: expected a, got %s", waves[0][0].ID)
+	}
+	if waves[0][1].ID != "b" {
+		t.Errorf("wave 0[1]: expected b, got %s", waves[0][1].ID)
+	}
 	if len(waves[1]) != 1 {
 		t.Errorf("wave 1: expected 1 task, got %d", len(waves[1]))
 	}
