@@ -55,9 +55,9 @@ func runLaunch() error {
 	if _, err := os.Stat(dbPath); err == nil {
 		s, err := store.NewStore(dbPath)
 		if err == nil {
-			defer s.Close()
 			_ = s.Migrate()
 			memoryContext = buildMemoryContext(s, projects)
+			s.Close() // 즉시 닫기 — runWithDashboard에서 별도 Store를 열므로 동시 연결 방지
 		}
 	}
 

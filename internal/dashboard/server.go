@@ -117,6 +117,7 @@ func (srv *Server) Listen() (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		// Port busy — try OS-assigned free port
+		log.Printf("Dashboard: port %d unavailable (%v), falling back to random port", srv.cfg.Port, err)
 		ln, err = net.Listen("tcp", fmt.Sprintf("%s:0", srv.cfg.Host))
 		if err != nil {
 			return nil, fmt.Errorf("failed to listen: %w", err)
