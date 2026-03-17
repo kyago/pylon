@@ -33,6 +33,10 @@ type ProcessExecutor interface {
 	// Used for the root agent where pylon hands off to claude CLI.
 	ExecInteractive(cfg ExecConfig) error
 
+	// RunInteractive runs a child process with inherited stdin/stdout/stderr.
+	// Unlike ExecInteractive, the parent process stays alive (for background tasks like dashboard).
+	RunInteractive(cfg ExecConfig) error
+
 	// RunHeadless runs a child process, captures output, and returns the result.
 	// Used for CLI-triggered tasks like `pylon index`.
 	RunHeadless(cfg ExecConfig) (*ExecResult, error)

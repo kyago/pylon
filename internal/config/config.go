@@ -78,8 +78,9 @@ type WikiConfig struct {
 // DashboardConfig defines web dashboard settings.
 // Spec Reference: Section 16 "dashboard"
 type DashboardConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host          string `yaml:"host"`
+	Port          int    `yaml:"port"`
+	AutoDashboard bool   `yaml:"auto_dashboard"`
 }
 
 // MemoryConfig defines agent memory management settings.

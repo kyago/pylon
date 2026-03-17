@@ -31,6 +31,10 @@ func (m *multiStageExecutor) ExecInteractive(cfg executor.ExecConfig) error {
 	return fmt.Errorf("interactive not supported")
 }
 
+func (m *multiStageExecutor) RunInteractive(cfg executor.ExecConfig) error {
+	return fmt.Errorf("run interactive not supported")
+}
+
 func (m *multiStageExecutor) RunHeadless(cfg executor.ExecConfig) (*executor.ExecResult, error) {
 	m.calls = append(m.calls, cfg)
 	idx := m.callIndex

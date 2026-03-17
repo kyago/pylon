@@ -24,6 +24,10 @@ func (m *mockExecutor) ExecInteractive(cfg executor.ExecConfig) error {
 	return fmt.Errorf("not implemented in mock")
 }
 
+func (m *mockExecutor) RunInteractive(cfg executor.ExecConfig) error {
+	return fmt.Errorf("not implemented in mock")
+}
+
 func (m *mockExecutor) RunHeadless(cfg executor.ExecConfig) (*executor.ExecResult, error) {
 	m.lastCfg = cfg
 	return m.result, m.err
