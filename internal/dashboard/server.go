@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -44,27 +45,35 @@ type DashboardStore interface {
 
 // Server is the dashboard HTTP server.
 type Server struct {
-	router     chi.Router
-	store      DashboardStore
-	cfg        *config.DashboardConfig
-	hub        *SSEHub
-	templates  *TemplateRenderer
-	runtimeCfg *config.RuntimeConfig
+	router        chi.Router
+	store         DashboardStore
+	cfg           *config.DashboardConfig
+	hub           *SSEHub
+	templates     *TemplateRenderer
+	runtimeCfg    *config.RuntimeConfig
+	WorkspaceName string // displayed in dashboard header
 }
 
 // NewServer creates a new dashboard server with all routes registered.
-func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config.RuntimeConfig) (*Server, error) {
-	tmpl, err := NewTemplateRenderer()
+// workspaceName is displayed in the dashboard header to identify the workspace.
+func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config.RuntimeConfig, workspaceName ...string) (*Server, error) {
+	wsName := ""
+	if len(workspaceName) > 0 {
+		wsName = workspaceName[0]
+	}
+
+	tmpl, err := NewTemplateRenderer(wsName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load templates: %w", err)
 	}
 
 	srv := &Server{
-		store:      s,
-		cfg:        cfg,
-		hub:        NewSSEHub(),
-		templates:  tmpl,
-		runtimeCfg: runtimeCfg,
+		store:         s,
+		cfg:           cfg,
+		hub:           NewSSEHub(),
+		templates:     tmpl,
+		runtimeCfg:    runtimeCfg,
+		WorkspaceName: wsName,
 	}
 
 	r := chi.NewRouter()
@@ -106,16 +115,29 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config
 	return srv, nil
 }
 
-// Start runs the HTTP server with graceful shutdown.
-func (srv *Server) Start(ctx context.Context) error {
+// Listen creates a TCP listener on the configured port.
+// If the port is already in use, it falls back to an OS-assigned free port.
+func (srv *Server) Listen() (net.Listener, error) {
+	addr := fmt.Sprintf("%s:%d", srv.cfg.Host, srv.cfg.Port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		// Port busy — try OS-assigned free port
+		ln, err = net.Listen("tcp", fmt.Sprintf("%s:0", srv.cfg.Host))
+		if err != nil {
+			return nil, fmt.Errorf("failed to listen: %w", err)
+		}
+	}
+	return ln, nil
+}
+
+// Serve starts the SSE hub, poller, and HTTP server on the given listener.
+func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 	go srv.hub.Run(ctx)
 
 	poller := NewPoller(srv.store, srv.hub, srv.runtimeCfg)
 	go poller.Run(ctx)
 
-	addr := fmt.Sprintf("%s:%d", srv.cfg.Host, srv.cfg.Port)
 	httpSrv := &http.Server{
-		Addr:    addr,
 		Handler: srv.router,
 	}
 
@@ -126,9 +148,18 @@ func (srv *Server) Start(ctx context.Context) error {
 		httpSrv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("Dashboard: http://%s", addr)
-	if err := httpSrv.ListenAndServe(); err != http.ErrServerClosed {
+	if err := httpSrv.Serve(ln); err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
+}
+
+// Start runs the HTTP server with graceful shutdown (backward compatible).
+func (srv *Server) Start(ctx context.Context) error {
+	ln, err := srv.Listen()
+	if err != nil {
+		return err
+	}
+	log.Printf("Dashboard: http://%s", ln.Addr().String())
+	return srv.Serve(ctx, ln)
 }

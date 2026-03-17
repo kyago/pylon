@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -94,6 +95,22 @@ func runLaunch() error {
 // runWithDashboard launches the dashboard in background and Claude Code as a child process.
 // When Claude Code exits, the dashboard is automatically shut down via context cancellation.
 func runWithDashboard(root string, cfg *config.Config, permMode string) error {
+	// Check if a dashboard is already running for this workspace
+	if existingPort := checkExistingDashboard(root); existingPort > 0 {
+		fmt.Printf("📊 대시보드 이미 실행 중: http://%s:%d\n", cfg.Dashboard.Host, existingPort)
+		fmt.Println("Claude Code를 시작합니다...")
+
+		// Use ExecInteractive (no need to keep parent alive)
+		exec := executor.NewDirectExecutor()
+		return exec.ExecInteractive(executor.ExecConfig{
+			Name:    "claude",
+			Command: "claude",
+			Args:    buildClaudeArgs(cfg, permMode),
+			WorkDir: root,
+			Env:     cfg.Runtime.Env,
+		})
+	}
+
 	// Open store for dashboard
 	dbPath := filepath.Join(root, ".pylon", "pylon.db")
 	s, err := store.NewStore(dbPath)
@@ -103,11 +120,27 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	defer s.Close()
 	_ = s.Migrate()
 
+	// Derive workspace name from directory basename
+	wsName := filepath.Base(root)
+
 	// Create dashboard server
-	srv, err := dashboard.NewServer(s, &cfg.Dashboard, &cfg.Runtime)
+	srv, err := dashboard.NewServer(s, &cfg.Dashboard, &cfg.Runtime, wsName)
 	if err != nil {
 		return fmt.Errorf("대시보드 서버 생성 실패: %w", err)
 	}
+
+	// Listen with port fallback (configured port → OS-assigned free port)
+	ln, err := srv.Listen()
+	if err != nil {
+		return fmt.Errorf("대시보드 포트 바인딩 실패: %w", err)
+	}
+	actualPort := ln.Addr().(*net.TCPAddr).Port
+
+	// Write dashboard info for other pylon instances to discover
+	if err := writeDashboardInfo(root, actualPort); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ 대시보드 정보 기록 실패: %v\n", err)
+	}
+	defer removeDashboardInfo(root)
 
 	// Start dashboard in background goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,13 +149,12 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	dashDone := make(chan struct{})
 	go func() {
 		defer close(dashDone)
-		if err := srv.Start(ctx); err != nil {
+		if err := srv.Serve(ctx, ln); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠ 대시보드 오류: %v\n", err)
 		}
 	}()
 
 	// Ignore SIGINT/SIGTERM in parent — let Claude Code (child) handle them.
-	// This prevents Ctrl+C from killing the parent while Claude Code is running.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -132,7 +164,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 		}
 	}()
 
-	fmt.Printf("📊 대시보드: http://%s:%d\n", cfg.Dashboard.Host, cfg.Dashboard.Port)
+	fmt.Printf("📊 대시보드: http://%s:%d (%s)\n", cfg.Dashboard.Host, actualPort, wsName)
 	fmt.Println("Claude Code를 시작합니다...")
 
 	// Launch Claude Code as child process (parent stays alive for dashboard)

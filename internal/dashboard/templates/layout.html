@@ -2,7 +2,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pylon Dashboard</title>
+    <title>Pylon{{if workspaceName}} — {{workspaceName}}{{end}}</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/htmx.min.js"></script>
     <script src="/static/htmx-sse.js"></script>
@@ -14,6 +14,7 @@
     <div class="nav-brand">
         <span class="nav-logo">⬡</span>
         <span class="nav-title">Pylon</span>
+        {{if workspaceName}}<span class="nav-workspace">{{workspaceName}}</span>{{end}}
     </div>
     <div class="nav-links">
         <a href="/" hx-get="/" hx-target="#main" hx-push-url="true" class="nav-link">Overview</a>

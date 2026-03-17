@@ -29,7 +29,7 @@ type TemplateRenderer struct {
 }
 
 // NewTemplateRenderer parses all embedded templates with helper functions.
-func NewTemplateRenderer() (*TemplateRenderer, error) {
+func NewTemplateRenderer(workspaceName string) (*TemplateRenderer, error) {
 	funcMap := template.FuncMap{
 		"stageIndex": stageIndex,
 		"stageLabel": stageLabel,
@@ -55,6 +55,9 @@ func NewTemplateRenderer() (*TemplateRenderer, error) {
 		},
 		"join": func(ss []string, sep string) string {
 			return strings.Join(ss, sep)
+		},
+		"workspaceName": func() string {
+			return workspaceName
 		},
 		"statusClass": func(status string) string {
 			switch status {

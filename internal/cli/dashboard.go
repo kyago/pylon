@@ -3,7 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -22,26 +25,45 @@ pipeline status, agent activity, and message queue state.
 
 Spec Reference: Section 7 "pylon dashboard"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, cfg, s, err := openWorkspaceStore()
+			root, cfg, s, err := openWorkspaceStore()
 			if err != nil {
 				return err
 			}
 			defer s.Close()
+
+			// Check if dashboard already running for this workspace
+			if existingPort := checkExistingDashboard(root); existingPort > 0 {
+				return fmt.Errorf("대시보드가 이미 실행 중입니다: http://%s:%d", cfg.Dashboard.Host, existingPort)
+			}
 
 			dashCfg := cfg.Dashboard
 			if port > 0 {
 				dashCfg.Port = port
 			}
 
-			srv, err := dashboard.NewServer(s, &dashCfg, &cfg.Runtime)
+			wsName := filepath.Base(root)
+			srv, err := dashboard.NewServer(s, &dashCfg, &cfg.Runtime, wsName)
 			if err != nil {
 				return fmt.Errorf("failed to create dashboard server: %w", err)
 			}
 
+			// Write dashboard info for discovery by other pylon instances
+			ln, err := srv.Listen()
+			if err != nil {
+				return fmt.Errorf("대시보드 포트 바인딩 실패: %w", err)
+			}
+			actualPort := ln.Addr().(*net.TCPAddr).Port
+
+			if err := writeDashboardInfo(root, actualPort); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠ 대시보드 정보 기록 실패: %v\n", err)
+			}
+			defer removeDashboardInfo(root)
+
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			return srv.Start(ctx)
+			fmt.Printf("📊 대시보드: http://%s:%d (%s)\n", cfg.Dashboard.Host, actualPort, wsName)
+			return srv.Serve(ctx, ln)
 		},
 	}
 
