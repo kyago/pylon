@@ -26,13 +26,14 @@ type Config struct {
 // RuntimeConfig defines agent runtime settings.
 // Spec Reference: Section 16 "runtime"
 type RuntimeConfig struct {
-	Backend        string            `yaml:"backend"`
-	MaxConcurrent  int               `yaml:"max_concurrent"`
-	TaskTimeout    string            `yaml:"task_timeout"`
-	MaxAttempts    int               `yaml:"max_attempts"`
-	MaxTurns       int               `yaml:"max_turns"`
-	PermissionMode string            `yaml:"permission_mode"`
-	Env            map[string]string `yaml:"env"`
+	Backend              string            `yaml:"backend"`
+	MaxConcurrent        int               `yaml:"max_concurrent"`
+	TaskTimeout          string            `yaml:"task_timeout"`
+	MaxAttempts          int               `yaml:"max_attempts"`
+	MaxTurns             int               `yaml:"max_turns"`
+	PermissionMode       string            `yaml:"permission_mode"`
+	AutoApproveTaskReview bool             `yaml:"auto_approve_task_review"`
+	Env                  map[string]string `yaml:"env"`
 }
 
 // GitConfig defines git integration settings.

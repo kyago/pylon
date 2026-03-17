@@ -145,6 +145,59 @@ func runRequest(cmd *cobra.Command, args []string) error {
 	err = loop.Run(ctx)
 
 	if errors.Is(err, orchestrator.ErrInteractiveRequired) {
+		orch := loop.GetOrchestrator()
+		currentStage := orch.Pipeline.CurrentStage
+
+		if currentStage == orchestrator.StageTaskReview {
+			// Task review stage — launch PO for reviewing PM's task breakdown
+			fmt.Println("🔍 PM 태스크 분해 결과를 PO가 검토합니다...")
+			fmt.Println()
+			fmt.Printf("  검토 완료 후 headless 실행: pylon request --continue %s \"%s\"\n", pipelineID, requirement)
+			fmt.Println()
+
+			poAgent := agents["po"]
+			if poAgent == nil {
+				return fmt.Errorf("PO agent not found in workspace agents")
+			}
+			poAgent.ResolveDefaults(cfg)
+
+			poRunner := agent.NewRunner(executor.NewDirectExecutor())
+			claudeMD, buildErr := (&agent.ClaudeMDBuilder{MaxLines: 200}).Build(agent.BuildInput{
+				CommunicationRules: agent.DefaultCommunicationRules(),
+				TaskContext:        fmt.Sprintf("태스크 검토: %s\nPM이 분해한 태스크를 검토하고 승인/수정해주세요.", requirement),
+				CompactionRules:    agent.DefaultCompactionRules(),
+			})
+			if buildErr != nil {
+				return fmt.Errorf("failed to build CLAUDE.md for PO: %w", buildErr)
+			}
+
+			if _, lookErr := exec.LookPath("claude"); lookErr != nil {
+				return fmt.Errorf("claude CLI not found: %w", lookErr)
+			}
+
+			// Transition past task_review for the --continue path
+			if err := orch.TransitionTo(orchestrator.StageAgentExecuting); err != nil {
+				return fmt.Errorf("failed to transition to agent executing: %w", err)
+			}
+
+			execErr := poRunner.Executor.ExecInteractive(executor.ExecConfig{
+				Name:    "po",
+				Command: "claude",
+				Args: poRunner.BuildArgs(agent.RunConfig{
+					Agent:       poAgent,
+					Global:      cfg,
+					Interactive: true,
+					ClaudeMD:    claudeMD,
+				}),
+				WorkDir: projects[0].Path,
+				Env:     agent.ResolveEnv(cfg.Runtime.Env, poAgent.Env),
+			})
+
+			// ExecInteractive returns only on failure — rollback state
+			_ = orch.ForceStage(orchestrator.StageTaskReview)
+			return fmt.Errorf("failed to launch PO agent for task review: %w", execErr)
+		}
+
 		// PO conversation stage reached — launch PO interactively
 		fmt.Println("🚀 PO 에이전트와 대화를 시작합니다...")
 		fmt.Println()
@@ -175,7 +228,6 @@ func runRequest(cmd *cobra.Command, args []string) error {
 
 		// Transition past PO for the --continue path
 		// (ExecInteractive replaces the process on success, so state must be saved before)
-		orch := loop.GetOrchestrator()
 		if err := orch.TransitionTo(orchestrator.StageArchitectAnalysis); err != nil {
 			return fmt.Errorf("failed to transition to architect analysis: %w", err)
 		}

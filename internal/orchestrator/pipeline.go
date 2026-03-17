@@ -19,6 +19,7 @@ const (
 	StagePOConversation    = domain.StagePOConversation
 	StageArchitectAnalysis = domain.StageArchitectAnalysis
 	StagePMTaskBreakdown   = domain.StagePMTaskBreakdown
+	StageTaskReview        = domain.StageTaskReview
 	StageAgentExecuting    = domain.StageAgentExecuting
 	StageVerification      = domain.StageVerification
 	StagePRCreation        = domain.StagePRCreation
@@ -33,7 +34,8 @@ var validTransitions = map[Stage][]Stage{
 	StageInit:              {StagePOConversation, StageFailed},
 	StagePOConversation:    {StageArchitectAnalysis, StageFailed},
 	StageArchitectAnalysis: {StagePMTaskBreakdown, StageFailed},
-	StagePMTaskBreakdown:   {StageAgentExecuting, StageFailed},
+	StagePMTaskBreakdown:   {StageTaskReview, StageFailed},
+	StageTaskReview:        {StageAgentExecuting, StageFailed},
 	StageAgentExecuting:    {StageVerification, StageFailed},
 	StageVerification:      {StageAgentExecuting, StagePRCreation, StageFailed}, // retry or proceed
 	StagePRCreation:        {StagePOValidation, StageWikiUpdate, StageFailed},
@@ -71,6 +73,7 @@ type Pipeline struct {
 	History      []StageTransition      `json:"stage_history,omitempty"`
 	Attempts     int                    `json:"attempts,omitempty"`
 	MaxAttempts  int                    `json:"max_attempts,omitempty"`
+	TaskGraph    *TaskGraph             `json:"task_graph,omitempty"`
 	CreatedAt    time.Time              `json:"created_at"`
 }
 
