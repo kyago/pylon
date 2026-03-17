@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -162,9 +163,17 @@ func runRequest(cmd *cobra.Command, args []string) error {
 			poAgent.ResolveDefaults(cfg)
 
 			poRunner := agent.NewRunner(executor.NewDirectExecutor())
+			// Build task context with TaskGraph details for PO review
+			taskCtx := fmt.Sprintf("태스크 검토: %s\nPM이 분해한 태스크를 검토하고 승인/수정해주세요.", requirement)
+			if orch.Pipeline.TaskGraph != nil {
+				if graphJSON, jsonErr := json.MarshalIndent(orch.Pipeline.TaskGraph, "", "  "); jsonErr == nil {
+					taskCtx += fmt.Sprintf("\n\n## PM 태스크 분해 결과\n```json\n%s\n```", string(graphJSON))
+				}
+			}
+
 			claudeMD, buildErr := (&agent.ClaudeMDBuilder{MaxLines: 200}).Build(agent.BuildInput{
 				CommunicationRules: agent.DefaultCommunicationRules(),
-				TaskContext:        fmt.Sprintf("태스크 검토: %s\nPM이 분해한 태스크를 검토하고 승인/수정해주세요.", requirement),
+				TaskContext:        taskCtx,
 				CompactionRules:    agent.DefaultCompactionRules(),
 			})
 			if buildErr != nil {

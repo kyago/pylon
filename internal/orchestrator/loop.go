@@ -177,12 +177,13 @@ func (l *Loop) runHeadlessAgent(ctx context.Context, agentName string, currentSt
 
 // executeAgent handles the common agent execution pattern without stage transition.
 func (l *Loop) executeAgent(ctx context.Context, agentName string) error {
-	return l.executeAgentWithSuffix(ctx, agentName, "")
+	return l.executeAgentWithSuffix(ctx, agentName, "", "")
 }
 
 // executeAgentWithSuffix runs an agent with an optional task ID suffix to disambiguate
 // multiple tasks assigned to the same agent within a single wave.
-func (l *Loop) executeAgentWithSuffix(ctx context.Context, agentName, taskSuffix string) error {
+// taskDescription overrides l.cfg.Requirement for inbox/CLAUDE.md when non-empty.
+func (l *Loop) executeAgentWithSuffix(ctx context.Context, agentName, taskSuffix, taskDescription string) error {
 	agentCfg := l.findAgent(agentName)
 	if agentCfg == nil {
 		return fmt.Errorf("agent config not found: %s", agentName)
@@ -195,11 +196,17 @@ func (l *Loop) executeAgentWithSuffix(ctx context.Context, agentName, taskSuffix
 		taskID = fmt.Sprintf("%s-%s-%s", l.cfg.PipelineID, agentName, taskSuffix)
 	}
 
+	// Use task-specific description when provided (wave execution), else fall back to global requirement
+	description := l.cfg.Requirement
+	if taskDescription != "" {
+		description = taskDescription
+	}
+
 	// Build handoff context from blackboard
 	handoffCtx := l.buildHandoffContext(taskID)
 
 	// Write task to inbox
-	if err := l.writeTaskToInbox(agentName, taskID, handoffCtx); err != nil {
+	if err := l.writeTaskToInbox(agentName, taskID, description, handoffCtx); err != nil {
 		return fmt.Errorf("failed to write task for %s: %w", agentName, err)
 	}
 
@@ -208,7 +215,7 @@ func (l *Loop) executeAgentWithSuffix(ctx context.Context, agentName, taskSuffix
 	outboxPath := filepath.Join(outboxDir, taskID+".result.json")
 
 	// Build CLAUDE.md with concrete outbox path
-	claudeMD, err := l.buildClaudeMD(agentCfg, taskID, outboxPath, outboxDir)
+	claudeMD, err := l.buildClaudeMD(agentCfg, taskID, outboxPath, outboxDir, description)
 	if err != nil {
 		return fmt.Errorf("failed to build CLAUDE.md for %s: %w", agentName, err)
 	}
@@ -366,11 +373,13 @@ func (l *Loop) extractTaskGraph() *TaskGraph {
 	// Marshal/unmarshal through JSON for robust type conversion
 	data, err := json.Marshal(tasksRaw)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to marshal PM tasks for task graph: %v\n", err)
 		return nil
 	}
 
 	var items []TaskItem
 	if err := json.Unmarshal(data, &items); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ failed to parse PM tasks as TaskGraph: %v\n", err)
 		return nil
 	}
 
@@ -458,7 +467,7 @@ func (l *Loop) runAgentsWave(ctx context.Context, graph *TaskGraph, devAgents []
 			if agentName == "" {
 				agentName = devAgents[0]
 			}
-			if err := l.executeAgentWithSuffix(ctx, agentName, wave[0].ID); err != nil {
+			if err := l.executeAgentWithSuffix(ctx, agentName, wave[0].ID, wave[0].Description); err != nil {
 				return err
 			}
 			continue
@@ -473,8 +482,9 @@ func (l *Loop) runAgentsWave(ctx context.Context, graph *TaskGraph, devAgents []
 				agentName = devAgents[0]
 			}
 			taskID := task.ID
+			taskDesc := task.Description
 			g.Go(func() error {
-				return l.executeAgentWithSuffix(gctx, agentName, taskID)
+				return l.executeAgentWithSuffix(gctx, agentName, taskID, taskDesc)
 			})
 		}
 
@@ -752,13 +762,13 @@ func (l *Loop) mergeAgentBranches(agentNames []string) error {
 	return nil
 }
 
-func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgContext) error {
+func (l *Loop) writeTaskToInbox(agentName, taskID, description string, msgCtx *protocol.MsgContext) error {
 	msg := protocol.NewMessage(protocol.MsgTaskAssign, "orchestrator", agentName)
-	msg.Subject = fmt.Sprintf("Task: %s", l.cfg.Requirement)
+	msg.Subject = fmt.Sprintf("Task: %s", description)
 	msg.Context = msgCtx
 	msg.Body = protocol.TaskAssignBody{
 		TaskID:      taskID,
-		Description: l.cfg.Requirement,
+		Description: description,
 		Branch:      l.cfg.Branch,
 	}
 	if err := protocol.WriteTask(l.inboxDir, agentName, msg); err != nil {
@@ -785,7 +795,7 @@ func (l *Loop) writeTaskToInbox(agentName, taskID string, msgCtx *protocol.MsgCo
 	return nil
 }
 
-func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, outboxDir string) (string, error) {
+func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, outboxDir, description string) (string, error) {
 	builder := &agent.ClaudeMDBuilder{MaxLines: 200}
 
 	var projectMemory string
@@ -800,7 +810,7 @@ func (l *Loop) buildClaudeMD(agentCfg *config.AgentConfig, taskID, outboxPath, o
 
 	return builder.Build(agent.BuildInput{
 		CommunicationRules: agent.CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir),
-		TaskContext:        fmt.Sprintf("태스크: %s\n역할: %s", l.cfg.Requirement, agentCfg.Role),
+		TaskContext:        fmt.Sprintf("태스크: %s\n역할: %s", description, agentCfg.Role),
 		CompactionRules:    agent.DefaultCompactionRules(),
 		ProjectMemory:      projectMemory,
 	})

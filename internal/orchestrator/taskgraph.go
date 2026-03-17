@@ -57,11 +57,11 @@ func (g *TaskGraph) TopoSort() ([][]TaskItem, error) {
 		}
 	}
 
-	// Seed with zero-degree tasks
+	// Seed with zero-degree tasks in original g.Tasks order for deterministic results
 	var queue []string
-	for id, deg := range inDegree {
-		if deg == 0 {
-			queue = append(queue, id)
+	for _, t := range g.Tasks {
+		if inDegree[t.ID] == 0 {
+			queue = append(queue, t.ID)
 		}
 	}
 
