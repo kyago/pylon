@@ -56,13 +56,8 @@ type Server struct {
 
 // NewServer creates a new dashboard server with all routes registered.
 // workspaceName is displayed in the dashboard header to identify the workspace.
-func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config.RuntimeConfig, workspaceName ...string) (*Server, error) {
-	wsName := ""
-	if len(workspaceName) > 0 {
-		wsName = workspaceName[0]
-	}
-
-	tmpl, err := NewTemplateRenderer(wsName)
+func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config.RuntimeConfig, workspaceName string) (*Server, error) {
+	tmpl, err := NewTemplateRenderer(workspaceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load templates: %w", err)
 	}
@@ -73,7 +68,7 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config
 		hub:           NewSSEHub(),
 		templates:     tmpl,
 		runtimeCfg:    runtimeCfg,
-		WorkspaceName: wsName,
+		WorkspaceName: workspaceName,
 	}
 
 	r := chi.NewRouter()
