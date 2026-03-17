@@ -58,6 +58,33 @@
     </div>
     {{end}}
 
+    {{/* Task Graph */}}
+    {{if .Pipeline.TaskGraph}}
+    <div class="card">
+        <h2 class="card-title">Task Graph</h2>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Description</th>
+                    <th>Agent</th>
+                    <th>Dependencies</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Pipeline.TaskGraph}}
+                <tr>
+                    <td><code>{{.ID}}</code></td>
+                    <td>{{.Description}}</td>
+                    <td>{{if .AgentName}}<span class="badge badge-sm">{{.AgentName}}</span>{{else}}<span class="text-muted">unassigned</span>{{end}}</td>
+                    <td>{{if .DependsOn}}{{join .DependsOn ", "}}{{else}}<span class="text-muted">none</span>{{end}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+
     {{/* Retry Info */}}
     {{if gt .Pipeline.MaxAttempts 0}}
     <div class="card">

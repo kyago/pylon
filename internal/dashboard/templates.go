@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/kyago/pylon/internal/domain"
@@ -52,6 +53,9 @@ func NewTemplateRenderer() (*TemplateRenderer, error) {
 			}
 			return s[:n] + "..."
 		},
+		"join": func(ss []string, sep string) string {
+			return strings.Join(ss, sep)
+		},
 		"statusClass": func(status string) string {
 			switch status {
 			case "running":
@@ -96,6 +100,7 @@ func stageLabel(stage string) string {
 		"po_conversation":    "PO Conv",
 		"architect_analysis": "Architect",
 		"pm_task_breakdown":  "PM Tasks",
+		"task_review":        "Task Review",
 		"agent_executing":    "Executing",
 		"verification":       "Verify",
 		"pr_creation":        "PR Create",
