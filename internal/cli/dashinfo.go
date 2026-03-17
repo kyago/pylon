@@ -12,6 +12,7 @@ import (
 type DashboardInfo struct {
 	PID       int    `json:"pid"`
 	Port      int    `json:"port"`
+	Host      string `json:"host"`
 	Workspace string `json:"workspace"`
 }
 
@@ -46,10 +47,11 @@ func isDashboardAlive(info *DashboardInfo) bool {
 }
 
 // writeDashboardInfo writes dashboard info to the workspace runtime directory.
-func writeDashboardInfo(workspaceRoot string, port int) error {
+func writeDashboardInfo(workspaceRoot, host string, port int) error {
 	info := DashboardInfo{
 		PID:       os.Getpid(),
 		Port:      port,
+		Host:      host,
 		Workspace: workspaceRoot,
 	}
 	data, err := json.MarshalIndent(info, "", "  ")
@@ -69,17 +71,17 @@ func removeDashboardInfo(workspaceRoot string) {
 }
 
 // checkExistingDashboard checks if a dashboard is already running for this workspace.
-// Returns the port if alive, 0 if not.
-func checkExistingDashboard(workspaceRoot string) int {
+// Returns the info if alive, nil if not.
+func checkExistingDashboard(workspaceRoot string) *DashboardInfo {
 	info := readDashboardInfo(workspaceRoot)
 	if info == nil {
-		return 0
+		return nil
 	}
 	if isDashboardAlive(info) {
-		return info.Port
+		return info
 	}
 	// Stale info file — remove it
 	fmt.Fprintf(os.Stderr, "⚠ 이전 대시보드 프로세스(PID %d)가 종료되어 정보 파일을 정리합니다\n", info.PID)
 	removeDashboardInfo(workspaceRoot)
-	return 0
+	return nil
 }

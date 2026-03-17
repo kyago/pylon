@@ -32,8 +32,8 @@ Spec Reference: Section 7 "pylon dashboard"`,
 			defer s.Close()
 
 			// Check if dashboard already running for this workspace
-			if existingPort := checkExistingDashboard(root); existingPort > 0 {
-				return fmt.Errorf("대시보드가 이미 실행 중입니다: http://%s:%d", cfg.Dashboard.Host, existingPort)
+			if existing := checkExistingDashboard(root); existing != nil {
+				return fmt.Errorf("대시보드가 이미 실행 중입니다: http://%s:%d", existing.Host, existing.Port)
 			}
 
 			dashCfg := cfg.Dashboard
@@ -54,7 +54,7 @@ Spec Reference: Section 7 "pylon dashboard"`,
 			}
 			actualPort := ln.Addr().(*net.TCPAddr).Port
 
-			if err := writeDashboardInfo(root, actualPort); err != nil {
+			if err := writeDashboardInfo(root, dashCfg.Host, actualPort); err != nil {
 				fmt.Fprintf(os.Stderr, "⚠ 대시보드 정보 기록 실패: %v\n", err)
 			}
 			defer removeDashboardInfo(root)

@@ -96,8 +96,8 @@ func runLaunch() error {
 // When Claude Code exits, the dashboard is automatically shut down via context cancellation.
 func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	// Check if a dashboard is already running for this workspace
-	if existingPort := checkExistingDashboard(root); existingPort > 0 {
-		fmt.Printf("📊 대시보드 이미 실행 중: http://%s:%d\n", cfg.Dashboard.Host, existingPort)
+	if existing := checkExistingDashboard(root); existing != nil {
+		fmt.Printf("📊 대시보드 이미 실행 중: http://%s:%d\n", existing.Host, existing.Port)
 		fmt.Println("Claude Code를 시작합니다...")
 
 		// Use ExecInteractive (no need to keep parent alive)
@@ -137,7 +137,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	actualPort := ln.Addr().(*net.TCPAddr).Port
 
 	// Write dashboard info for other pylon instances to discover
-	if err := writeDashboardInfo(root, actualPort); err != nil {
+	if err := writeDashboardInfo(root, cfg.Dashboard.Host, actualPort); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ 대시보드 정보 기록 실패: %v\n", err)
 	}
 	defer removeDashboardInfo(root)
@@ -155,14 +155,8 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	}()
 
 	// Ignore SIGINT/SIGTERM in parent — let Claude Code (child) handle them.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sig)
-	go func() {
-		for range sig {
-			// Intentionally ignored — Claude Code handles these
-		}
-	}()
+	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Reset(syscall.SIGINT, syscall.SIGTERM)
 
 	fmt.Printf("📊 대시보드: http://%s:%d (%s)\n", cfg.Dashboard.Host, actualPort, wsName)
 	fmt.Println("Claude Code를 시작합니다...")
