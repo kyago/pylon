@@ -69,18 +69,15 @@ Claude Code Hook에서 자동 호출되어 세션 종료 시 또는 파일 변�
 }
 
 // runSyncFromSession handles --from-session: stores session learnings into project memory.
-// If PYLON_PIPELINE_ID is set, also marks the TUI pipeline as completed.
+// Note: Stop hook fires after EVERY Claude response turn, NOT only at session end.
+// Pipeline completion is handled by the parent process (RunInteractive path) or
+// stale pipeline cleanup at next startup (ExecInteractive path).
 func runSyncFromSession(project, agent, content string) error {
 	root, cfg, s, err := openWorkspaceStore()
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-
-	// Complete TUI pipeline if running (for ExecInteractive path where parent can't cleanup)
-	if pipelineID := os.Getenv("PYLON_PIPELINE_ID"); pipelineID != "" {
-		completeTUIPipeline(s, cfg, root, pipelineID)
-	}
 
 	// Resolve project name
 	project, err = resolveProject(root, project)
