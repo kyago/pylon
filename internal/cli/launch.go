@@ -123,8 +123,16 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	// Derive workspace name from directory basename
 	wsName := filepath.Base(root)
 
+	// Create file logger for dashboard (prevents log output from corrupting Claude Code TUI)
+	logDir := filepath.Join(root, ".pylon", "logs")
+	dashLogger, logFile, err := dashboard.NewFileLogger(logDir)
+	if err != nil {
+		return fmt.Errorf("대시보드 로거 생성 실패: %w", err)
+	}
+	defer logFile.Close()
+
 	// Create dashboard server
-	srv, err := dashboard.NewServer(s, &cfg.Dashboard, &cfg.Runtime, wsName)
+	srv, err := dashboard.NewServer(s, &cfg.Dashboard, &cfg.Runtime, wsName, dashLogger)
 	if err != nil {
 		return fmt.Errorf("대시보드 서버 생성 실패: %w", err)
 	}
@@ -138,7 +146,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 
 	// Write dashboard info for other pylon instances to discover
 	if err := writeDashboardInfo(root, cfg.Dashboard.Host, actualPort); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠ 대시보드 정보 기록 실패: %v\n", err)
+		dashLogger.Printf("대시보드 정보 기록 실패: %v", err)
 	}
 	defer removeDashboardInfo(root)
 
@@ -150,7 +158,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	go func() {
 		defer close(dashDone)
 		if err := srv.Serve(ctx, ln); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ 대시보드 오류: %v\n", err)
+			dashLogger.Printf("서버 오류: %v", err)
 		}
 	}()
 
@@ -159,6 +167,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	defer signal.Reset(syscall.SIGINT, syscall.SIGTERM)
 
 	fmt.Printf("📊 대시보드: http://%s:%d (%s)\n", cfg.Dashboard.Host, actualPort, wsName)
+	fmt.Printf("   로그: %s\n", filepath.Join(logDir, "dashboard.log"))
 	fmt.Println("Claude Code를 시작합니다...")
 
 	// Launch Claude Code as child process (parent stays alive for dashboard)
@@ -535,18 +544,23 @@ func buildMemoryContext(s *store.Store, projects []config.ProjectInfo) string {
 	return b.String()
 }
 
-// addToGitignore appends .claude/ entries to .gitignore if not already present.
+// addToGitignore appends pylon-managed entries to .gitignore if not already present.
 func addClaudeDirToGitignore(root string) error {
 	gitignorePath := filepath.Join(root, ".gitignore")
 
 	existing, _ := os.ReadFile(gitignorePath)
 	content := string(existing)
 
-	if strings.Contains(content, ".claude/") {
-		return nil // already present
+	// Collect missing entries
+	var missing []string
+	for _, entry := range []string{".claude/", "CLAUDE.md", ".pylon/logs/"} {
+		if !strings.Contains(content, entry) {
+			missing = append(missing, entry)
+		}
 	}
-
-	entry := "\n# Pylon-generated Claude Code config (dynamically generated)\n.claude/\nCLAUDE.md\n"
+	if len(missing) == 0 {
+		return nil
+	}
 
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -554,7 +568,12 @@ func addClaudeDirToGitignore(root string) error {
 	}
 	defer f.Close()
 
-	_, err = f.WriteString(entry)
+	var b strings.Builder
+	b.WriteString("\n# Pylon-generated (dynamically generated)\n")
+	for _, entry := range missing {
+		b.WriteString(entry + "\n")
+	}
+	_, err = f.WriteString(b.String())
 	return err
 }
 

@@ -18,7 +18,7 @@ func TestPollerDetectsNewPipeline(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg)
+	poller := NewPoller(mock, hub, runtimeCfg, nil)
 
 	ch, unsub := hub.Subscribe()
 	defer unsub()
@@ -57,7 +57,7 @@ func TestPollerDetectsStageChange(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg)
+	poller := NewPoller(mock, hub, runtimeCfg, nil)
 
 	// First poll to establish baseline
 	poller.poll()
@@ -102,7 +102,7 @@ func TestPollerDetectsCompletion(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg)
+	poller := NewPoller(mock, hub, runtimeCfg, nil)
 	poller.poll()
 
 	ch, unsub := hub.Subscribe()
@@ -137,7 +137,7 @@ func TestPollerNoEventsOnNoChange(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg)
+	poller := NewPoller(mock, hub, runtimeCfg, nil)
 
 	// Establish baseline
 	poller.poll()
@@ -166,7 +166,7 @@ func TestPollerConcurrencyUpdate(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 3}
-	poller := NewPoller(mock, hub, runtimeCfg)
+	poller := NewPoller(mock, hub, runtimeCfg, nil)
 
 	// Establish empty baseline
 	poller.poll()
@@ -220,7 +220,7 @@ func TestPollerNoSpuriousCreatedForTerminal(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg)
+	poller := NewPoller(mock, hub, runtimeCfg, nil)
 
 	// 첫 poll: pipeline_created 발행
 	poller.poll()

@@ -105,7 +105,7 @@ func newTestServer(t *testing.T, mock *mockStore) *Server {
 	t.Helper()
 	cfg := &config.DashboardConfig{Host: "localhost", Port: 0}
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace")
+	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace", nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

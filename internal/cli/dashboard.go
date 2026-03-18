@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -42,7 +43,11 @@ Spec Reference: Section 7 "pylon dashboard"`,
 			}
 
 			wsName := filepath.Base(root)
-			srv, err := dashboard.NewServer(s, &dashCfg, &cfg.Runtime, wsName)
+
+			// Standalone dashboard: log to stderr (no TUI conflict)
+			logger := log.New(os.Stderr, "dashboard: ", log.LstdFlags)
+
+			srv, err := dashboard.NewServer(s, &dashCfg, &cfg.Runtime, wsName, logger)
 			if err != nil {
 				return fmt.Errorf("failed to create dashboard server: %w", err)
 			}
