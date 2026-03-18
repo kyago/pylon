@@ -5,7 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
-	"strings"
+	"sort"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -110,8 +110,11 @@ func (r RuntimeConfig) ParseTaskTimeout() time.Duration {
 	return d
 }
 
-// SyncConfigDefaults reads config.yml, detects missing fields, and appends them.
-// Only writes to disk if there are actually missing fields, preserving existing content.
+// SyncConfigDefaults reads config.yml, detects missing fields, and adds them.
+// Only writes to disk if there are actually missing fields.
+// When only entire sections are missing, they are appended to preserve existing content.
+// When sub-keys within existing sections are missing, the file is rewritten via map merge.
+// Note: rewrite mode (sub-key merge) may alter YAML formatting/comments.
 // Returns the updated Config and a list of field paths that were added.
 func SyncConfigDefaults(path string) (*Config, []string, error) {
 	raw, err := os.ReadFile(path)
@@ -135,14 +138,24 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 	var defaultMap map[string]any
 	_ = yaml.Unmarshal(defaultBytes, &defaultMap)
 
-	// Find missing fields and build append content
+	// Sort keys for deterministic output
+	sortedKeys := make([]string, 0, len(defaultMap))
+	for k := range defaultMap {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
+	// Find missing fields
 	var added []string
 	var appendBuf []byte
+	hasSubKeyMerge := false
 
-	for key, defaultVal := range defaultMap {
+	for _, key := range sortedKeys {
+		defaultVal := defaultMap[key]
 		rawVal, exists := rawMap[key]
 		if !exists {
-			// Entire section missing — append it
+			// Entire section missing — add to rawMap (for rewrite) and appendBuf (for append)
+			rawMap[key] = defaultVal
 			section, _ := yaml.Marshal(map[string]any{key: defaultVal})
 			appendBuf = append(appendBuf, '\n')
 			appendBuf = append(appendBuf, section...)
@@ -160,27 +173,16 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 			rawSub = make(map[string]any)
 		}
 
-		var missingKeys []string
 		for subKey := range defaultSub {
 			if _, subExists := rawSub[subKey]; !subExists {
-				missingKeys = append(missingKeys, subKey)
 				added = append(added, key+"."+subKey)
+				hasSubKeyMerge = true
+				rawSub[subKey] = defaultSub[subKey]
 			}
 		}
 
-		// If sub-keys are missing, rewrite just this section with merged values
-		if len(missingKeys) > 0 {
-			merged := make(map[string]any)
-			for k, v := range rawSub {
-				merged[k] = v
-			}
-			for k, v := range defaultSub {
-				if _, exists := rawSub[k]; !exists {
-					merged[k] = v
-				}
-			}
-			// Replace the section in-place by rewriting the full file with the merged map
-			rawMap[key] = merged
+		if hasSubKeyMerge {
+			rawMap[key] = rawSub
 		}
 	}
 
@@ -188,17 +190,8 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 		return cfg, nil, nil
 	}
 
-	// If we had sub-key merges (rawMap was modified), rewrite the full file
-	// Otherwise just append missing sections
-	hasSubKeyMerge := false
-	for _, a := range added {
-		if strings.Contains(a, ".") {
-			hasSubKeyMerge = true
-			break
-		}
-	}
-
 	if hasSubKeyMerge {
+		// Sub-key merge needed — rewrite full file (rawMap already contains everything)
 		data, err := yaml.Marshal(rawMap)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to marshal config: %w", err)
@@ -207,6 +200,7 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 			return nil, nil, fmt.Errorf("failed to write config: %w", err)
 		}
 	} else if len(appendBuf) > 0 {
+		// Only new sections — append to preserve existing content
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to open config for append: %w", err)

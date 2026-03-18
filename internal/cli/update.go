@@ -34,11 +34,16 @@ func newUpdateCmd() *cobra.Command {
 
 			// Run config sync using the NEW binary (not the current stale process)
 			fmt.Println("\n설정 동기화 중...")
-			doctorCmd := exec.Command("pylon", "doctor")
-			doctorCmd.Stdout = os.Stdout
-			doctorCmd.Stderr = os.Stderr
-			if err := doctorCmd.Run(); err != nil {
-				fmt.Fprintf(os.Stderr, "⚠ 설정 동기화 실패: %v (수동으로 'pylon doctor'를 실행하세요)\n", err)
+			pylonPath, lookErr := exec.LookPath("pylon")
+			if lookErr != nil {
+				fmt.Fprintf(os.Stderr, "⚠ 새 pylon 바이너리를 찾을 수 없습니다. 수동으로 'pylon doctor'를 실행하세요.\n")
+			} else {
+				doctorCmd := exec.Command(pylonPath, "doctor")
+				doctorCmd.Stdout = os.Stdout
+				doctorCmd.Stderr = os.Stderr
+				if err := doctorCmd.Run(); err != nil {
+					fmt.Fprintf(os.Stderr, "⚠ 설정 동기화 실패: %v (수동으로 'pylon doctor'를 실행하세요)\n", err)
+				}
 			}
 
 			return nil
