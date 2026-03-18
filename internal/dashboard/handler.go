@@ -56,7 +56,6 @@ type TransitionView struct {
 
 // ConcurrencyView holds concurrency metrics.
 type ConcurrencyView struct {
-	MaxConcurrent   int
 	RunningAgents   int
 	TotalPipelines  int
 	ActivePipelines int
@@ -379,12 +378,9 @@ func (srv *Server) buildOverviewData(r *http.Request) (*OverviewData, error) {
 		return nil, err
 	}
 
-	maxConcurrent := srv.runtimeCfg.MaxConcurrent
-
 	return &OverviewData{
 		Pipelines: views,
 		Concurrency: ConcurrencyView{
-			MaxConcurrent:   maxConcurrent,
 			RunningAgents:   runningAgents,
 			TotalPipelines:  metrics.TotalPipelines,
 			ActivePipelines: metrics.ActivePipelines,

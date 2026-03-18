@@ -148,7 +148,6 @@ func (p *Poller) poll() {
 			Type: "concurrency_update",
 			Data: map[string]any{
 				"running_agents": runningAgents,
-				"max_concurrent": p.runtimeCfg.MaxConcurrent,
 			},
 		})
 	}

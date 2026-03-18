@@ -195,9 +195,6 @@ func TestPollerConcurrencyUpdate(t *testing.T) {
 			if data["running_agents"].(int) != 1 {
 				t.Errorf("want running_agents=1, got %v", data["running_agents"])
 			}
-			if data["max_concurrent"].(int) != 3 {
-				t.Errorf("want max_concurrent=3, got %v", data["max_concurrent"])
-			}
 			found = true
 		}
 	}
