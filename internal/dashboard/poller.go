@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"io"
 	"log"
 	"time"
 
@@ -20,16 +21,21 @@ type Poller struct {
 	store          DashboardStore
 	hub            *SSEHub
 	runtimeCfg     *config.RuntimeConfig
+	logger         *log.Logger
 	prev           map[string]pipelineSnapshot
 	knownTerminals map[string]bool // terminal 상태 도달 후 재감지 방지
 }
 
 // NewPoller creates a new poller.
-func NewPoller(s DashboardStore, hub *SSEHub, runtimeCfg *config.RuntimeConfig) *Poller {
+func NewPoller(s DashboardStore, hub *SSEHub, runtimeCfg *config.RuntimeConfig, logger *log.Logger) *Poller {
+	if logger == nil {
+		logger = log.New(io.Discard, "", 0)
+	}
 	return &Poller{
 		store:          s,
 		hub:            hub,
 		runtimeCfg:     runtimeCfg,
+		logger:         logger,
 		prev:           make(map[string]pipelineSnapshot),
 		knownTerminals: make(map[string]bool),
 	}
@@ -53,7 +59,7 @@ func (p *Poller) Run(ctx context.Context) {
 func (p *Poller) poll() {
 	records, err := p.store.ListAllPipelines()
 	if err != nil {
-		log.Printf("poller: failed to list pipelines: %v", err)
+		p.logger.Printf("poller: failed to list pipelines: %v", err)
 		return
 	}
 

@@ -3,7 +3,6 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
@@ -223,7 +222,7 @@ func (srv *Server) handleAPIOverview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, data)
+	srv.writeJSON(w, data)
 }
 
 func (srv *Server) handleAPIPipelines(w http.ResponseWriter, r *http.Request) {
@@ -259,7 +258,7 @@ func (srv *Server) handleAPIPipelines(w http.ResponseWriter, r *http.Request) {
 	for i, rec := range records {
 		views[i] = pipelineRecordToView(rec)
 	}
-	writeJSON(w, views)
+	srv.writeJSON(w, views)
 }
 
 func (srv *Server) handleAPIPipelineDetail(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +272,7 @@ func (srv *Server) handleAPIPipelineDetail(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "pipeline not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, pipelineRecordToView(*rec))
+	srv.writeJSON(w, pipelineRecordToView(*rec))
 }
 
 // handleAPIPipelineCancel forces a pipeline into the failed state.
@@ -330,7 +329,7 @@ func (srv *Server) handleAPIPipelineCancel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	writeJSON(w, map[string]string{"status": "cancelled", "pipeline_id": id})
+	srv.writeJSON(w, map[string]string{"status": "cancelled", "pipeline_id": id})
 }
 
 func (srv *Server) handleAPIMessages(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +338,7 @@ func (srv *Server) handleAPIMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, data)
+	srv.writeJSON(w, data)
 }
 
 func (srv *Server) handleAPIMemory(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +347,7 @@ func (srv *Server) handleAPIMemory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, data)
+	srv.writeJSON(w, data)
 }
 
 // --- Data builders ---
@@ -489,9 +488,9 @@ func (srv *Server) renderHTML(w http.ResponseWriter, tmplName string, data any) 
 	_, _ = buf.WriteTo(w)
 }
 
-func writeJSON(w http.ResponseWriter, data any) {
+func (srv *Server) writeJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("writeJSON encode error: %v", err)
+		srv.logger.Printf("writeJSON encode error: %v", err)
 	}
 }

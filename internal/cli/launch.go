@@ -123,8 +123,16 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	// Derive workspace name from directory basename
 	wsName := filepath.Base(root)
 
+	// Create file logger for dashboard (prevents log output from corrupting Claude Code TUI)
+	logDir := filepath.Join(root, ".pylon", "logs")
+	dashLogger, logFile, err := dashboard.NewFileLogger(logDir)
+	if err != nil {
+		return fmt.Errorf("대시보드 로거 생성 실패: %w", err)
+	}
+	defer logFile.Close()
+
 	// Create dashboard server
-	srv, err := dashboard.NewServer(s, &cfg.Dashboard, &cfg.Runtime, wsName)
+	srv, err := dashboard.NewServer(s, &cfg.Dashboard, &cfg.Runtime, wsName, dashLogger)
 	if err != nil {
 		return fmt.Errorf("대시보드 서버 생성 실패: %w", err)
 	}
@@ -138,7 +146,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 
 	// Write dashboard info for other pylon instances to discover
 	if err := writeDashboardInfo(root, cfg.Dashboard.Host, actualPort); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠ 대시보드 정보 기록 실패: %v\n", err)
+		dashLogger.Printf("대시보드 정보 기록 실패: %v", err)
 	}
 	defer removeDashboardInfo(root)
 
@@ -150,7 +158,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	go func() {
 		defer close(dashDone)
 		if err := srv.Serve(ctx, ln); err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ 대시보드 오류: %v\n", err)
+			dashLogger.Printf("서버 오류: %v", err)
 		}
 	}()
 

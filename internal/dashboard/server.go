@@ -4,6 +4,7 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -15,6 +16,22 @@ import (
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/store"
 )
+
+// requestLogger returns a Chi middleware that logs HTTP requests to the given logger.
+func requestLogger(logger *log.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			start := time.Now()
+			next.ServeHTTP(ww, r)
+			status := ww.Status()
+			if status == 0 {
+				status = http.StatusOK
+			}
+			logger.Printf("%s %s %d %s", r.Method, r.URL.Path, status, time.Since(start))
+		})
+	}
+}
 
 // DashboardStore defines the store interface used by the dashboard.
 type DashboardStore interface {
@@ -51,12 +68,18 @@ type Server struct {
 	hub           *SSEHub
 	templates     *TemplateRenderer
 	runtimeCfg    *config.RuntimeConfig
+	logger        *log.Logger
 	WorkspaceName string // displayed in dashboard header
 }
 
 // NewServer creates a new dashboard server with all routes registered.
 // workspaceName is displayed in the dashboard header to identify the workspace.
-func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config.RuntimeConfig, workspaceName string) (*Server, error) {
+// logger controls where dashboard log output is written; if nil, logs are discarded.
+func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config.RuntimeConfig, workspaceName string, logger *log.Logger) (*Server, error) {
+	if logger == nil {
+		logger = log.New(io.Discard, "", 0)
+	}
+
 	tmpl, err := NewTemplateRenderer(workspaceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load templates: %w", err)
@@ -68,12 +91,13 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config
 		hub:           NewSSEHub(),
 		templates:     tmpl,
 		runtimeCfg:    runtimeCfg,
+		logger:        logger,
 		WorkspaceName: workspaceName,
 	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Logger)
+	r.Use(requestLogger(logger))
 
 	// SSE endpoint — long-lived connection, no timeout
 	r.Get("/api/events", srv.handleSSEStream)
@@ -117,7 +141,7 @@ func (srv *Server) Listen() (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		// Port busy — try OS-assigned free port
-		log.Printf("Dashboard: port %d unavailable (%v), falling back to random port", srv.cfg.Port, err)
+		srv.logger.Printf("port %d unavailable (%v), falling back to random port", srv.cfg.Port, err)
 		ln, err = net.Listen("tcp", fmt.Sprintf("%s:0", srv.cfg.Host))
 		if err != nil {
 			return nil, fmt.Errorf("failed to listen: %w", err)
@@ -130,7 +154,7 @@ func (srv *Server) Listen() (net.Listener, error) {
 func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 	go srv.hub.Run(ctx)
 
-	poller := NewPoller(srv.store, srv.hub, srv.runtimeCfg)
+	poller := NewPoller(srv.store, srv.hub, srv.runtimeCfg, srv.logger)
 	go poller.Run(ctx)
 
 	httpSrv := &http.Server{
@@ -156,6 +180,6 @@ func (srv *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("Dashboard: http://%s", ln.Addr().String())
+	srv.logger.Printf("http://%s", ln.Addr().String())
 	return srv.Serve(ctx, ln)
 }

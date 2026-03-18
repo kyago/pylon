@@ -17,7 +17,7 @@ func TestNewServer(t *testing.T) {
 	cfg := &config.DashboardConfig{Host: "localhost", Port: 0}
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
 
-	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace")
+	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace", nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestServerGracefulShutdown(t *testing.T) {
 	cfg := &config.DashboardConfig{Host: "127.0.0.1", Port: port}
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
 
-	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace")
+	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace", nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestServerRoutes(t *testing.T) {
 	cfg := &config.DashboardConfig{Host: "127.0.0.1", Port: 0}
 	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
 
-	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace")
+	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace", nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
