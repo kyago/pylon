@@ -167,6 +167,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	defer signal.Reset(syscall.SIGINT, syscall.SIGTERM)
 
 	fmt.Printf("📊 대시보드: http://%s:%d (%s)\n", cfg.Dashboard.Host, actualPort, wsName)
+	fmt.Printf("   로그: %s\n", filepath.Join(logDir, "dashboard.log"))
 	fmt.Println("Claude Code를 시작합니다...")
 
 	// Launch Claude Code as child process (parent stays alive for dashboard)
@@ -554,7 +555,7 @@ func addClaudeDirToGitignore(root string) error {
 		return nil // already present
 	}
 
-	entry := "\n# Pylon-generated Claude Code config (dynamically generated)\n.claude/\nCLAUDE.md\n"
+	entry := "\n# Pylon-generated Claude Code config (dynamically generated)\n.claude/\nCLAUDE.md\n.pylon/logs/\n"
 
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
