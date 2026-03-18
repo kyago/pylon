@@ -109,6 +109,27 @@ func (r RuntimeConfig) ParseTaskTimeout() time.Duration {
 	return d
 }
 
+// SyncConfigDefaults reads config.yml, applies all default values, and writes it back.
+// This ensures newly added fields (from version upgrades) are present in the file.
+// Returns the number of fields that were added.
+func SyncConfigDefaults(path string) (*Config, error) {
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write config: %w", err)
+	}
+
+	return cfg, nil
+}
+
 // LoadConfig reads and parses a config.yml file, applying defaults for missing fields.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
