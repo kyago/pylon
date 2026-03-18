@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -109,6 +110,119 @@ func (r RuntimeConfig) ParseTaskTimeout() time.Duration {
 	return d
 }
 
+// SyncConfigDefaults reads config.yml, detects missing fields, and adds them.
+// Only writes to disk if there are actually missing fields.
+// When only entire sections are missing, they are appended to preserve existing content.
+// When sub-keys within existing sections are missing, the file is rewritten via map merge.
+// Note: rewrite mode (sub-key merge) may alter YAML formatting/comments.
+// Returns the updated Config and a list of field paths that were added.
+func SyncConfigDefaults(path string) (*Config, []string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	cfg, err := ParseConfig(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Parse raw into nested map to detect existing keys
+	var rawMap map[string]any
+	if unmarshalErr := yaml.Unmarshal(raw, &rawMap); unmarshalErr != nil {
+		rawMap = make(map[string]any)
+	}
+
+	// Build defaults as map for comparison
+	defaultBytes, _ := yaml.Marshal(cfg)
+	var defaultMap map[string]any
+	_ = yaml.Unmarshal(defaultBytes, &defaultMap)
+
+	// Sort keys for deterministic output
+	sortedKeys := make([]string, 0, len(defaultMap))
+	for k := range defaultMap {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
+	// Find missing fields
+	var added []string
+	var appendBuf []byte
+	hasSubKeyMerge := false
+
+	for _, key := range sortedKeys {
+		defaultVal := defaultMap[key]
+		rawVal, exists := rawMap[key]
+		if !exists {
+			// Entire section missing — add to rawMap (for rewrite) and appendBuf (for append)
+			rawMap[key] = defaultVal
+			section, _ := yaml.Marshal(map[string]any{key: defaultVal})
+			appendBuf = append(appendBuf, '\n')
+			appendBuf = append(appendBuf, section...)
+			added = append(added, key)
+			continue
+		}
+
+		// Section exists — check sub-keys
+		defaultSub, ok := defaultVal.(map[string]any)
+		if !ok {
+			continue
+		}
+		rawSub, _ := rawVal.(map[string]any)
+		if rawSub == nil {
+			rawSub = make(map[string]any)
+		}
+
+		// Sort sub-keys for deterministic output
+		sortedSubKeys := make([]string, 0, len(defaultSub))
+		for k := range defaultSub {
+			sortedSubKeys = append(sortedSubKeys, k)
+		}
+		sort.Strings(sortedSubKeys)
+
+		keyHasMerge := false
+		for _, subKey := range sortedSubKeys {
+			if _, subExists := rawSub[subKey]; !subExists {
+				added = append(added, key+"."+subKey)
+				keyHasMerge = true
+				hasSubKeyMerge = true
+				rawSub[subKey] = defaultSub[subKey]
+			}
+		}
+
+		if keyHasMerge {
+			rawMap[key] = rawSub
+		}
+	}
+
+	if len(added) == 0 {
+		return cfg, nil, nil
+	}
+
+	if hasSubKeyMerge {
+		// Sub-key merge needed — rewrite full file (rawMap already contains everything)
+		data, err := yaml.Marshal(rawMap)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal config: %w", err)
+		}
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return nil, nil, fmt.Errorf("failed to write config: %w", err)
+		}
+	} else if len(appendBuf) > 0 {
+		// Only new sections — append to preserve existing content
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to open config for append: %w", err)
+		}
+		defer f.Close()
+		if _, err := f.Write(appendBuf); err != nil {
+			return nil, nil, fmt.Errorf("failed to append config: %w", err)
+		}
+	}
+
+	return cfg, added, nil
+}
+
 // LoadConfig reads and parses a config.yml file, applying defaults for missing fields.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -130,6 +244,9 @@ func ParseConfig(data []byte) (*Config, error) {
 				Enabled:     true,
 				AutoCleanup: true,
 			},
+		},
+		Dashboard: DashboardConfig{
+			AutoDashboard: true,
 		},
 		Wiki: WikiConfig{
 			AutoUpdate: true,

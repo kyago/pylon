@@ -3,9 +3,11 @@ package cli
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/kyago/pylon/internal/config"
 )
 
 // Check represents a single dependency check.
@@ -73,6 +75,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	allPassed, failures := runChecks()
 
+	// Sync config defaults if in a workspace
+	fmt.Println()
+	syncConfigIfWorkspace()
+
 	fmt.Println()
 	if allPassed {
 		fmt.Println("All checks passed.")
@@ -131,6 +137,33 @@ func verifyGH() (string, error) {
 		return parts[2], nil
 	}
 	return lines[0], nil
+}
+
+// syncConfigIfWorkspace syncs config.yml defaults if running inside a pylon workspace.
+func syncConfigIfWorkspace() {
+	startDir := flagWorkspace
+	if startDir == "" {
+		startDir = "."
+	}
+	root, err := config.FindWorkspaceRoot(startDir)
+	if err != nil {
+		return // not in a workspace, skip
+	}
+
+	cfgPath := filepath.Join(root, ".pylon", "config.yml")
+	_, added, err := config.SyncConfigDefaults(cfgPath)
+	if err != nil {
+		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)
+		return
+	}
+	if len(added) > 0 {
+		fmt.Println("✓ config.yml에 누락된 기본값 추가:")
+		for _, field := range added {
+			fmt.Printf("  + %s\n", field)
+		}
+	} else {
+		fmt.Println("✓ config.yml 최신 상태")
+	}
 }
 
 func verifyClaude() (string, error) {
