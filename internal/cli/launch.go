@@ -147,7 +147,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	defer logFile.Close()
 
 	// Create dashboard server
-	srv, err := dashboard.NewServer(s, &cfg.Dashboard, &cfg.Runtime, wsName, dashLogger)
+	srv, err := dashboard.NewServer(s, &cfg.Dashboard, wsName, dashLogger)
 	if err != nil {
 		return fmt.Errorf("대시보드 서버 생성 실패: %w", err)
 	}

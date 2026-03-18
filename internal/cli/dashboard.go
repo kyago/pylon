@@ -47,7 +47,7 @@ Spec Reference: Section 7 "pylon dashboard"`,
 			// Standalone dashboard: log to stderr (no TUI conflict)
 			logger := log.New(os.Stderr, "dashboard: ", log.LstdFlags)
 
-			srv, err := dashboard.NewServer(s, &dashCfg, &cfg.Runtime, wsName, logger)
+			srv, err := dashboard.NewServer(s, &dashCfg, wsName, logger)
 			if err != nil {
 				return fmt.Errorf("failed to create dashboard server: %w", err)
 			}
