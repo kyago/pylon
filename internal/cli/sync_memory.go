@@ -69,7 +69,6 @@ Claude Code Hook에서 자동 호출되어 세션 종료 시 또는 파일 변�
 }
 
 // runSyncFromSession handles --from-session: stores session learnings into project memory.
-// runSyncFromSession handles --from-session: stores session learnings into project memory.
 // Note: Stop hook fires after EVERY Claude response turn, NOT only at session end.
 // Pipeline completion is handled by the parent process (RunInteractive path) or
 // stale pipeline cleanup at next startup (ExecInteractive path).

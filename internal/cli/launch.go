@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -273,18 +274,40 @@ func completeTUIPipeline(s *store.Store, cfg *config.Config, root, pipelineID st
 	_ = orch.ForceStage(orchestrator.StageCompleted)
 }
 
-// cleanupStaleTUIPipelines completes any tui-* pipelines stuck in non-terminal state
-// from previous sessions (e.g., ExecInteractive path where parent can't do cleanup).
+// cleanupStaleTUIPipelines completes tui-* pipelines whose owning process is no longer alive.
+// This handles the ExecInteractive path where the parent process can't do cleanup.
+// Pipelines belonging to still-running sessions are left untouched.
 func cleanupStaleTUIPipelines(s *store.Store, cfg *config.Config, root string) {
 	records, err := s.GetActivePipelines()
 	if err != nil {
 		return
 	}
 	for _, rec := range records {
-		if strings.HasPrefix(rec.PipelineID, "tui-") {
-			completeTUIPipeline(s, cfg, root, rec.PipelineID)
+		if !strings.HasPrefix(rec.PipelineID, "tui-") {
+			continue
 		}
+		// Pipeline ID format: tui-YYYYMMDD-HHMMSS-{pid}
+		parts := strings.Split(rec.PipelineID, "-")
+		if len(parts) >= 4 {
+			pidStr := parts[len(parts)-1]
+			if pid, err := strconv.Atoi(pidStr); err == nil {
+				if isProcessAlive(pid) {
+					continue // still-running session — skip
+				}
+			}
+		}
+		completeTUIPipeline(s, cfg, root, rec.PipelineID)
 	}
+}
+
+// isProcessAlive checks if a process with the given PID is still running.
+func isProcessAlive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// Signal 0 checks process existence without actually sending a signal.
+	return p.Signal(syscall.Signal(0)) == nil
 }
 
 // envWithPipeline returns a copy of env with PYLON_PIPELINE_ID added.
