@@ -13,6 +13,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/memory"
+	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -69,12 +70,18 @@ Claude Code Hook에서 자동 호출되어 세션 종료 시 또는 파일 변�
 }
 
 // runSyncFromSession handles --from-session: stores session learnings into project memory.
+// If PYLON_PIPELINE_ID is set, also marks the TUI pipeline as completed.
 func runSyncFromSession(project, agent, content string) error {
 	root, cfg, s, err := openWorkspaceStore()
 	if err != nil {
 		return err
 	}
 	defer s.Close()
+
+	// Complete TUI pipeline if running (for ExecInteractive path where parent can't cleanup)
+	if pipelineID := os.Getenv("PYLON_PIPELINE_ID"); pipelineID != "" {
+		completeTUIPipelineViaStore(s, cfg, root, pipelineID)
+	}
 
 	// Resolve project name
 	project, err = resolveProject(root, project)
@@ -122,12 +129,19 @@ func runSyncFromSession(project, agent, content string) error {
 }
 
 // runSyncIncremental handles --incremental: records file change context to memory.
+// If PYLON_PIPELINE_ID is set, also updates the TUI pipeline's timestamp so the
+// dashboard Poller detects activity.
 func runSyncIncremental(project, agent, filePath, content string) error {
 	root, _, s, err := openWorkspaceStore()
 	if err != nil {
 		return err
 	}
 	defer s.Close()
+
+	// Touch pipeline timestamp if TUI session is active
+	if pipelineID := os.Getenv("PYLON_PIPELINE_ID"); pipelineID != "" {
+		touchTUIPipeline(s, pipelineID)
+	}
 
 	// Resolve project name
 	project, err = resolveProject(root, project)
@@ -388,4 +402,38 @@ func buildIncrementalKey(filePath string) string {
 		return fmt.Sprintf("%s/%s", clean, ts)
 	}
 	return ts
+}
+
+// completeTUIPipelineViaStore marks a TUI pipeline as completed.
+// Used by the Stop hook (sync-memory --from-session) for the ExecInteractive path
+// where the parent process cannot do cleanup.
+func completeTUIPipelineViaStore(s *store.Store, cfg *config.Config, root, pipelineID string) {
+	orch := orchestrator.NewOrchestrator(cfg, s, root)
+
+	rec, err := s.GetPipeline(pipelineID)
+	if err != nil || rec == nil {
+		return
+	}
+
+	pipeline, err := orchestrator.LoadPipeline([]byte(rec.StateJSON))
+	if err != nil {
+		return
+	}
+
+	orch.Pipeline = pipeline
+	if agent, ok := orch.Pipeline.Agents["claude"]; ok {
+		agent.Status = "completed"
+		orch.Pipeline.Agents["claude"] = agent
+	}
+	_ = orch.ForceStage(orchestrator.StageCompleted)
+}
+
+// touchTUIPipeline updates a TUI pipeline's timestamp to signal activity to the dashboard.
+func touchTUIPipeline(s *store.Store, pipelineID string) {
+	rec, err := s.GetPipeline(pipelineID)
+	if err != nil || rec == nil {
+		return
+	}
+	rec.UpdatedAt = time.Now()
+	_ = s.UpsertPipeline(rec)
 }
