@@ -12,10 +12,13 @@ import (
 	"strings"
 	"syscall"
 
+	"time"
+
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/dashboard"
 	"github.com/kyago/pylon/internal/executor"
+	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -98,16 +101,25 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	// Check if a dashboard is already running for this workspace
 	if existing := checkExistingDashboard(root); existing != nil {
 		fmt.Printf("📊 대시보드 이미 실행 중: http://%s:%d\n", existing.Host, existing.Port)
-		fmt.Println("Claude Code를 시작합니다...")
 
-		// Use ExecInteractive (no need to keep parent alive)
+		// Create TUI pipeline so the existing dashboard can track this session.
+		// The Stop hook will mark it completed when Claude exits (since ExecInteractive replaces the process).
+		var pipelineID string
+		dbPath := filepath.Join(root, ".pylon", "pylon.db")
+		if tmpStore, err := store.NewStore(dbPath); err == nil {
+			_ = tmpStore.Migrate()
+			pipelineID, _ = createTUIPipeline(tmpStore, cfg, root)
+			tmpStore.Close()
+		}
+
+		fmt.Println("Claude Code를 시작합니다...")
 		exec := executor.NewDirectExecutor()
 		return exec.ExecInteractive(executor.ExecConfig{
 			Name:    "claude",
 			Command: "claude",
 			Args:    buildClaudeArgs(cfg, permMode),
 			WorkDir: root,
-			Env:     cfg.Runtime.Env,
+			Env:     envWithPipeline(cfg.Runtime.Env, pipelineID),
 		})
 	}
 
@@ -166,6 +178,12 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Reset(syscall.SIGINT, syscall.SIGTERM)
 
+	// Create TUI pipeline so the dashboard can track the session
+	pipelineID, err := createTUIPipeline(s, cfg, root)
+	if err != nil {
+		dashLogger.Printf("TUI 파이프라인 생성 실패: %v", err)
+	}
+
 	fmt.Printf("📊 대시보드: http://%s:%d (%s)\n", cfg.Dashboard.Host, actualPort, wsName)
 	fmt.Printf("   로그: %s\n", filepath.Join(logDir, "dashboard.log"))
 	fmt.Println("Claude Code를 시작합니다...")
@@ -177,15 +195,91 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 		Command: "claude",
 		Args:    buildClaudeArgs(cfg, permMode),
 		WorkDir: root,
-		Env:     cfg.Runtime.Env,
+		Env:     envWithPipeline(cfg.Runtime.Env, pipelineID),
 	})
 
-	// Claude exited → stop dashboard
+	// Claude exited → mark pipeline completed and stop dashboard
+	if pipelineID != "" {
+		completeTUIPipeline(s, cfg, root, pipelineID)
+	}
 	fmt.Println("\n📊 대시보드를 종료합니다...")
 	cancel()
 	<-dashDone
 
 	return claudeErr
+}
+
+// createTUIPipeline creates a pipeline record for the TUI session so the dashboard
+// can track it. Returns the pipeline ID.
+func createTUIPipeline(s *store.Store, cfg *config.Config, root string) (string, error) {
+	orch := orchestrator.NewOrchestrator(cfg, s, root)
+	pipelineID := fmt.Sprintf("tui-%s-%d", time.Now().Format("20060102-150405"), os.Getpid())
+
+	if err := orch.StartPipeline(pipelineID); err != nil {
+		return "", fmt.Errorf("파이프라인 생성 실패: %w", err)
+	}
+
+	// TUI session is a direct conversation — force to po_conversation stage
+	if err := orch.ForceStage(orchestrator.StagePOConversation); err != nil {
+		return "", fmt.Errorf("파이프라인 상태 전이 실패: %w", err)
+	}
+
+	// Register Claude as the active agent
+	orch.Pipeline.Agents["claude"] = orchestrator.AgentStatus{
+		TaskID:  "tui-session",
+		AgentID: "claude",
+		Status:  orchestrator.AgentStatusRunning,
+	}
+	if err := orch.SaveState(); err != nil {
+		return "", fmt.Errorf("파이프라인 상태 저장 실패: %w", err)
+	}
+
+	return pipelineID, nil
+}
+
+// completeTUIPipeline marks a TUI pipeline as completed (idempotent).
+// Safe to call from both the parent process path and the Stop hook path.
+func completeTUIPipeline(s *store.Store, cfg *config.Config, root, pipelineID string) {
+	if !strings.HasPrefix(pipelineID, "tui-") {
+		return
+	}
+
+	rec, err := s.GetPipeline(pipelineID)
+	if err != nil || rec == nil {
+		return
+	}
+
+	pipeline, err := orchestrator.LoadPipeline([]byte(rec.StateJSON))
+	if err != nil {
+		return
+	}
+
+	// Already terminal — skip to avoid duplicate History entries
+	if pipeline.IsTerminal() {
+		return
+	}
+
+	orch := orchestrator.NewOrchestrator(cfg, s, root)
+	orch.Pipeline = pipeline
+	if agent, ok := orch.Pipeline.Agents["claude"]; ok {
+		agent.Status = orchestrator.AgentStatusCompleted
+		orch.Pipeline.Agents["claude"] = agent
+	}
+	_ = orch.ForceStage(orchestrator.StageCompleted)
+}
+
+// envWithPipeline returns a copy of env with PYLON_PIPELINE_ID added.
+// If pipelineID is empty, returns the original env unchanged.
+func envWithPipeline(env map[string]string, pipelineID string) map[string]string {
+	if pipelineID == "" {
+		return env
+	}
+	merged := make(map[string]string, len(env)+1)
+	for k, v := range env {
+		merged[k] = v
+	}
+	merged["PYLON_PIPELINE_ID"] = pipelineID
+	return merged
 }
 
 // selectPermissionMode presents an interactive selector for Claude Code permission mode.

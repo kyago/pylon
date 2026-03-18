@@ -76,6 +76,17 @@ func (s *Store) GetActivePipelines() ([]PipelineRecord, error) {
 	return records, rows.Err()
 }
 
+// TouchPipelineTimestamp updates only the updated_at column for a pipeline.
+// This is a lightweight alternative to UpsertPipeline when only a timestamp refresh is needed.
+func (s *Store) TouchPipelineTimestamp(pipelineID string) error {
+	_, err := s.db.Exec(`UPDATE pipeline_state SET updated_at = ? WHERE pipeline_id = ?`,
+		time.Now(), pipelineID)
+	if err != nil {
+		return fmt.Errorf("failed to touch pipeline timestamp: %w", err)
+	}
+	return nil
+}
+
 // ListAllPipelines returns all pipelines ordered by most recently updated.
 func (s *Store) ListAllPipelines() ([]PipelineRecord, error) {
 	rows, err := s.db.Query(`

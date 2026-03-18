@@ -69,12 +69,18 @@ Claude Code Hook에서 자동 호출되어 세션 종료 시 또는 파일 변�
 }
 
 // runSyncFromSession handles --from-session: stores session learnings into project memory.
+// If PYLON_PIPELINE_ID is set, also marks the TUI pipeline as completed.
 func runSyncFromSession(project, agent, content string) error {
 	root, cfg, s, err := openWorkspaceStore()
 	if err != nil {
 		return err
 	}
 	defer s.Close()
+
+	// Complete TUI pipeline if running (for ExecInteractive path where parent can't cleanup)
+	if pipelineID := os.Getenv("PYLON_PIPELINE_ID"); pipelineID != "" {
+		completeTUIPipeline(s, cfg, root, pipelineID)
+	}
 
 	// Resolve project name
 	project, err = resolveProject(root, project)
@@ -122,12 +128,19 @@ func runSyncFromSession(project, agent, content string) error {
 }
 
 // runSyncIncremental handles --incremental: records file change context to memory.
+// If PYLON_PIPELINE_ID is set, also updates the TUI pipeline's timestamp so the
+// dashboard Poller detects activity.
 func runSyncIncremental(project, agent, filePath, content string) error {
 	root, _, s, err := openWorkspaceStore()
 	if err != nil {
 		return err
 	}
 	defer s.Close()
+
+	// Touch pipeline timestamp if TUI session is active
+	if pipelineID := os.Getenv("PYLON_PIPELINE_ID"); strings.HasPrefix(pipelineID, "tui-") {
+		_ = s.TouchPipelineTimestamp(pipelineID)
+	}
 
 	// Resolve project name
 	project, err = resolveProject(root, project)
@@ -389,3 +402,4 @@ func buildIncrementalKey(filePath string) string {
 	}
 	return ts
 }
+
