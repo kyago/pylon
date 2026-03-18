@@ -544,18 +544,23 @@ func buildMemoryContext(s *store.Store, projects []config.ProjectInfo) string {
 	return b.String()
 }
 
-// addToGitignore appends .claude/ entries to .gitignore if not already present.
+// addToGitignore appends pylon-managed entries to .gitignore if not already present.
 func addClaudeDirToGitignore(root string) error {
 	gitignorePath := filepath.Join(root, ".gitignore")
 
 	existing, _ := os.ReadFile(gitignorePath)
 	content := string(existing)
 
-	if strings.Contains(content, ".claude/") {
-		return nil // already present
+	// Collect missing entries
+	var missing []string
+	for _, entry := range []string{".claude/", "CLAUDE.md", ".pylon/logs/"} {
+		if !strings.Contains(content, entry) {
+			missing = append(missing, entry)
+		}
 	}
-
-	entry := "\n# Pylon-generated Claude Code config (dynamically generated)\n.claude/\nCLAUDE.md\n.pylon/logs/\n"
+	if len(missing) == 0 {
+		return nil
+	}
 
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -563,7 +568,12 @@ func addClaudeDirToGitignore(root string) error {
 	}
 	defer f.Close()
 
-	_, err = f.WriteString(entry)
+	var b strings.Builder
+	b.WriteString("\n# Pylon-generated (dynamically generated)\n")
+	for _, entry := range missing {
+		b.WriteString(entry + "\n")
+	}
+	_, err = f.WriteString(b.String())
 	return err
 }
 
