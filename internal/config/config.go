@@ -173,15 +173,24 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 			rawSub = make(map[string]any)
 		}
 
-		for subKey := range defaultSub {
+		// Sort sub-keys for deterministic output
+		sortedSubKeys := make([]string, 0, len(defaultSub))
+		for k := range defaultSub {
+			sortedSubKeys = append(sortedSubKeys, k)
+		}
+		sort.Strings(sortedSubKeys)
+
+		keyHasMerge := false
+		for _, subKey := range sortedSubKeys {
 			if _, subExists := rawSub[subKey]; !subExists {
 				added = append(added, key+"."+subKey)
+				keyHasMerge = true
 				hasSubKeyMerge = true
 				rawSub[subKey] = defaultSub[subKey]
 			}
 		}
 
-		if hasSubKeyMerge {
+		if keyHasMerge {
 			rawMap[key] = rawSub
 		}
 	}
