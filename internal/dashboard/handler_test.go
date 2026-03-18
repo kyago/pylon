@@ -104,8 +104,7 @@ func (m *mockStore) GetPipelineMetrics() (*store.PipelineMetrics, error) {
 func newTestServer(t *testing.T, mock *mockStore) *Server {
 	t.Helper()
 	cfg := &config.DashboardConfig{Host: "localhost", Port: 0}
-	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	srv, err := NewServer(mock, cfg, runtimeCfg, "test-workspace", nil)
+	srv, err := NewServer(mock, cfg, "test-workspace", nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

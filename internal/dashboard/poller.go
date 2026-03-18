@@ -6,7 +6,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/orchestrator"
 )
 
@@ -20,21 +19,19 @@ type pipelineSnapshot struct {
 type Poller struct {
 	store          DashboardStore
 	hub            *SSEHub
-	runtimeCfg     *config.RuntimeConfig
 	logger         *log.Logger
 	prev           map[string]pipelineSnapshot
 	knownTerminals map[string]bool // terminal 상태 도달 후 재감지 방지
 }
 
 // NewPoller creates a new poller.
-func NewPoller(s DashboardStore, hub *SSEHub, runtimeCfg *config.RuntimeConfig, logger *log.Logger) *Poller {
+func NewPoller(s DashboardStore, hub *SSEHub, logger *log.Logger) *Poller {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
 	return &Poller{
 		store:          s,
 		hub:            hub,
-		runtimeCfg:     runtimeCfg,
 		logger:         logger,
 		prev:           make(map[string]pipelineSnapshot),
 		knownTerminals: make(map[string]bool),

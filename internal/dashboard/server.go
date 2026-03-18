@@ -67,7 +67,6 @@ type Server struct {
 	cfg           *config.DashboardConfig
 	hub           *SSEHub
 	templates     *TemplateRenderer
-	runtimeCfg    *config.RuntimeConfig
 	logger        *log.Logger
 	WorkspaceName string // displayed in dashboard header
 }
@@ -75,7 +74,7 @@ type Server struct {
 // NewServer creates a new dashboard server with all routes registered.
 // workspaceName is displayed in the dashboard header to identify the workspace.
 // logger controls where dashboard log output is written; if nil, logs are discarded.
-func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config.RuntimeConfig, workspaceName string, logger *log.Logger) (*Server, error) {
+func NewServer(s DashboardStore, cfg *config.DashboardConfig, workspaceName string, logger *log.Logger) (*Server, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
@@ -90,7 +89,6 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, runtimeCfg *config
 		cfg:           cfg,
 		hub:           NewSSEHub(),
 		templates:     tmpl,
-		runtimeCfg:    runtimeCfg,
 		logger:        logger,
 		WorkspaceName: workspaceName,
 	}
@@ -154,7 +152,7 @@ func (srv *Server) Listen() (net.Listener, error) {
 func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 	go srv.hub.Run(ctx)
 
-	poller := NewPoller(srv.store, srv.hub, srv.runtimeCfg, srv.logger)
+	poller := NewPoller(srv.store, srv.hub, srv.logger)
 	go poller.Run(ctx)
 
 	httpSrv := &http.Server{

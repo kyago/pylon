@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -17,8 +16,7 @@ func TestPollerDetectsNewPipeline(t *testing.T) {
 	go hub.Run(ctx)
 	time.Sleep(10 * time.Millisecond)
 
-	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg, nil)
+	poller := NewPoller(mock, hub, nil)
 
 	ch, unsub := hub.Subscribe()
 	defer unsub()
@@ -56,8 +54,7 @@ func TestPollerDetectsStageChange(t *testing.T) {
 	go hub.Run(ctx)
 	time.Sleep(10 * time.Millisecond)
 
-	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg, nil)
+	poller := NewPoller(mock, hub, nil)
 
 	// First poll to establish baseline
 	poller.poll()
@@ -101,8 +98,7 @@ func TestPollerDetectsCompletion(t *testing.T) {
 	go hub.Run(ctx)
 	time.Sleep(10 * time.Millisecond)
 
-	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg, nil)
+	poller := NewPoller(mock, hub, nil)
 	poller.poll()
 
 	ch, unsub := hub.Subscribe()
@@ -136,8 +132,7 @@ func TestPollerNoEventsOnNoChange(t *testing.T) {
 	go hub.Run(ctx)
 	time.Sleep(10 * time.Millisecond)
 
-	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg, nil)
+	poller := NewPoller(mock, hub, nil)
 
 	// Establish baseline
 	poller.poll()
@@ -165,8 +160,7 @@ func TestPollerConcurrencyUpdate(t *testing.T) {
 	go hub.Run(ctx)
 	time.Sleep(10 * time.Millisecond)
 
-	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 3}
-	poller := NewPoller(mock, hub, runtimeCfg, nil)
+	poller := NewPoller(mock, hub, nil)
 
 	// Establish empty baseline
 	poller.poll()
@@ -216,8 +210,7 @@ func TestPollerNoSpuriousCreatedForTerminal(t *testing.T) {
 	go hub.Run(ctx)
 	time.Sleep(10 * time.Millisecond)
 
-	runtimeCfg := &config.RuntimeConfig{MaxConcurrent: 5}
-	poller := NewPoller(mock, hub, runtimeCfg, nil)
+	poller := NewPoller(mock, hub, nil)
 
 	// 첫 poll: pipeline_created 발행
 	poller.poll()
