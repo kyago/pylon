@@ -77,6 +77,7 @@ func init() {
 	rootCmd.AddCommand(newSyncProjectsCmd())
 	rootCmd.AddCommand(newSyncAgentsCmd())
 	rootCmd.AddCommand(newResumeCmd())
+	rootCmd.AddCommand(newUpdateCmd())
 }
 
 // Execute runs the root command.

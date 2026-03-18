@@ -131,6 +131,9 @@ func ParseConfig(data []byte) (*Config, error) {
 				AutoCleanup: true,
 			},
 		},
+		Dashboard: DashboardConfig{
+			AutoDashboard: true,
+		},
 		Wiki: WikiConfig{
 			AutoUpdate: true,
 		},
