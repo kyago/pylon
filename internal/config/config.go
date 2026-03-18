@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -109,25 +110,114 @@ func (r RuntimeConfig) ParseTaskTimeout() time.Duration {
 	return d
 }
 
-// SyncConfigDefaults reads config.yml, applies all default values, and writes it back.
-// This ensures newly added fields (from version upgrades) are present in the file.
-// Returns the number of fields that were added.
-func SyncConfigDefaults(path string) (*Config, error) {
-	cfg, err := LoadConfig(path)
+// SyncConfigDefaults reads config.yml, detects missing fields, and appends them.
+// Only writes to disk if there are actually missing fields, preserving existing content.
+// Returns the updated Config and a list of field paths that were added.
+func SyncConfigDefaults(path string) (*Config, []string, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	data, err := yaml.Marshal(cfg)
+	cfg, err := ParseConfig(raw)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal config: %w", err)
+		return nil, nil, err
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write config: %w", err)
+	// Parse raw into nested map to detect existing keys
+	var rawMap map[string]any
+	if unmarshalErr := yaml.Unmarshal(raw, &rawMap); unmarshalErr != nil {
+		rawMap = make(map[string]any)
 	}
 
-	return cfg, nil
+	// Build defaults as map for comparison
+	defaultBytes, _ := yaml.Marshal(cfg)
+	var defaultMap map[string]any
+	_ = yaml.Unmarshal(defaultBytes, &defaultMap)
+
+	// Find missing fields and build append content
+	var added []string
+	var appendBuf []byte
+
+	for key, defaultVal := range defaultMap {
+		rawVal, exists := rawMap[key]
+		if !exists {
+			// Entire section missing — append it
+			section, _ := yaml.Marshal(map[string]any{key: defaultVal})
+			appendBuf = append(appendBuf, '\n')
+			appendBuf = append(appendBuf, section...)
+			added = append(added, key)
+			continue
+		}
+
+		// Section exists — check sub-keys
+		defaultSub, ok := defaultVal.(map[string]any)
+		if !ok {
+			continue
+		}
+		rawSub, _ := rawVal.(map[string]any)
+		if rawSub == nil {
+			rawSub = make(map[string]any)
+		}
+
+		var missingKeys []string
+		for subKey := range defaultSub {
+			if _, subExists := rawSub[subKey]; !subExists {
+				missingKeys = append(missingKeys, subKey)
+				added = append(added, key+"."+subKey)
+			}
+		}
+
+		// If sub-keys are missing, rewrite just this section with merged values
+		if len(missingKeys) > 0 {
+			merged := make(map[string]any)
+			for k, v := range rawSub {
+				merged[k] = v
+			}
+			for k, v := range defaultSub {
+				if _, exists := rawSub[k]; !exists {
+					merged[k] = v
+				}
+			}
+			// Replace the section in-place by rewriting the full file with the merged map
+			rawMap[key] = merged
+		}
+	}
+
+	if len(added) == 0 {
+		return cfg, nil, nil
+	}
+
+	// If we had sub-key merges (rawMap was modified), rewrite the full file
+	// Otherwise just append missing sections
+	hasSubKeyMerge := false
+	for _, a := range added {
+		if strings.Contains(a, ".") {
+			hasSubKeyMerge = true
+			break
+		}
+	}
+
+	if hasSubKeyMerge {
+		data, err := yaml.Marshal(rawMap)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal config: %w", err)
+		}
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			return nil, nil, fmt.Errorf("failed to write config: %w", err)
+		}
+	} else if len(appendBuf) > 0 {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to open config for append: %w", err)
+		}
+		defer f.Close()
+		if _, err := f.Write(appendBuf); err != nil {
+			return nil, nil, fmt.Errorf("failed to append config: %w", err)
+		}
+	}
+
+	return cfg, added, nil
 }
 
 // LoadConfig reads and parses a config.yml file, applying defaults for missing fields.

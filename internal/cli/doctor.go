@@ -151,11 +151,19 @@ func syncConfigIfWorkspace() {
 	}
 
 	cfgPath := filepath.Join(root, ".pylon", "config.yml")
-	if _, err := config.SyncConfigDefaults(cfgPath); err != nil {
+	_, added, err := config.SyncConfigDefaults(cfgPath)
+	if err != nil {
 		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)
 		return
 	}
-	fmt.Println("✓ config.yml 기본값 동기화 완료")
+	if len(added) > 0 {
+		fmt.Println("✓ config.yml에 누락된 기본값 추가:")
+		for _, field := range added {
+			fmt.Printf("  + %s\n", field)
+		}
+	} else {
+		fmt.Println("✓ config.yml 최신 상태")
+	}
 }
 
 func verifyClaude() (string, error) {
