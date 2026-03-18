@@ -103,11 +103,13 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 		fmt.Printf("📊 대시보드 이미 실행 중: http://%s:%d\n", existing.Host, existing.Port)
 
 		// Create TUI pipeline so the existing dashboard can track this session.
-		// The Stop hook will mark it completed when Claude exits (since ExecInteractive replaces the process).
+		// ExecInteractive replaces the process, so completion is handled by
+		// cleanupStaleTUIPipelines() at next startup.
 		var pipelineID string
 		dbPath := filepath.Join(root, ".pylon", "pylon.db")
 		if tmpStore, err := store.NewStore(dbPath); err == nil {
 			_ = tmpStore.Migrate()
+			cleanupStaleTUIPipelines(tmpStore, cfg, root)
 			pipelineID, _ = createTUIPipeline(tmpStore, cfg, root)
 			tmpStore.Close()
 		}
@@ -177,6 +179,9 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 	// Ignore SIGINT/SIGTERM in parent — let Claude Code (child) handle them.
 	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Reset(syscall.SIGINT, syscall.SIGTERM)
+
+	// Clean up stale TUI pipelines from previous sessions that didn't get completed
+	cleanupStaleTUIPipelines(s, cfg, root)
 
 	// Create TUI pipeline so the dashboard can track the session
 	pipelineID, err := createTUIPipeline(s, cfg, root)
@@ -266,6 +271,20 @@ func completeTUIPipeline(s *store.Store, cfg *config.Config, root, pipelineID st
 		orch.Pipeline.Agents["claude"] = agent
 	}
 	_ = orch.ForceStage(orchestrator.StageCompleted)
+}
+
+// cleanupStaleTUIPipelines completes any tui-* pipelines stuck in non-terminal state
+// from previous sessions (e.g., ExecInteractive path where parent can't do cleanup).
+func cleanupStaleTUIPipelines(s *store.Store, cfg *config.Config, root string) {
+	records, err := s.GetActivePipelines()
+	if err != nil {
+		return
+	}
+	for _, rec := range records {
+		if strings.HasPrefix(rec.PipelineID, "tui-") {
+			completeTUIPipeline(s, cfg, root, rec.PipelineID)
+		}
+	}
 }
 
 // envWithPipeline returns a copy of env with PYLON_PIPELINE_ID added.
