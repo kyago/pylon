@@ -213,7 +213,7 @@ func runWithDashboard(root string, cfg *config.Config, permMode string) error {
 // can track it. Returns the pipeline ID.
 func createTUIPipeline(s *store.Store, cfg *config.Config, root string) (string, error) {
 	orch := orchestrator.NewOrchestrator(cfg, s, root)
-	pipelineID := fmt.Sprintf("tui-%s", time.Now().Format("20060102-150405"))
+	pipelineID := fmt.Sprintf("tui-%s-%d", time.Now().Format("20060102-150405"), os.Getpid())
 
 	if err := orch.StartPipeline(pipelineID); err != nil {
 		return "", fmt.Errorf("파이프라인 생성 실패: %w", err)
@@ -228,7 +228,7 @@ func createTUIPipeline(s *store.Store, cfg *config.Config, root string) (string,
 	orch.Pipeline.Agents["claude"] = orchestrator.AgentStatus{
 		TaskID:  "tui-session",
 		AgentID: "claude",
-		Status:  "running",
+		Status:  orchestrator.AgentStatusRunning,
 	}
 	if err := orch.SaveState(); err != nil {
 		return "", fmt.Errorf("파이프라인 상태 저장 실패: %w", err)
@@ -237,9 +237,12 @@ func createTUIPipeline(s *store.Store, cfg *config.Config, root string) (string,
 	return pipelineID, nil
 }
 
-// completeTUIPipeline marks the TUI pipeline as completed.
+// completeTUIPipeline marks a TUI pipeline as completed (idempotent).
+// Safe to call from both the parent process path and the Stop hook path.
 func completeTUIPipeline(s *store.Store, cfg *config.Config, root, pipelineID string) {
-	orch := orchestrator.NewOrchestrator(cfg, s, root)
+	if !strings.HasPrefix(pipelineID, "tui-") {
+		return
+	}
 
 	rec, err := s.GetPipeline(pipelineID)
 	if err != nil || rec == nil {
@@ -251,10 +254,15 @@ func completeTUIPipeline(s *store.Store, cfg *config.Config, root, pipelineID st
 		return
 	}
 
+	// Already terminal — skip to avoid duplicate History entries
+	if pipeline.IsTerminal() {
+		return
+	}
+
+	orch := orchestrator.NewOrchestrator(cfg, s, root)
 	orch.Pipeline = pipeline
-	// Mark claude agent as completed
 	if agent, ok := orch.Pipeline.Agents["claude"]; ok {
-		agent.Status = "completed"
+		agent.Status = orchestrator.AgentStatusCompleted
 		orch.Pipeline.Agents["claude"] = agent
 	}
 	_ = orch.ForceStage(orchestrator.StageCompleted)

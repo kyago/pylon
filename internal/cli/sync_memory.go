@@ -13,7 +13,6 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/memory"
-	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -80,7 +79,7 @@ func runSyncFromSession(project, agent, content string) error {
 
 	// Complete TUI pipeline if running (for ExecInteractive path where parent can't cleanup)
 	if pipelineID := os.Getenv("PYLON_PIPELINE_ID"); pipelineID != "" {
-		completeTUIPipelineViaStore(s, cfg, root, pipelineID)
+		completeTUIPipeline(s, cfg, root, pipelineID)
 	}
 
 	// Resolve project name
@@ -139,8 +138,8 @@ func runSyncIncremental(project, agent, filePath, content string) error {
 	defer s.Close()
 
 	// Touch pipeline timestamp if TUI session is active
-	if pipelineID := os.Getenv("PYLON_PIPELINE_ID"); pipelineID != "" {
-		touchTUIPipeline(s, pipelineID)
+	if pipelineID := os.Getenv("PYLON_PIPELINE_ID"); strings.HasPrefix(pipelineID, "tui-") {
+		_ = s.TouchPipelineTimestamp(pipelineID)
 	}
 
 	// Resolve project name
@@ -404,36 +403,3 @@ func buildIncrementalKey(filePath string) string {
 	return ts
 }
 
-// completeTUIPipelineViaStore marks a TUI pipeline as completed.
-// Used by the Stop hook (sync-memory --from-session) for the ExecInteractive path
-// where the parent process cannot do cleanup.
-func completeTUIPipelineViaStore(s *store.Store, cfg *config.Config, root, pipelineID string) {
-	orch := orchestrator.NewOrchestrator(cfg, s, root)
-
-	rec, err := s.GetPipeline(pipelineID)
-	if err != nil || rec == nil {
-		return
-	}
-
-	pipeline, err := orchestrator.LoadPipeline([]byte(rec.StateJSON))
-	if err != nil {
-		return
-	}
-
-	orch.Pipeline = pipeline
-	if agent, ok := orch.Pipeline.Agents["claude"]; ok {
-		agent.Status = "completed"
-		orch.Pipeline.Agents["claude"] = agent
-	}
-	_ = orch.ForceStage(orchestrator.StageCompleted)
-}
-
-// touchTUIPipeline updates a TUI pipeline's timestamp to signal activity to the dashboard.
-func touchTUIPipeline(s *store.Store, pipelineID string) {
-	rec, err := s.GetPipeline(pipelineID)
-	if err != nil || rec == nil {
-		return
-	}
-	rec.UpdatedAt = time.Now()
-	_ = s.UpsertPipeline(rec)
-}
