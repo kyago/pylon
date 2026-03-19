@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -312,6 +313,7 @@ func (srv *Server) handleAPIPipelineCancel(w http.ResponseWriter, r *http.Reques
 		CompletedAt: time.Now(),
 	})
 	pipeline.CurrentStage = orchestrator.StageFailed
+	pipeline.Status = orchestrator.StatusFailed
 
 	snapshot, err := pipeline.Snapshot()
 	if err != nil {
@@ -464,7 +466,11 @@ func (srv *Server) handleAPIDLQDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := srv.store.DeleteDLQEntry(id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if strings.Contains(err.Error(), "not found") {
+			http.Error(w, err.Error(), http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 

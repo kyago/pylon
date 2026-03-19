@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
+
+// validWorkflowName restricts workflow names to safe characters only.
+var validWorkflowName = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
 //go:embed templates/*.yml
 var embeddedTemplates embed.FS
@@ -15,6 +19,11 @@ var embeddedTemplates embed.FS
 // LoadWorkflow loads a workflow template by name.
 // It first checks the custom templateDir, then falls back to embedded templates.
 func LoadWorkflow(name string, templateDir string) (*WorkflowTemplate, error) {
+	// Validate workflow name to prevent path traversal
+	if !validWorkflowName.MatchString(name) {
+		return nil, fmt.Errorf("invalid workflow name %q: must match [a-z0-9_-]+", name)
+	}
+
 	// Try custom template directory first
 	if templateDir != "" {
 		path := filepath.Join(templateDir, name+".yml")
