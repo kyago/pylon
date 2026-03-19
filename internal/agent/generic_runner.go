@@ -23,6 +23,9 @@ func NewGenericCLIRunner(exec executor.ProcessExecutor, command string) *Generic
 // The task prompt is passed as the first positional argument.
 // Agent-specific and global environment variables are merged and injected.
 func (r *GenericCLIRunner) Start(cfg RunConfig) (*executor.ExecResult, error) {
+	if r.Command == "" {
+		return nil, fmt.Errorf("command is required for GenericCLIRunner")
+	}
 	if cfg.Agent == nil {
 		return nil, fmt.Errorf("agent config is required")
 	}

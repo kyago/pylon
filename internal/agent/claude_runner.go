@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/executor"
 )
 
@@ -138,10 +137,3 @@ func NewRunner(exec executor.ProcessExecutor) *Runner {
 	return NewClaudeCodeRunner(exec)
 }
 
-// ResolveBackendConfig resolves the backend from an agent config.
-func ResolveBackendConfig(agentCfg *config.AgentConfig) string {
-	if agentCfg == nil || agentCfg.Backend == "" {
-		return "claude"
-	}
-	return agentCfg.Backend
-}

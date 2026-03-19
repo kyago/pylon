@@ -10,7 +10,6 @@ import (
 // PipelineRunStatus represents the status of a pipeline in the scheduler.
 type PipelineRunStatus struct {
 	PipelineID string
-	Stage      string
 	Status     string // running, completed, failed, waiting
 	Error      error
 }
@@ -137,6 +136,20 @@ func (s *Scheduler) Status() []PipelineRunStatus {
 		})
 	}
 	return result
+}
+
+// Cleanup removes completed and failed pipelines from tracking to prevent memory leaks.
+func (s *Scheduler) Cleanup() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for id, sp := range s.pipelines {
+		if sp.status == "completed" || sp.status == "failed" {
+			delete(s.pipelines, id)
+			removed++
+		}
+	}
+	return removed
 }
 
 // RunningCount returns the number of currently running pipelines.
