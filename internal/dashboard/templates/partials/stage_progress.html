@@ -3,10 +3,6 @@
     {{if .WorkflowStages}}
     {{/* Workflow-specific stage display */}}
     {{$current := .Pipeline.CurrentStage}}
-    {{$currentIdx := -1}}
-    {{range $i, $s := .WorkflowStages}}
-        {{if eq $s $current}}{{$currentIdx = $i}}{{end}}
-    {{end}}
     {{range $i, $s := .WorkflowStages}}
     {{if ne $s "failed"}}
     <div class="stage-step {{if lt $i $.Pipeline.StageIndex}}stage-done{{else if eq $s $current}}stage-current{{end}}">
