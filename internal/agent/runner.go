@@ -4,141 +4,46 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
-	"time"
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/executor"
 	"github.com/kyago/pylon/internal/git"
 )
 
-// RunConfig holds parameters for running a Claude Code agent.
+// AgentRunner is the interface for executing agents.
+// Implementations must respect the ctx in RunConfig for cancellation and timeout.
+// (ADR-003: ctx-based timeout is the interface contract)
+type AgentRunner interface {
+	Start(cfg RunConfig) (*executor.ExecResult, error)
+}
+
+// RunConfig holds parameters for running an agent.
 type RunConfig struct {
-	Ctx         context.Context   // if set, cancels agent process on context cancellation
+	Ctx         context.Context
 	Agent       *config.AgentConfig
 	Global      *config.Config
 	TaskPrompt  string
-	WorkDir     string    // worktree path or project directory
-	ClaudeMD    string    // dynamically generated CLAUDE.md content
-	Interactive bool      // true for PO (interactive mode)
-	Stdout      io.Writer // if set, stream stdout instead of capturing
-	Stderr      io.Writer // if set, stream stderr instead of capturing
+	WorkDir     string
+	ClaudeMD    string
+	Interactive bool
+	Stdout      io.Writer
+	Stderr      io.Writer
+	PipelineID  string // injected as PYLON_PIPELINE_ID
+	TaskID      string // injected as PYLON_TASK_ID
 }
 
-// Runner manages Claude Code agent execution.
-type Runner struct {
-	Executor executor.ProcessExecutor
-}
-
-// NewRunner creates a new Runner with the given executor.
-func NewRunner(exec executor.ProcessExecutor) *Runner {
-	return &Runner{Executor: exec}
-}
-
-// BuildArgs constructs the claude CLI arguments as a string slice.
-func (r *Runner) BuildArgs(cfg RunConfig) []string {
-	var args []string
-
-	if cfg.Interactive {
-		// Interactive agent (PO): no --print, no --prompt
-		if cfg.Agent.MaxTurns > 0 {
-			args = append(args, "--max-turns", fmt.Sprintf("%d", cfg.Agent.MaxTurns))
-		}
-		args = append(args, "--permission-mode", cfg.Agent.PermissionMode)
-	} else {
-		// Non-interactive agent: --print with stream-json output
-		args = append(args, "--print")
-		args = append(args, "--verbose")
-		args = append(args, "--output-format", "stream-json")
-		if cfg.Agent.MaxTurns > 0 {
-			args = append(args, "--max-turns", fmt.Sprintf("%d", cfg.Agent.MaxTurns))
-		}
-		args = append(args, "--permission-mode", cfg.Agent.PermissionMode)
+// NewRunnerForBackend returns the appropriate AgentRunner for the given backend.
+// "claude" or "" returns a ClaudeCodeRunner, anything else returns a GenericCLIRunner.
+func NewRunnerForBackend(backend string, exec executor.ProcessExecutor) AgentRunner {
+	switch backend {
+	case "", "claude":
+		return NewClaudeCodeRunner(exec)
+	default:
+		return NewGenericCLIRunner(exec, backend)
 	}
-
-	// Model
-	if cfg.Agent.Model != "" {
-		args = append(args, "--model", cfg.Agent.Model)
-	}
-
-	// Allowed tools
-	if len(cfg.Agent.Tools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(cfg.Agent.Tools, ","))
-	}
-
-	// Disallowed tools
-	if len(cfg.Agent.DisallowedTools) > 0 {
-		args = append(args, "--disallowedTools", strings.Join(cfg.Agent.DisallowedTools, ","))
-	}
-
-	// System prompt with CLAUDE.md content
-	if cfg.ClaudeMD != "" {
-		args = append(args, "--append-system-prompt", cfg.ClaudeMD)
-	}
-
-	// Task prompt as positional argument (non-interactive only)
-	if !cfg.Interactive && cfg.TaskPrompt != "" {
-		args = append(args, cfg.TaskPrompt)
-	}
-
-	return args
-}
-
-// resolveTimeout determines the effective timeout for an agent execution.
-// Priority: agent YAML timeout > global runtime.task_timeout > 30m default.
-func resolveTimeout(agentTimeout string, globalTimeout string) time.Duration {
-	if agentTimeout != "" {
-		if d, err := time.ParseDuration(agentTimeout); err == nil && d > 0 {
-			return d
-		}
-	}
-	if globalTimeout != "" {
-		if d, err := time.ParseDuration(globalTimeout); err == nil && d > 0 {
-			return d
-		}
-	}
-	return 30 * time.Minute
-}
-
-// Start launches the agent as a headless process.
-func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
-	if cfg.Agent == nil {
-		return nil, fmt.Errorf("agent config is required")
-	}
-	if cfg.Global == nil {
-		return nil, fmt.Errorf("global config is required")
-	}
-	if cfg.WorkDir == "" {
-		return nil, fmt.Errorf("work directory is required")
-	}
-
-	args := r.BuildArgs(cfg)
-	env := ResolveEnv(cfg.Global.Runtime.Env, cfg.Agent.Env)
-
-	// Apply timeout: agent timeout > global timeout > 30m default
-	ctx := cfg.Ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	timeout := resolveTimeout(cfg.Agent.Timeout, cfg.Global.Runtime.TaskTimeout)
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	return r.Executor.RunHeadless(executor.ExecConfig{
-		Name:    cfg.Agent.Name,
-		Command: "claude",
-		Args:    args,
-		WorkDir: cfg.WorkDir,
-		Env:     env,
-		Ctx:     ctx,
-		Stdout:  cfg.Stdout,
-		Stderr:  cfg.Stderr,
-	})
 }
 
 // BuildTaskPrompt generates a short task instruction for a headless agent.
-// The prompt directs the agent to read its inbox for detailed task information
-// and write results to a concrete outbox path.
 func BuildTaskPrompt(role, agentName, taskID, inboxDir, outboxDir string) string {
 	return fmt.Sprintf(
 		"당신은 %s입니다.\ninbox 파일을 읽고 태스크를 수행하세요.\ninbox: %s/%s/%s.task.json\n완료 후 결과를 outbox에 JSON으로 작성하세요.\noutbox: %s/%s/%s.result.json",
@@ -147,8 +52,6 @@ func BuildTaskPrompt(role, agentName, taskID, inboxDir, outboxDir string) string
 }
 
 // PrepareWorkDir sets up the working directory for an agent.
-// When a WorktreeManager is provided and isolation is "worktree", creates a git worktree.
-// Otherwise, uses the project directory directly.
 func PrepareWorkDir(
 	wm *git.WorktreeManager,
 	agentIsolation string,
