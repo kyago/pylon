@@ -78,7 +78,7 @@ Phase 5 (고급)
 | Phase 1: 적응형 워크플로우 | ✅ 완료 | `63a8e60` | 2026-03-19 |
 | Phase 2: 운영 안정성 | ✅ 완료 | `2654980` | 2026-03-19 |
 | Phase 3: 가시성 & UX | ✅ 완료 | - | 2026-03-19 |
-| Phase 4: 확장성 | ⬜ 미착수 | - | - |
+| Phase 4: 확장성 | ✅ 완료 | - | 2026-03-19 |
 | Phase 5: 고급 기능 | ⬜ 미착수 | - | - |
 
 ---
@@ -124,6 +124,50 @@ Phase 5 (고급)
 **알려진 제약** (Phase 4에서 해소 예정):
 - Pause race: `saveState`가 in-memory Status를 DB에 쓸 때 외부 pause 신호 덮어쓸 수 있음
 - `RequeueDLQ`: 실행 중인 orchestrator에 requeue 알림 없음 → `pylon continue` 필요
+
+---
+
+#### Phase 4 완료 체크리스트
+
+- [x] **4-1 AgentRunner 인터페이스 추출**
+  - [x] `AgentRunner` 인터페이스 정의: `Start(cfg RunConfig) (*ExecResult, error)` (`runner.go`)
+  - [x] `ClaudeCodeRunner` 구현 — 기존 Runner 로직 이동 (`claude_runner.go`)
+  - [x] `LoopConfig.Runner` 필드 타입을 `AgentRunner` 인터페이스로 변경
+  - [x] 하위 호환성: `Runner` 타입 별칭 + `NewRunner()` 유지
+
+- [x] **4-2 Runner 디스패치**
+  - [x] `GenericCLIRunner` 구현 — 임의 CLI 백엔드 지원 (`generic_runner.go`)
+  - [x] `NewRunnerForBackend(backend, exec)` 팩토리 — `""/"claude"` → ClaudeCode, 그 외 → Generic
+  - [x] `config.AgentConfig.Backend` 필드 기반 디스패치
+
+- [x] **4-3 환경변수 기반 에이전트 정체성**
+  - [x] `PYLON_AGENT_NAME`, `PYLON_PIPELINE_ID`, `PYLON_TASK_ID` 자동 주입 (`injectPylonEnv`)
+  - [x] `RunConfig`에 `PipelineID`, `TaskID` 필드 추가
+  - [x] `loop.go` `executeAgentWithSuffix`에서 RunConfig에 값 전달
+
+- [x] **4-4 멀티 파이프라인 Scheduler**
+  - [x] `Scheduler` 구조체 — `Submit`, `Stop`, `Status`, `RunningCount` (`scheduler.go`)
+  - [x] 채널 기반 세마포어로 동시 실행 파이프라인 수 제한
+  - [x] panic recovery로 nil 의존성 파이프라인 안전 처리
+  - [x] `config.RuntimeConfig.MaxPipelines` 필드 추가
+
+- [x] **4-5 WIP 제한 & 백프레셔**
+  - [x] `AcquireWIP(ctx, stage)` / `ReleaseWIP(stage)` 메서드
+  - [x] 스테이지별 WIP 한도 도달 시 대기 (ctx 취소 시 반환)
+  - [x] `WIPStatus()` 현재 카운트 조회
+  - [x] `config.WIPLimitsConfig.PerStage` 필드 활용
+
+- [x] **4-6 워커 용량 추적 WorkerPool**
+  - [x] `WorkerPool` 구조체 — `Acquire`, `Release`, `Status`, `TotalActive` (`capacity.go`)
+  - [x] 모델별 동시 실행 제한, 미설정 모델은 무제한
+  - [x] `config.RuntimeConfig.WorkerLimits` 필드 추가
+
+- [x] **4-7 Transport 인터페이스 추출**
+  - [x] `Transport` 인터페이스 — `WriteTask`, `ReadResult`, `WriteResult`, `ScanResults` (`transport.go`)
+  - [x] `FileTransport` 구현 — 기존 함수 래핑 (`file_transport.go`)
+  - [x] 통합 테스트 4건 (`transport_test.go`)
+
+**검증 결과**: `go build ./...` ✅ | `go test ./internal/agent/...` ✅ | `go test ./internal/orchestrator/...` ✅ | `go test ./internal/protocol/...` ✅ | `go test ./internal/config/...` ✅ | `go test ./internal/dashboard/...` ✅
 
 ---
 

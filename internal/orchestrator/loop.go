@@ -32,7 +32,7 @@ type LoopConfig struct {
 	Branch       string
 	WorkflowName string // workflow template name (e.g., "feature", "bugfix")
 	MemManager   *memory.Manager
-	Runner       *agent.Runner
+	Runner       agent.AgentRunner
 	WorktreeMgr  *git.WorktreeManager
 	Agents       map[string]*config.AgentConfig
 	Projects     []config.ProjectInfo
@@ -295,6 +295,8 @@ func (l *Loop) executeAgentWithSuffix(ctx context.Context, agentName, taskSuffix
 		TaskPrompt: taskPrompt,
 		WorkDir:    workDir,
 		ClaudeMD:   claudeMD,
+		PipelineID: l.cfg.PipelineID,
+		TaskID:     taskID,
 	})
 	if err != nil {
 		l.mu.Lock()
