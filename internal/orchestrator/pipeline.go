@@ -89,6 +89,10 @@ type Pipeline struct {
 	MaxAttempts   int                    `json:"max_attempts,omitempty"`
 	TaskGraph     *TaskGraph             `json:"task_graph,omitempty"`
 	CreatedAt     time.Time              `json:"created_at"`
+
+	// transitions is a runtime-only field (not serialized) that overrides
+	// the default validTransitions when a workflow template is applied.
+	transitions map[Stage][]Stage `json:"-"`
 }
 
 // NewPipeline creates a new pipeline in the init stage.
@@ -106,9 +110,24 @@ func NewPipeline(id string, maxAttempts int) *Pipeline {
 	}
 }
 
+// SetTransitions overrides the default transition map with a workflow-specific one.
+// This is a runtime-only setting; the transitions are not serialized.
+func (p *Pipeline) SetTransitions(t map[Stage][]Stage) {
+	p.transitions = t
+}
+
+// getTransitions returns the active transition map.
+// Returns the workflow-specific transitions if set, otherwise the default validTransitions.
+func (p *Pipeline) getTransitions() map[Stage][]Stage {
+	if p.transitions != nil {
+		return p.transitions
+	}
+	return validTransitions
+}
+
 // CanTransition checks whether a transition to the target stage is valid.
 func (p *Pipeline) CanTransition(to Stage) bool {
-	allowed, ok := validTransitions[p.CurrentStage]
+	allowed, ok := p.getTransitions()[p.CurrentStage]
 	if !ok {
 		return false
 	}

@@ -21,9 +21,11 @@ import (
 	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/slug"
 	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/workflow"
 )
 
 var flagContinue string
+var flagWorkflow string
 
 func newRequestCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -35,6 +37,7 @@ The PO agent will analyze the requirement, ask clarifying questions,
 and orchestrate the team to deliver the implementation.
 
 Use --continue to resume a pipeline after PO conversation completes.
+Use --workflow to select a workflow template (feature, bugfix, hotfix, docs, explore, review, refactor).
 
 Spec Reference: Section 7 "pylon request"`,
 		Args: cobra.ExactArgs(1),
@@ -42,6 +45,7 @@ Spec Reference: Section 7 "pylon request"`,
 	}
 
 	cmd.Flags().StringVar(&flagContinue, "continue", "", "continue a pipeline from the given ID (after PO conversation)")
+	cmd.Flags().StringVar(&flagWorkflow, "workflow", "", "workflow template name (default: from config or 'feature')")
 
 	return cmd
 }
@@ -125,19 +129,29 @@ func runRequest(cmd *cobra.Command, args []string) error {
 	runner := agent.NewRunner(executor.NewDirectExecutor())
 	wtMgr := git.NewWorktreeManager(cfg.Git.Worktree.Enabled, cfg.Git.Worktree.AutoCleanup)
 
+	// Resolve workflow name
+	workflowName := flagWorkflow
+	if workflowName == "" {
+		workflowName = cfg.Workflow.DefaultWorkflow
+	}
+	if workflowName == "" {
+		workflowName = "feature"
+	}
+
 	// Create and run the orchestration loop
 	loop := orchestrator.NewLoop(orchestrator.LoopConfig{
-		Config:      cfg,
-		Store:       s,
-		WorkDir:     root,
-		PipelineID:  pipelineID,
-		Requirement: requirement,
-		Branch:      branch,
-		MemManager:  memMgr,
-		Runner:      runner,
-		WorktreeMgr: wtMgr,
-		Agents:      agents,
-		Projects:    projects,
+		Config:       cfg,
+		Store:        s,
+		WorkDir:      root,
+		PipelineID:   pipelineID,
+		Requirement:  requirement,
+		Branch:       branch,
+		WorkflowName: workflowName,
+		MemManager:   memMgr,
+		Runner:       runner,
+		WorktreeMgr:  wtMgr,
+		Agents:       agents,
+		Projects:     projects,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -148,6 +162,12 @@ func runRequest(cmd *cobra.Command, args []string) error {
 	if errors.Is(err, orchestrator.ErrInteractiveRequired) {
 		orch := loop.GetOrchestrator()
 		currentStage := orch.Pipeline.CurrentStage
+
+		// Load workflow template for dynamic next-stage resolution
+		wfTemplate, wfErr := workflow.LoadWorkflow(workflowName, cfg.Workflow.TemplateDir)
+		if wfErr != nil {
+			return fmt.Errorf("failed to load workflow for interactive stage: %w", wfErr)
+		}
 
 		if currentStage == orchestrator.StageTaskReview {
 			// Task review stage — launch PO for reviewing PM's task breakdown
@@ -185,8 +205,9 @@ func runRequest(cmd *cobra.Command, args []string) error {
 			}
 
 			// Transition past task_review for the --continue path
-			if err := orch.TransitionTo(orchestrator.StageAgentExecuting); err != nil {
-				return fmt.Errorf("failed to transition to agent executing: %w", err)
+			nextAfterReview := wfTemplate.NextStageAfter(orchestrator.StageTaskReview)
+			if err := orch.TransitionTo(nextAfterReview); err != nil {
+				return fmt.Errorf("failed to transition to %s: %w", nextAfterReview, err)
 			}
 
 			execErr := poRunner.Executor.ExecInteractive(executor.ExecConfig{
@@ -237,8 +258,9 @@ func runRequest(cmd *cobra.Command, args []string) error {
 
 		// Transition past PO for the --continue path
 		// (ExecInteractive replaces the process on success, so state must be saved before)
-		if err := orch.TransitionTo(orchestrator.StageArchitectAnalysis); err != nil {
-			return fmt.Errorf("failed to transition to architect analysis: %w", err)
+		nextAfterPO := wfTemplate.NextStageAfter(orchestrator.StagePOConversation)
+		if err := orch.TransitionTo(nextAfterPO); err != nil {
+			return fmt.Errorf("failed to transition to %s: %w", nextAfterPO, err)
 		}
 
 		execErr := poRunner.Executor.ExecInteractive(executor.ExecConfig{

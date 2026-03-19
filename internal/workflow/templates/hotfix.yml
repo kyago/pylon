@@ -1,0 +1,8 @@
+name: hotfix
+description: Emergency hotfix - minimal path to PR, skips PO conversation
+stages:
+  - init
+  - agent_executing
+  - verification
+  - pr_creation
+  - completed
