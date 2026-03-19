@@ -36,7 +36,7 @@ type RunConfig struct {
 // "claude" or "" returns a ClaudeCodeRunner, anything else returns a GenericCLIRunner.
 func NewRunnerForBackend(backend string, exec executor.ProcessExecutor) AgentRunner {
 	switch backend {
-	case "", "claude":
+	case "", "claude", "claude-code":
 		return NewClaudeCodeRunner(exec)
 	default:
 		return NewGenericCLIRunner(exec, backend)

@@ -54,8 +54,8 @@ func NewScheduler(maxPipelines int, wipLimits map[string]int) *Scheduler {
 	}
 }
 
-// Submit queues a pipeline for execution. It blocks if the max pipeline limit is reached.
-// The pipeline runs in a background goroutine and its status can be queried via Status().
+// Submit queues a pipeline for execution. Returns immediately; execution is
+// deferred if the max pipeline limit is reached. Status can be queried via Status().
 func (s *Scheduler) Submit(cfg LoopConfig) (string, error) {
 	if cfg.PipelineID == "" {
 		return "", fmt.Errorf("PipelineID is required")

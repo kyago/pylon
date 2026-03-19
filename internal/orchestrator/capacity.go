@@ -35,7 +35,7 @@ func NewWorkerPool(limits map[string]int) *WorkerPool {
 }
 
 // Acquire blocks until a slot is available for the given model.
-// Returns nil when the slot is acquired, or ctx.Err() if cancelled.
+// Returns nil when the slot is acquired, or a wrapped ctx.Err() if cancelled.
 // Models without a configured limit are always granted immediately.
 func (wp *WorkerPool) Acquire(ctx context.Context, model string) error {
 	limit, hasLimit := wp.limits[model]
