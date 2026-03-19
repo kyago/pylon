@@ -105,8 +105,9 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, workspaceName stri
 	r.Use(middleware.Recoverer)
 	r.Use(requestLogger(logger))
 
-	// SSE endpoint — long-lived connection, no timeout
+	// SSE endpoints — long-lived connections, no timeout
 	r.Get("/api/events", srv.handleSSEStream)
+	r.Get("/api/pipelines/{id}/logs", srv.handlePipelineLogs)
 
 	// All other routes get a 30s timeout
 	r.Group(func(r chi.Router) {
@@ -132,7 +133,6 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, workspaceName stri
 			r.Get("/dlq", srv.handleAPIDLQ)
 			r.Post("/dlq/{id}/requeue", srv.handleAPIDLQRequeue)
 			r.Delete("/dlq/{id}", srv.handleAPIDLQDelete)
-			r.Get("/pipelines/{id}/logs", srv.handlePipelineLogs)
 		})
 	})
 

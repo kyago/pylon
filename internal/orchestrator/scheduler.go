@@ -245,7 +245,7 @@ func (s *Scheduler) waitForRequires(ctx context.Context, requires []string) erro
 			sp, exists := s.pipelines[reqID]
 			if !exists {
 				s.mu.Unlock()
-				return fmt.Errorf("required pipeline %s not found", reqID)
+				return fmt.Errorf("required pipeline %s not found (requires must be submitted before dependents)", reqID)
 			}
 			status := sp.status
 			s.mu.Unlock()

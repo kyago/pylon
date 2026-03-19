@@ -53,6 +53,11 @@ func (g *TaskGraph) Validate() error {
 				return fmt.Errorf("task %s depends on unknown ID: %s", t.ID, dep)
 			}
 		}
+		for _, blocker := range t.BlockedBy {
+			if !ids[blocker] {
+				return fmt.Errorf("task %s blocked_by unknown ID: %s", t.ID, blocker)
+			}
+		}
 	}
 
 	// Cycle detection via topological sort attempt
