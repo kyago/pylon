@@ -132,6 +132,7 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, workspaceName stri
 			r.Get("/dlq", srv.handleAPIDLQ)
 			r.Post("/dlq/{id}/requeue", srv.handleAPIDLQRequeue)
 			r.Delete("/dlq/{id}", srv.handleAPIDLQDelete)
+			r.Get("/pipelines/{id}/logs", srv.handlePipelineLogs)
 		})
 	})
 

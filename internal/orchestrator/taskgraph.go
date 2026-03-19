@@ -7,15 +7,26 @@ import (
 
 // TaskItem represents a single task in the dependency graph.
 type TaskItem struct {
-	ID           string   `json:"id"`
-	Description  string   `json:"description"`
-	AgentName    string   `json:"agent_name,omitempty"`
-	DependsOn    []string `json:"depends_on,omitempty"`
-	Status       string   `json:"status,omitempty"`        // pending, running, completed, failed
+	ID           string     `json:"id"`
+	Description  string     `json:"description"`
+	AgentName    string     `json:"agent_name,omitempty"`
+	DependsOn    []string   `json:"depends_on,omitempty"`
+	BlockedBy    []string   `json:"blocked_by,omitempty"` // runtime dependencies resolved dynamically
+	Status       string     `json:"status,omitempty"`     // pending, running, completed, failed
 	StartedAt    *time.Time `json:"started_at,omitempty"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
-	ErrorMessage string   `json:"error_message,omitempty"`
-	FileCount    int      `json:"file_count,omitempty"`
+	ErrorMessage string     `json:"error_message,omitempty"`
+	FileCount    int        `json:"file_count,omitempty"`
+}
+
+// IsBlocked returns true if any BlockedBy task is not yet completed.
+func (t *TaskItem) IsBlocked(completedTasks map[string]bool) bool {
+	for _, blockerID := range t.BlockedBy {
+		if !completedTasks[blockerID] {
+			return true
+		}
+	}
+	return false
 }
 
 // TaskGraph holds tasks with dependency information for wave-based execution.

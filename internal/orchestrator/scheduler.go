@@ -31,9 +31,10 @@ type Scheduler struct {
 }
 
 type scheduledPipeline struct {
-	id     string
-	status string // running, completed, failed, waiting
-	err    error
+	id       string
+	status   string // running, completed, failed, waiting
+	err      error
+	requires []string // pipeline IDs this depends on
 }
 
 // NewScheduler creates a Scheduler with the given concurrency limit.
@@ -56,6 +57,8 @@ func NewScheduler(maxPipelines int, wipLimits map[string]int) *Scheduler {
 
 // Submit queues a pipeline for execution. Returns immediately; execution is
 // deferred if the max pipeline limit is reached. Status can be queried via Status().
+// If cfg.Requires is non-empty, the pipeline waits until all required pipelines
+// have completed before starting. Circular dependencies are detected eagerly.
 func (s *Scheduler) Submit(cfg LoopConfig) (string, error) {
 	if cfg.PipelineID == "" {
 		return "", fmt.Errorf("PipelineID is required")
@@ -66,7 +69,16 @@ func (s *Scheduler) Submit(cfg LoopConfig) (string, error) {
 		s.mu.Unlock()
 		return "", fmt.Errorf("pipeline %s already submitted", cfg.PipelineID)
 	}
-	sp := &scheduledPipeline{id: cfg.PipelineID, status: "waiting"}
+
+	// Check for circular dependencies
+	if len(cfg.Requires) > 0 {
+		if err := s.detectCycleLocked(cfg.PipelineID, cfg.Requires); err != nil {
+			s.mu.Unlock()
+			return "", err
+		}
+	}
+
+	sp := &scheduledPipeline{id: cfg.PipelineID, status: "waiting", requires: cfg.Requires}
 	s.pipelines[cfg.PipelineID] = sp
 	s.mu.Unlock()
 
@@ -83,6 +95,17 @@ func (s *Scheduler) Submit(cfg LoopConfig) (string, error) {
 				s.mu.Unlock()
 			}
 		}()
+
+		// Wait for required pipelines to complete
+		if len(cfg.Requires) > 0 {
+			if err := s.waitForRequires(s.ctx, cfg.Requires); err != nil {
+				s.mu.Lock()
+				sp.status = "failed"
+				sp.err = fmt.Errorf("requires wait failed: %w", err)
+				s.mu.Unlock()
+				return
+			}
+		}
 
 		// Acquire semaphore slot (blocks if at capacity)
 		select {
@@ -210,4 +233,67 @@ func (s *Scheduler) WIPStatus() map[string]int {
 		result[k] = v
 	}
 	return result
+}
+
+// waitForRequires blocks until all required pipelines reach "completed" status.
+// Returns error if a required pipeline fails or the context is cancelled.
+func (s *Scheduler) waitForRequires(ctx context.Context, requires []string) error {
+	for {
+		allDone := true
+		for _, reqID := range requires {
+			s.mu.Lock()
+			sp, exists := s.pipelines[reqID]
+			if !exists {
+				s.mu.Unlock()
+				return fmt.Errorf("required pipeline %s not found", reqID)
+			}
+			status := sp.status
+			s.mu.Unlock()
+
+			switch status {
+			case "completed":
+				continue
+			case "failed":
+				return fmt.Errorf("required pipeline %s failed", reqID)
+			default:
+				allDone = false
+			}
+		}
+		if allDone {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// detectCycleLocked checks for circular dependencies among pipeline requires.
+// Must be called with s.mu held.
+func (s *Scheduler) detectCycleLocked(newID string, requires []string) error {
+	// BFS: starting from each required pipeline, check if it can reach newID
+	visited := make(map[string]bool)
+	queue := make([]string, len(requires))
+	copy(queue, requires)
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if current == newID {
+			return fmt.Errorf("circular dependency detected: %s eventually requires itself", newID)
+		}
+		if visited[current] {
+			continue
+		}
+		visited[current] = true
+
+		if sp, exists := s.pipelines[current]; exists {
+			queue = append(queue, sp.requires...)
+		}
+	}
+	return nil
 }

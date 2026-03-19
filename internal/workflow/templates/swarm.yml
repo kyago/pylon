@@ -1,0 +1,12 @@
+name: swarm
+description: Dynamic multi-agent swarm workflow with dynamic spawn capability
+stages:
+  - init
+  - po_conversation
+  - pm_task_breakdown
+  - task_review
+  - agent_executing
+  - verification
+  - pr_creation
+  - completed
+allow_dynamic_spawn: true

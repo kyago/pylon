@@ -743,6 +743,53 @@ func (srv *Server) buildMemoryData(r *http.Request) (*MemoryData, error) {
 	return data, nil
 }
 
+// handlePipelineLogs streams agent execution logs for a pipeline via SSE.
+func (srv *Server) handlePipelineLogs(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch, unsubscribe := srv.hub.Subscribe()
+	defer unsubscribe()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Filter: only agent_log events for this pipeline
+			if event.Type != "agent_log" {
+				continue
+			}
+			dataMap, ok := event.Data.(map[string]any)
+			if !ok {
+				continue
+			}
+			if pid, _ := dataMap["pipeline_id"].(string); pid != id {
+				continue
+			}
+			data, err := json.Marshal(event.Data)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: agent_log\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+
 func (srv *Server) buildDLQData() (*DLQData, error) {
 	entries, err := srv.store.ListDLQ()
 	if err != nil {

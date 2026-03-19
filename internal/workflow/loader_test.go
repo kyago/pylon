@@ -122,7 +122,7 @@ func TestLoadWorkflow_NotFound(t *testing.T) {
 func TestAvailableWorkflows(t *testing.T) {
 	names := AvailableWorkflows()
 
-	expected := []string{"bugfix", "docs", "explore", "feature", "hotfix", "refactor", "review"}
+	expected := []string{"bugfix", "docs", "explore", "feature", "hotfix", "refactor", "review", "swarm"}
 	if len(names) != len(expected) {
 		t.Fatalf("expected %d workflows, got %d: %v", len(expected), len(names), names)
 	}

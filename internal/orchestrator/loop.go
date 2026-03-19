@@ -31,6 +31,7 @@ type LoopConfig struct {
 	Requirement  string
 	Branch       string
 	WorkflowName string // workflow template name (e.g., "feature", "bugfix")
+	Requires     []string // pipeline IDs this pipeline depends on (cross-pipeline dependency)
 	MemManager   *memory.Manager
 	Runner       agent.AgentRunner
 	WorktreeMgr  *git.WorktreeManager
