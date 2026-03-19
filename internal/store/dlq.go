@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -92,7 +93,20 @@ func (s *Store) RequeueDLQ(id int) error {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	// Re-insert into pipeline_state with the original state
+	// Reset retry-related fields in the original state so the requeued pipeline
+	// doesn't immediately hit max attempts again.
+	stateJSON := entry.OriginalStateJSON
+	var stateMap map[string]any
+	if jsonErr := json.Unmarshal([]byte(stateJSON), &stateMap); jsonErr == nil {
+		stateMap["attempts"] = 0
+		stateMap["status"] = "running"
+		stateMap["paused_at_stage"] = ""
+		if updated, marshalErr := json.Marshal(stateMap); marshalErr == nil {
+			stateJSON = string(updated)
+		}
+	}
+
+	// Re-insert into pipeline_state with the reset state
 	_, err = tx.Exec(`
 		INSERT INTO pipeline_state (pipeline_id, stage, state_json, workflow_name, status, paused_at_stage, updated_at)
 		VALUES (?, ?, ?, ?, 'running', '', ?)
@@ -103,7 +117,7 @@ func (s *Store) RequeueDLQ(id int) error {
 			status = excluded.status,
 			paused_at_stage = excluded.paused_at_stage,
 			updated_at = excluded.updated_at`,
-		entry.PipelineID, entry.Stage, entry.OriginalStateJSON, entry.WorkflowName, time.Now(),
+		entry.PipelineID, entry.Stage, stateJSON, entry.WorkflowName, time.Now(),
 	)
 	if err != nil {
 		tx.Rollback()

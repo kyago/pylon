@@ -164,7 +164,12 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		currentStage := orch.Pipeline.CurrentStage
 
 		// Load workflow template for dynamic next-stage resolution
-		wfTemplate, wfErr := workflow.LoadWorkflow(workflowName, cfg.Workflow.TemplateDir)
+		// Resolve relative TemplateDir against workspace root (consistent with Loop.applyWorkflow)
+		templateDir := cfg.Workflow.TemplateDir
+		if templateDir != "" && !filepath.IsAbs(templateDir) {
+			templateDir = filepath.Join(root, templateDir)
+		}
+		wfTemplate, wfErr := workflow.LoadWorkflow(workflowName, templateDir)
 		if wfErr != nil {
 			return fmt.Errorf("failed to load workflow for interactive stage: %w", wfErr)
 		}

@@ -159,6 +159,15 @@ func (p *Pipeline) Transition(to Stage) error {
 		CompletedAt: time.Now(),
 	})
 	p.CurrentStage = to
+
+	// Update operational status to reflect terminal outcomes
+	switch to {
+	case StageCompleted:
+		p.Status = StatusCompleted
+	case StageFailed:
+		p.Status = StatusFailed
+	}
+
 	return nil
 }
 
@@ -172,10 +181,14 @@ func (p *Pipeline) Snapshot() ([]byte, error) {
 }
 
 // LoadPipeline deserializes a pipeline from JSON.
+// Older snapshots may lack the "status" field; default to running for backward compatibility.
 func LoadPipeline(data []byte) (*Pipeline, error) {
 	p := &Pipeline{}
 	if err := json.Unmarshal(data, p); err != nil {
 		return nil, fmt.Errorf("failed to load pipeline: %w", err)
+	}
+	if p.Status == "" {
+		p.Status = StatusRunning
 	}
 	return p, nil
 }

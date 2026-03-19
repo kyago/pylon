@@ -282,6 +282,41 @@ func TestNewPipeline_DefaultStatus(t *testing.T) {
 	}
 }
 
+func TestLoadPipeline_DefaultStatusWhenEmpty(t *testing.T) {
+	// Simulate an older snapshot without the "status" field
+	data := []byte(`{"pipeline_id":"old-1","current_stage":"agent_executing","created_at":"2024-01-01T00:00:00Z"}`)
+	p, err := LoadPipeline(data)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if p.Status != StatusRunning {
+		t.Errorf("expected default status 'running' for legacy snapshot, got %q", p.Status)
+	}
+}
+
+func TestPipeline_TransitionToCompleted_SetsStatus(t *testing.T) {
+	p := NewPipeline("test-status", 2)
+	// Walk through to wiki_update
+	for _, s := range []Stage{StagePOConversation, StageArchitectAnalysis, StagePMTaskBreakdown, StageTaskReview, StageAgentExecuting, StageVerification, StagePRCreation, StagePOValidation, StageWikiUpdate, StageCompleted} {
+		if err := p.Transition(s); err != nil {
+			t.Fatalf("transition to %s failed: %v", s, err)
+		}
+	}
+	if p.Status != StatusCompleted {
+		t.Errorf("expected status 'completed' after reaching StageCompleted, got %q", p.Status)
+	}
+}
+
+func TestPipeline_TransitionToFailed_SetsStatus(t *testing.T) {
+	p := NewPipeline("test-fail-status", 2)
+	if err := p.Transition(StageFailed); err != nil {
+		t.Fatalf("transition to failed: %v", err)
+	}
+	if p.Status != StatusFailed {
+		t.Errorf("expected status 'failed' after reaching StageFailed, got %q", p.Status)
+	}
+}
+
 func TestPipeline_EmptyNewFields_OmitEmpty(t *testing.T) {
 	p := NewPipeline("test-omit", 2)
 	// WorkflowName and PausedAtStage are empty → omitempty
