@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -744,6 +745,18 @@ func (srv *Server) buildMemoryData(r *http.Request) (*MemoryData, error) {
 }
 
 // handlePipelineLogs streams agent execution logs for a pipeline via SSE.
+// Publishes agent_log events as HTML fragments for direct HTMX sse-swap insertion.
+//
+// NOTE: agent_log events must be published to the SSE hub by the orchestrator
+// or a log capture mechanism. Currently, this endpoint is ready to receive
+// events but the publishing side (agent stdout capture → hub.Publish) is not
+// yet implemented. When implemented, publish events like:
+//
+//	hub.Publish(SSEEvent{Type: "agent_log", Data: map[string]any{
+//	    "pipeline_id": pipelineID,
+//	    "agent":       agentName,
+//	    "line":        logLine,
+//	}})
 func (srv *Server) handlePipelineLogs(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -780,11 +793,12 @@ func (srv *Server) handlePipelineLogs(w http.ResponseWriter, r *http.Request) {
 			if pid, _ := dataMap["pipeline_id"].(string); pid != id {
 				continue
 			}
-			data, err := json.Marshal(event.Data)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(w, "event: agent_log\ndata: %s\n\n", data)
+			// Send as HTML fragment for HTMX sse-swap (not JSON)
+			agentName, _ := dataMap["agent"].(string)
+			line, _ := dataMap["line"].(string)
+			htmlLine := fmt.Sprintf("<div class=\"log-line\"><span class=\"log-agent\">%s</span> %s</div>",
+				template.HTMLEscapeString(agentName), template.HTMLEscapeString(line))
+			fmt.Fprintf(w, "event: agent_log\ndata: %s\n\n", htmlLine)
 			flusher.Flush()
 		}
 	}

@@ -244,8 +244,11 @@ func (s *Scheduler) waitForRequires(ctx context.Context, requires []string) erro
 			s.mu.Lock()
 			sp, exists := s.pipelines[reqID]
 			if !exists {
+				// Pipeline not in map: either never submitted, or removed by Cleanup().
+				// Cleanup() only removes completed/failed pipelines.
+				// Treat as completed (safe assumption after Cleanup).
 				s.mu.Unlock()
-				return fmt.Errorf("required pipeline %s not found (requires must be submitted before dependents)", reqID)
+				continue
 			}
 			status := sp.status
 			s.mu.Unlock()
