@@ -2,10 +2,13 @@ package workflow
 
 import (
 	"strings"
+	"unicode"
 )
 
 // workflowKeywords maps workflow names to their trigger keywords.
-// Keywords are checked against the lowercased requirement text.
+// Multi-word keywords use exact substring matching.
+// Single-word keywords use word-boundary matching to avoid false positives
+// (e.g., "fix" should not match "prefix", "bug" should not match "debug").
 var workflowKeywords = map[string][]string{
 	"hotfix": {
 		"hotfix", "긴급", "urgent", "emergency", "critical fix",
@@ -54,7 +57,7 @@ func SuggestWorkflow(requirement string) (string, []string) {
 		keywords := workflowKeywords[wf]
 		var matched []string
 		for _, kw := range keywords {
-			if strings.Contains(lower, kw) {
+			if containsWord(lower, kw) {
 				matched = append(matched, kw)
 			}
 		}
@@ -64,4 +67,47 @@ func SuggestWorkflow(requirement string) (string, []string) {
 	}
 
 	return "feature", nil
+}
+
+// containsWord checks if text contains the keyword with word-boundary awareness.
+// For multi-word keywords (containing spaces), exact substring match is used.
+// For single-word keywords, checks that characters before and after the match
+// are not ASCII letters (word boundary), preventing "fix" from matching "prefix".
+// Korean characters are always treated as word boundaries.
+func containsWord(text, keyword string) bool {
+	if strings.Contains(keyword, " ") {
+		// Multi-word keywords: exact substring match
+		return strings.Contains(text, keyword)
+	}
+
+	idx := 0
+	for {
+		pos := strings.Index(text[idx:], keyword)
+		if pos < 0 {
+			return false
+		}
+		pos += idx
+
+		// Check left boundary
+		leftOK := pos == 0 || !isASCIILetter(rune(text[pos-1]))
+		// Check right boundary
+		end := pos + len(keyword)
+		rightOK := end >= len(text) || !isASCIILetter(rune(text[end]))
+
+		if leftOK && rightOK {
+			return true
+		}
+
+		idx = pos + 1
+		if idx >= len(text) {
+			return false
+		}
+	}
+}
+
+// isASCIILetter returns true for ASCII letters only.
+// Non-ASCII characters (Korean, etc.) are NOT considered letters for boundary
+// purposes, so Korean text adjacent to keywords won't block matching.
+func isASCIILetter(r rune) bool {
+	return unicode.IsLetter(r) && r < 128
 }

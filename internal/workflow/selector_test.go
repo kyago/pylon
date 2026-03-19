@@ -95,6 +95,61 @@ func TestSuggestWorkflow(t *testing.T) {
 			wantWorkflow:   "bugfix",
 			wantHasKeyword: true,
 		},
+		// False positive prevention tests
+		{
+			name:           "no false positive: prefix contains fix",
+			requirement:    "implement prefix-based routing",
+			wantWorkflow:   "feature",
+			wantHasKeyword: false,
+		},
+		{
+			name:           "no false positive: suffix contains fix",
+			requirement:    "add suffix validation to inputs",
+			wantWorkflow:   "feature",
+			wantHasKeyword: false,
+		},
+		{
+			name:           "no false positive: debug contains bug",
+			requirement:    "debug the authentication flow",
+			wantWorkflow:   "feature",
+			wantHasKeyword: false,
+		},
+		{
+			name:           "no false positive: overview contains review",
+			requirement:    "implement overview dashboard page",
+			wantWorkflow:   "feature",
+			wantHasKeyword: false,
+		},
+		{
+			name:           "no false positive: add debug logging",
+			requirement:    "add debug logging to payment service",
+			wantWorkflow:   "feature",
+			wantHasKeyword: false,
+		},
+		{
+			name:           "fix at start of sentence matches",
+			requirement:    "fix login error on mobile",
+			wantWorkflow:   "bugfix",
+			wantHasKeyword: true,
+		},
+		{
+			name:           "bug after colon matches",
+			requirement:    "bug: 회원가입 실패",
+			wantWorkflow:   "bugfix",
+			wantHasKeyword: true,
+		},
+		{
+			name:           "review as standalone word matches",
+			requirement:    "review auth module security",
+			wantWorkflow:   "review",
+			wantHasKeyword: true,
+		},
+		{
+			name:           "korean adjacent to keyword matches",
+			requirement:    "로그인fix필요",
+			wantWorkflow:   "bugfix",
+			wantHasKeyword: true,
+		},
 	}
 
 	for _, tt := range tests {

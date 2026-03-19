@@ -71,18 +71,16 @@
                     <td class="dlq-actions">
                         <button class="btn btn-sm btn-primary"
                                 hx-post="/api/dlq/{{.ID}}/requeue"
-                                hx-target="#main"
                                 hx-confirm="Requeue this pipeline?"
-                                hx-swap="innerHTML"
-                                hx-on::after-request="htmx.ajax('GET', '/dlq', '#main')">
+                                hx-swap="none"
+                                hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '/dlq', '#main')">
                             Requeue
                         </button>
                         <button class="btn btn-sm btn-danger"
                                 hx-delete="/api/dlq/{{.ID}}"
-                                hx-target="closest tr"
                                 hx-confirm="Dismiss this DLQ entry?"
-                                hx-swap="outerHTML"
-                                hx-on::after-request="htmx.ajax('GET', '/dlq', '#main')">
+                                hx-swap="none"
+                                hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '/dlq', '#main')">
                             Dismiss
                         </button>
                     </td>

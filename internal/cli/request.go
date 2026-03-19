@@ -45,7 +45,7 @@ Spec Reference: Section 7 "pylon request"`,
 	}
 
 	cmd.Flags().StringVar(&flagContinue, "continue", "", "continue a pipeline from the given ID (after PO conversation)")
-	cmd.Flags().StringVar(&flagWorkflow, "workflow", "", "workflow template name (default: from config or 'feature')")
+	cmd.Flags().StringVar(&flagWorkflow, "workflow", "", "workflow template name (auto: keyword-based detection, or: feature, bugfix, hotfix, docs, explore, review, refactor)")
 
 	return cmd
 }
