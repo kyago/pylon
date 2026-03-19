@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -741,6 +742,66 @@ func (srv *Server) buildMemoryData(r *http.Request) (*MemoryData, error) {
 	}
 
 	return data, nil
+}
+
+// handlePipelineLogs streams agent execution logs for a pipeline via SSE.
+// Publishes agent_log events as HTML fragments for direct HTMX sse-swap insertion.
+//
+// NOTE: agent_log events must be published to the SSE hub by the orchestrator
+// or a log capture mechanism. Currently, this endpoint is ready to receive
+// events but the publishing side (agent stdout capture → hub.Publish) is not
+// yet implemented. When implemented, publish events like:
+//
+//	hub.Publish(SSEEvent{Type: "agent_log", Data: map[string]any{
+//	    "pipeline_id": pipelineID,
+//	    "agent":       agentName,
+//	    "line":        logLine,
+//	}})
+func (srv *Server) handlePipelineLogs(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch, unsubscribe := srv.hub.Subscribe()
+	defer unsubscribe()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Filter: only agent_log events for this pipeline
+			if event.Type != "agent_log" {
+				continue
+			}
+			dataMap, ok := event.Data.(map[string]any)
+			if !ok {
+				continue
+			}
+			if pid, _ := dataMap["pipeline_id"].(string); pid != id {
+				continue
+			}
+			// Send as HTML fragment for HTMX sse-swap (not JSON)
+			agentName, _ := dataMap["agent"].(string)
+			line, _ := dataMap["line"].(string)
+			htmlLine := fmt.Sprintf("<div class=\"log-line\"><span class=\"log-agent\">%s</span> %s</div>",
+				template.HTMLEscapeString(agentName), template.HTMLEscapeString(line))
+			fmt.Fprintf(w, "event: agent_log\ndata: %s\n\n", htmlLine)
+			flusher.Flush()
+		}
+	}
 }
 
 func (srv *Server) buildDLQData() (*DLQData, error) {

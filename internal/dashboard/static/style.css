@@ -371,6 +371,23 @@ details[open] > .dlq-error-summary::before { content: "▾ "; }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 .text-muted { color: var(--text-muted); }
 
+/* --- Agent Logs --- */
+.log-line { padding: 1px 0; }
+.log-agent { color: var(--primary); font-weight: 600; margin-right: 8px; }
+.log-agent::after { content: " |"; color: var(--border); }
+.agent-log-container {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 8px 12px;
+    color: var(--text-dim);
+}
+
 /* --- Responsive --- */
 @media (max-width: 768px) {
     .container { padding: 16px; }

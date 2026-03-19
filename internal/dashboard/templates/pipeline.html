@@ -135,6 +135,19 @@
     </div>
     {{end}}
 
+    {{/* Real-time Agent Logs */}}
+    {{if .Pipeline.IsActive}}
+    <div class="card">
+        <h2 class="card-title">Agent Logs (Live)</h2>
+        <div id="agent-logs" class="agent-log-container"
+             hx-ext="sse" sse-connect="/api/pipelines/{{.Pipeline.ID}}/logs">
+            <div sse-swap="agent_log" hx-swap="beforeend" hx-target="#agent-logs">
+            </div>
+            <div class="text-muted" style="padding: 12px;">Waiting for agent output...</div>
+        </div>
+    </div>
+    {{end}}
+
     <div class="card">
         <h2 class="card-title">Timestamps</h2>
         <table class="table">
