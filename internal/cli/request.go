@@ -131,11 +131,27 @@ func runRequest(cmd *cobra.Command, args []string) error {
 
 	// Resolve workflow name
 	workflowName := flagWorkflow
-	if workflowName == "" {
+	if workflowName == "auto" {
+		// Auto mode: use suggestion without confirmation
+		suggested, keywords := workflow.SuggestWorkflow(requirement)
+		workflowName = suggested
+		if len(keywords) > 0 {
+			fmt.Printf("🔄 워크플로우 자동 선택: %s (키워드: %s)\n", suggested, strings.Join(keywords, ", "))
+		} else {
+			fmt.Printf("🔄 워크플로우 자동 선택: %s (기본값)\n", suggested)
+		}
+	} else if workflowName == "" {
 		workflowName = cfg.Workflow.DefaultWorkflow
-	}
-	if workflowName == "" {
-		workflowName = "feature"
+		if workflowName == "" {
+			// Suggest workflow based on requirement text
+			suggested, keywords := workflow.SuggestWorkflow(requirement)
+			if len(keywords) > 0 {
+				fmt.Printf("💡 추천 워크플로우: %s (키워드: %s)\n", suggested, strings.Join(keywords, ", "))
+			}
+			fmt.Printf("📋 사용 가능: %s\n", strings.Join(workflow.AvailableWorkflows(), ", "))
+			fmt.Printf("🔧 선택: %s (--workflow <name> 으로 변경 가능)\n\n", suggested)
+			workflowName = suggested
+		}
 	}
 
 	// Create and run the orchestration loop

@@ -20,7 +20,10 @@
     </div>
 
     <div class="pipeline-header">
-        <h1 class="page-title">Pipeline: {{truncate .Pipeline.ID 12}}</h1>
+        <div>
+            <h1 class="page-title">Pipeline: {{truncate .Pipeline.ID 12}}</h1>
+            {{if .Pipeline.WorkflowName}}<span class="badge badge-workflow">{{.Pipeline.WorkflowName}}</span>{{end}}
+        </div>
         <div class="pipeline-meta">
             <span class="badge {{if .Pipeline.IsActive}}badge-active{{else if eq .Pipeline.CurrentStage "completed"}}badge-completed{{else}}badge-failed{{end}}">
                 {{stageLabel .Pipeline.CurrentStage}}
@@ -61,22 +64,41 @@
     {{/* Task Graph */}}
     {{if .Pipeline.TaskGraph}}
     <div class="card">
-        <h2 class="card-title">Task Graph</h2>
+        <h2 class="card-title">Tasks</h2>
         <table class="table">
             <thead>
                 <tr>
                     <th>ID</th>
                     <th>Description</th>
                     <th>Agent</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                    <th>Files</th>
                     <th>Dependencies</th>
                 </tr>
             </thead>
             <tbody>
                 {{range .Pipeline.TaskGraph}}
-                <tr>
+                <tr class="task-row task-{{.Status}}">
                     <td><code>{{.ID}}</code></td>
-                    <td>{{.Description}}</td>
+                    <td>
+                        {{.Description}}
+                        {{if .ErrorMessage}}
+                        <details class="task-error-details">
+                            <summary class="task-error-summary">error</summary>
+                            <div class="task-error-msg">{{.ErrorMessage}}</div>
+                        </details>
+                        {{end}}
+                    </td>
                     <td>{{if .AgentName}}<span class="badge badge-sm">{{.AgentName}}</span>{{else}}<span class="text-muted">unassigned</span>{{end}}</td>
+                    <td>
+                        <span class="task-status-badge task-status-{{.Status}}">
+                            <span class="status-dot status-{{.Status}}"></span>
+                            {{.Status}}
+                        </span>
+                    </td>
+                    <td class="mono text-muted">{{if .Duration}}{{.Duration}}{{else}}-{{end}}</td>
+                    <td>{{if gt .FileCount 0}}{{.FileCount}}{{else}}<span class="text-muted">-</span>{{end}}</td>
                     <td>{{if .DependsOn}}{{join .DependsOn ", "}}{{else}}<span class="text-muted">none</span>{{end}}</td>
                 </tr>
                 {{end}}

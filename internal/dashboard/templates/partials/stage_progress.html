@@ -1,5 +1,33 @@
 {{define "stage_progress"}}
 <div class="stage-progress">
+    {{if .WorkflowStages}}
+    {{/* Workflow-specific stage display */}}
+    {{$current := .Pipeline.CurrentStage}}
+    {{$currentIdx := -1}}
+    {{range $i, $s := .WorkflowStages}}
+        {{if eq $s $current}}{{$currentIdx = $i}}{{end}}
+    {{end}}
+    {{range $i, $s := .WorkflowStages}}
+    {{if ne $s "failed"}}
+    <div class="stage-step {{if lt $i $.Pipeline.StageIndex}}stage-done{{else if eq $s $current}}stage-current{{end}}">
+        <div class="stage-indicator">
+            {{if lt $i $.Pipeline.StageIndex}}
+            <span class="stage-check">&#10003;</span>
+            {{else if eq $s $current}}
+            <span class="stage-dot-lg"></span>
+            {{else}}
+            <span class="stage-num">{{add $i 1}}</span>
+            {{end}}
+        </div>
+        <div class="stage-name">{{stageLabel $s}}</div>
+    </div>
+    {{if lt $i (sub (len $.WorkflowStages) 1)}}
+    <div class="stage-connector {{if lt $i $.Pipeline.StageIndex}}connector-done{{end}}"></div>
+    {{end}}
+    {{end}}
+    {{end}}
+    {{else}}
+    {{/* Default: all stages */}}
     {{$idx := stageIndex .Pipeline.CurrentStage}}
     {{range $i, $s := .Stages}}
     {{if ne (printf "%s" $s) "failed"}}
@@ -17,6 +45,7 @@
     </div>
     {{if lt $i (sub (len $.Stages) 2)}}
     <div class="stage-connector {{if lt $i $idx}}connector-done{{end}}"></div>
+    {{end}}
     {{end}}
     {{end}}
     {{end}}
