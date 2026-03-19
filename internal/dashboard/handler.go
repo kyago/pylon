@@ -322,10 +322,13 @@ func (srv *Server) handleAPIPipelineCancel(w http.ResponseWriter, r *http.Reques
 	}
 
 	err = srv.store.UpsertPipeline(&store.PipelineRecord{
-		PipelineID: id,
-		Stage:      string(orchestrator.StageFailed),
-		StateJSON:  string(snapshot),
-		UpdatedAt:  time.Now(),
+		PipelineID:    id,
+		Stage:         string(orchestrator.StageFailed),
+		StateJSON:     string(snapshot),
+		WorkflowName:  pipeline.WorkflowName,
+		Status:        string(orchestrator.StatusFailed),
+		PausedAtStage: string(pipeline.PausedAtStage),
+		UpdatedAt:     time.Now(),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -449,7 +452,11 @@ func (srv *Server) handleAPIDLQRequeue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := srv.store.RequeueDLQ(id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if strings.Contains(err.Error(), "not found") {
+			http.Error(w, err.Error(), http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 
