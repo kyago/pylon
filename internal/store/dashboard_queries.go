@@ -174,6 +174,10 @@ func (s *Store) GetAdvancedMetrics() (*AdvancedMetrics, error) {
 		}
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate lead time rows: %w", err)
+	}
+
 	if len(durations) > 0 {
 		sortFloat64s(durations)
 		m.LeadTimeP50Seconds = percentile(durations, 50)
@@ -195,6 +199,9 @@ func (s *Store) GetAdvancedMetrics() (*AdvancedMetrics, error) {
 			continue
 		}
 		m.RetryCount += extractAttempts(stateJSON)
+	}
+	if err := rows2.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate retry count rows: %w", err)
 	}
 
 	// DLQ count
