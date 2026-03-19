@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/executor"
@@ -83,6 +84,22 @@ func (r *Runner) BuildArgs(cfg RunConfig) []string {
 	return args
 }
 
+// resolveTimeout determines the effective timeout for an agent execution.
+// Priority: agent YAML timeout > global runtime.task_timeout > 30m default.
+func resolveTimeout(agentTimeout string, globalTimeout string) time.Duration {
+	if agentTimeout != "" {
+		if d, err := time.ParseDuration(agentTimeout); err == nil && d > 0 {
+			return d
+		}
+	}
+	if globalTimeout != "" {
+		if d, err := time.ParseDuration(globalTimeout); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Minute
+}
+
 // Start launches the agent as a headless process.
 func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
 	if cfg.Agent == nil {
@@ -98,13 +115,22 @@ func (r *Runner) Start(cfg RunConfig) (*executor.ExecResult, error) {
 	args := r.BuildArgs(cfg)
 	env := ResolveEnv(cfg.Global.Runtime.Env, cfg.Agent.Env)
 
+	// Apply timeout: agent timeout > global timeout > 30m default
+	ctx := cfg.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := resolveTimeout(cfg.Agent.Timeout, cfg.Global.Runtime.TaskTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	return r.Executor.RunHeadless(executor.ExecConfig{
 		Name:    cfg.Agent.Name,
 		Command: "claude",
 		Args:    args,
 		WorkDir: cfg.WorkDir,
 		Env:     env,
-		Ctx:     cfg.Ctx,
+		Ctx:     ctx,
 		Stdout:  cfg.Stdout,
 		Stderr:  cfg.Stderr,
 	})

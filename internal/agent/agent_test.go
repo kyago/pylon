@@ -662,6 +662,113 @@ func TestRunner_Start_InteractiveExecutorError(t *testing.T) {
 	}
 }
 
+// --- Timeout Tests ---
+
+func TestResolveTimeout_AgentOverridesGlobal(t *testing.T) {
+	d := resolveTimeout("10m", "30m")
+	if d != 10*time.Minute {
+		t.Errorf("expected 10m, got %v", d)
+	}
+}
+
+func TestResolveTimeout_FallbackToGlobal(t *testing.T) {
+	d := resolveTimeout("", "15m")
+	if d != 15*time.Minute {
+		t.Errorf("expected 15m, got %v", d)
+	}
+}
+
+func TestResolveTimeout_FallbackToDefault(t *testing.T) {
+	d := resolveTimeout("", "")
+	if d != 30*time.Minute {
+		t.Errorf("expected 30m default, got %v", d)
+	}
+}
+
+func TestResolveTimeout_InvalidAgentFallsToGlobal(t *testing.T) {
+	d := resolveTimeout("invalid", "20m")
+	if d != 20*time.Minute {
+		t.Errorf("expected 20m, got %v", d)
+	}
+}
+
+func TestResolveTimeout_InvalidBothFallsToDefault(t *testing.T) {
+	d := resolveTimeout("invalid", "also-invalid")
+	if d != 30*time.Minute {
+		t.Errorf("expected 30m default, got %v", d)
+	}
+}
+
+func TestRunner_Start_AppliesTimeout(t *testing.T) {
+	mock := &mockExecutor{
+		result: &executor.ExecResult{ExitCode: 0, Stdout: "ok"},
+	}
+	r := NewRunner(mock)
+
+	_, err := r.Start(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:           "dev",
+			MaxTurns:       30,
+			PermissionMode: "acceptEdits",
+		},
+		Global: &config.Config{
+			Runtime: config.RuntimeConfig{TaskTimeout: "5m"},
+		},
+		WorkDir: "/tmp",
+	})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Verify a context with deadline was passed to executor
+	if mock.lastCfg.Ctx == nil {
+		t.Fatal("expected context to be set")
+	}
+	deadline, ok := mock.lastCfg.Ctx.Deadline()
+	if !ok {
+		t.Fatal("expected context to have deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining > 5*time.Minute || remaining < 4*time.Minute {
+		t.Errorf("expected ~5m deadline, got %v remaining", remaining)
+	}
+}
+
+func TestRunner_Start_AgentTimeoutOverridesGlobal(t *testing.T) {
+	mock := &mockExecutor{
+		result: &executor.ExecResult{ExitCode: 0, Stdout: "ok"},
+	}
+	r := NewRunner(mock)
+
+	_, err := r.Start(RunConfig{
+		Agent: &config.AgentConfig{
+			Name:           "dev",
+			MaxTurns:       30,
+			PermissionMode: "acceptEdits",
+			Timeout:        "2m",
+		},
+		Global: &config.Config{
+			Runtime: config.RuntimeConfig{TaskTimeout: "30m"},
+		},
+		WorkDir: "/tmp",
+	})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	if mock.lastCfg.Ctx == nil {
+		t.Fatal("expected context to be set")
+	}
+	deadline, ok := mock.lastCfg.Ctx.Deadline()
+	if !ok {
+		t.Fatal("expected context to have deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining > 2*time.Minute || remaining < 1*time.Minute {
+		t.Errorf("expected ~2m deadline (agent override), got %v remaining", remaining)
+	}
+}
+
 // initGitRepo는 테스트용 git 저장소를 초기화하는 헬퍼 함수.
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()

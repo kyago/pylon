@@ -214,6 +214,55 @@ func TestLoadConfig_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestParseConfig_WorkflowDefaults(t *testing.T) {
+	data := []byte(`version: "0.1"`)
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+
+	if cfg.Workflow.DefaultWorkflow != "feature" {
+		t.Errorf("expected default workflow 'feature', got %q", cfg.Workflow.DefaultWorkflow)
+	}
+	if cfg.WIPLimits.MaxPipelines != 1 {
+		t.Errorf("expected default max_pipelines 1, got %d", cfg.WIPLimits.MaxPipelines)
+	}
+}
+
+func TestParseConfig_WorkflowCustomValues(t *testing.T) {
+	data := []byte(`
+version: "0.1"
+workflow:
+  default_workflow: bugfix
+  template_dir: .pylon/workflows
+wip_limits:
+  max_pipelines: 3
+  per_stage:
+    agent_executing: 2
+    verification: 1
+`)
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+
+	if cfg.Workflow.DefaultWorkflow != "bugfix" {
+		t.Errorf("expected workflow 'bugfix', got %q", cfg.Workflow.DefaultWorkflow)
+	}
+	if cfg.Workflow.TemplateDir != ".pylon/workflows" {
+		t.Errorf("expected template_dir '.pylon/workflows', got %q", cfg.Workflow.TemplateDir)
+	}
+	if cfg.WIPLimits.MaxPipelines != 3 {
+		t.Errorf("expected max_pipelines 3, got %d", cfg.WIPLimits.MaxPipelines)
+	}
+	if cfg.WIPLimits.PerStage["agent_executing"] != 2 {
+		t.Errorf("expected per_stage agent_executing=2, got %d", cfg.WIPLimits.PerStage["agent_executing"])
+	}
+	if cfg.WIPLimits.PerStage["verification"] != 1 {
+		t.Errorf("expected per_stage verification=1, got %d", cfg.WIPLimits.PerStage["verification"])
+	}
+}
+
 func TestParseConfig_CustomValues(t *testing.T) {
 	data := []byte(`
 version: "0.2"

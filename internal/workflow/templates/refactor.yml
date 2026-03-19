@@ -1,0 +1,10 @@
+name: refactor
+description: Code refactoring workflow - skips PM task breakdown
+stages:
+  - init
+  - po_conversation
+  - architect_analysis
+  - agent_executing
+  - verification
+  - pr_creation
+  - completed

@@ -19,21 +19,23 @@ import (
 	"github.com/kyago/pylon/internal/memory"
 	"github.com/kyago/pylon/internal/protocol"
 	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/workflow"
 )
 
 // LoopConfig holds all dependencies for the orchestration loop.
 type LoopConfig struct {
-	Config      *config.Config
-	Store       *store.Store
-	WorkDir     string // workspace root
-	PipelineID  string
-	Requirement string
-	Branch      string
-	MemManager  *memory.Manager
-	Runner      *agent.Runner
-	WorktreeMgr *git.WorktreeManager
-	Agents      map[string]*config.AgentConfig
-	Projects    []config.ProjectInfo
+	Config       *config.Config
+	Store        *store.Store
+	WorkDir      string // workspace root
+	PipelineID   string
+	Requirement  string
+	Branch       string
+	WorkflowName string // workflow template name (e.g., "feature", "bugfix")
+	MemManager   *memory.Manager
+	Runner       *agent.Runner
+	WorktreeMgr  *git.WorktreeManager
+	Agents       map[string]*config.AgentConfig
+	Projects     []config.ProjectInfo
 }
 
 // Loop drives the pipeline stage-by-stage execution.
@@ -44,6 +46,7 @@ type Loop struct {
 	inboxDir   string
 	lastResult *protocol.MessageEnvelope // last completed agent result for handoff
 	mu         sync.Mutex               // protects Pipeline.Agents writes, saveState calls, and lastResult
+	wf         *workflow.WorkflowTemplate // active workflow template (nil = default feature)
 }
 
 // NewLoop creates a new orchestration loop.
@@ -106,6 +109,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		l.orch.Pipeline.Agents = make(map[string]AgentStatus)
 	}
 
+	// Load and apply workflow template
+	if err := l.applyWorkflow(); err != nil {
+		return fmt.Errorf("failed to apply workflow: %w", err)
+	}
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -115,14 +123,31 @@ func (l *Loop) Run(ctx context.Context) error {
 			return nil
 		}
 
+		// Check preconditions before each stage transition
+		if err := l.checkPreconditions(ctx); err != nil {
+			return err
+		}
+
 		var err error
+		// Skip stages not in the current workflow (e.g., after recovery with different workflow)
+		if l.wf != nil && !l.wf.HasStage(l.orch.Pipeline.CurrentStage) {
+			next := l.nextWorkflowStageAfter(l.orch.Pipeline.CurrentStage)
+			if next == StageFailed {
+				return fmt.Errorf("stage %s not in workflow and no valid next stage", l.orch.Pipeline.CurrentStage)
+			}
+			if err := l.orch.ForceStage(next); err != nil {
+				return err
+			}
+			continue
+		}
+
 		switch l.orch.Pipeline.CurrentStage {
 		case StageInit:
-			err = l.transitionTo(StagePOConversation)
+			err = l.transitionTo(l.nextStageAfter(StageInit))
 		case StagePOConversation:
 			err = l.runPOConversation(ctx)
 		case StageArchitectAnalysis:
-			err = l.runHeadlessAgent(ctx, "architect", StageArchitectAnalysis, StagePMTaskBreakdown)
+			err = l.runHeadlessAgent(ctx, "architect", StageArchitectAnalysis, l.nextStageAfter(StageArchitectAnalysis))
 		case StagePMTaskBreakdown:
 			err = l.runPMTaskBreakdown(ctx)
 		case StageTaskReview:
@@ -145,6 +170,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			// ErrInteractiveRequired is a signal, not a failure
 			if errors.Is(err, ErrInteractiveRequired) {
 				return err
+			}
+			// Record to DLQ before transitioning to failed.
+			// Skip if the stage handler already recorded (e.g., runVerification on max attempts).
+			if !l.orch.Pipeline.IsTerminal() {
+				l.recordToDLQ(err, "")
 			}
 			// Attempt to transition to failed state
 			failErr := l.transitionTo(StageFailed)
@@ -333,7 +363,7 @@ func (l *Loop) runPMTaskBreakdown(ctx context.Context) error {
 	}
 	l.orch.Pipeline.TaskGraph = graph
 
-	return l.transitionTo(StageTaskReview)
+	return l.transitionTo(l.nextStageAfter(StagePMTaskBreakdown))
 }
 
 // runTaskReview handles the task review gate between PM breakdown and agent execution.
@@ -343,7 +373,7 @@ func (l *Loop) runTaskReview(ctx context.Context) error {
 	// Auto-approve if configured or PO agent not available
 	if l.cfg.Config.Runtime.AutoApproveTaskReview || l.findAgent("po") == nil {
 		fmt.Println("✓ Task review: auto-approved")
-		return l.transitionTo(StageAgentExecuting)
+		return l.transitionTo(l.nextStageAfter(StageTaskReview))
 	}
 
 	return ErrInteractiveRequired
@@ -419,7 +449,7 @@ func (l *Loop) runAgentExecution(ctx context.Context) error {
 		}
 	}
 
-	return l.transitionTo(StageVerification)
+	return l.transitionTo(l.nextStageAfter(StageAgentExecuting))
 }
 
 // runAgentsParallel runs all dev agents in parallel (legacy path).
@@ -509,7 +539,7 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			fmt.Printf("⚠ verify.yml not found, skipping verification\n")
-			return l.transitionTo(StagePRCreation)
+			return l.transitionTo(l.nextStageAfter(StageVerification))
 		}
 		return fmt.Errorf("failed to load verify config: %w", err)
 	}
@@ -517,7 +547,7 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	// Convert to VerifyCommands
 	steps := vc.OrderedSteps()
 	if len(steps) == 0 {
-		return l.transitionTo(StagePRCreation)
+		return l.transitionTo(l.nextStageAfter(StageVerification))
 	}
 
 	var commands []VerifyCommand
@@ -536,11 +566,20 @@ func (l *Loop) runVerification(ctx context.Context) error {
 
 	if AllPassed(results) {
 		fmt.Println("✓ All verifications passed")
-		return l.transitionTo(StagePRCreation)
+		return l.transitionTo(l.nextStageAfter(StageVerification))
 	}
 
 	// Verification failed
-	fmt.Printf("✗ Verification failed:\n%s\n", FailedSummary(results))
+	failSummary := FailedSummary(results)
+	fmt.Printf("✗ Verification failed:\n%s\n", failSummary)
+
+	// Classify failure to decide retry vs terminal
+	class := ClassifyFailure(nil, failSummary)
+	if class == FailureTerminal {
+		fmt.Println("✗ Failure classified as terminal — skipping retry")
+		l.recordToDLQ(fmt.Errorf("terminal verification failure"), failSummary)
+		return l.transitionTo(StageFailed)
+	}
 
 	// Attempts tracking and max check are handled inside Pipeline.Transition()
 	// when transitioning from StageVerification → StageAgentExecuting.
@@ -553,8 +592,10 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	// Retry: go back to agent execution (Transition increments Attempts and enforces MaxAttempts)
 	err = l.transitionTo(StageAgentExecuting)
 	if err != nil {
+		// Max attempts exceeded — record to DLQ
+		l.recordToDLQ(fmt.Errorf("max retry attempts exceeded"), failSummary)
 		return fmt.Errorf("verification failed after %d attempts (%w):\n%s",
-			l.orch.Pipeline.Attempts, err, FailedSummary(results))
+			l.orch.Pipeline.Attempts, err, failSummary)
 	}
 	return nil
 }
@@ -571,7 +612,7 @@ func (l *Loop) runPRCreation(ctx context.Context) error {
 	if l.cfg.Config.Git.AutoPush {
 		if err := git.PushBranch(projectDir, l.cfg.Branch); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠ push failed (skipping PR): %v\n", err)
-			return l.transitionTo(StageWikiUpdate)
+			return l.skipPRFailure()
 		}
 	}
 
@@ -584,36 +625,36 @@ func (l *Loop) runPRCreation(ctx context.Context) error {
 		Draft:     l.cfg.Config.Git.PR.Draft,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠ PR creation failed (continuing to wiki update): %v\n", err)
+		fmt.Fprintf(os.Stderr, "⚠ PR creation failed (continuing): %v\n", err)
 		if l.cfg.Config.Git.AutoPush {
 			fmt.Fprintf(os.Stderr, "  ℹ 리모트 브랜치 '%s'는 push된 상태입니다. 수동으로 PR을 생성하거나 브랜치를 삭제하세요.\n", l.cfg.Branch)
 		}
-		return l.transitionTo(StageWikiUpdate)
+		return l.skipPRFailure()
 	}
 
 	fmt.Printf("✓ PR created: %s\n", prURL)
-	return l.transitionTo(StagePOValidation)
+	return l.transitionTo(l.nextStageAfter(StagePRCreation))
 }
 
 // runPOValidation handles PO validation of the PR.
 // Like PO conversation, this may require interactive mode.
 func (l *Loop) runPOValidation(ctx context.Context) error {
-	// For Phase 0: auto-approve and move to wiki update
+	// For Phase 0: auto-approve and move to next stage
 	fmt.Println("✓ PO validation: auto-approved (Phase 0)")
-	return l.transitionTo(StageWikiUpdate)
+	return l.transitionTo(l.nextStageAfter(StagePOValidation))
 }
 
 // runWikiUpdate handles wiki/domain knowledge updates.
 func (l *Loop) runWikiUpdate(ctx context.Context) error {
 	if !l.cfg.Config.Wiki.AutoUpdate {
-		return l.transitionTo(StageCompleted)
+		return l.transitionTo(l.nextStageAfter(StageWikiUpdate))
 	}
 
 	// Try to run tech-writer agent if available
 	twAgent := l.findAgent("tech-writer")
 	if twAgent == nil {
 		fmt.Println("✓ Wiki update: skipped (no tech-writer agent)")
-		return l.transitionTo(StageCompleted)
+		return l.transitionTo(l.nextStageAfter(StageWikiUpdate))
 	}
 
 	// Run tech-writer as headless agent — failure is non-fatal
@@ -644,10 +685,111 @@ func (l *Loop) runWikiUpdate(ctx context.Context) error {
 		fmt.Println("✓ Wiki update completed")
 	}
 
-	return l.transitionTo(StageCompleted)
+	return l.transitionTo(l.nextStageAfter(StageWikiUpdate))
 }
 
 // --- Helper methods ---
+
+// applyWorkflow loads the workflow template and applies its transitions to the pipeline.
+// Uses LoopConfig.WorkflowName, falling back to Pipeline.WorkflowName (recovery),
+// then Config.Workflow.DefaultWorkflow, and finally "feature" as the ultimate default.
+func (l *Loop) applyWorkflow() error {
+	name := l.cfg.WorkflowName
+	if name == "" && l.orch.Pipeline != nil {
+		name = l.orch.Pipeline.WorkflowName
+	}
+	if name == "" {
+		name = l.cfg.Config.Workflow.DefaultWorkflow
+	}
+	if name == "" {
+		name = "feature"
+	}
+
+	// Warn if workflow name from --continue doesn't match the CLI flag
+	if l.cfg.WorkflowName != "" && l.orch.Pipeline.WorkflowName != "" &&
+		l.cfg.WorkflowName != l.orch.Pipeline.WorkflowName {
+		fmt.Fprintf(os.Stderr, "⚠ workflow mismatch: pipeline was started with %q, --workflow flag specifies %q (using %q)\n",
+			l.orch.Pipeline.WorkflowName, l.cfg.WorkflowName, name)
+	}
+
+	templateDir := l.cfg.Config.Workflow.TemplateDir
+	if templateDir != "" && !filepath.IsAbs(templateDir) {
+		templateDir = filepath.Join(l.cfg.WorkDir, templateDir)
+	}
+
+	wf, err := workflow.LoadWorkflow(name, templateDir)
+	if err != nil {
+		return err
+	}
+
+	l.wf = wf
+	l.orch.Pipeline.WorkflowName = name
+	l.orch.Pipeline.SetTransitions(wf.BuildTransitions())
+	l.saveState()
+
+	if name != "feature" {
+		fmt.Printf("📋 Workflow: %s (%s)\n", wf.Name, wf.Description)
+	}
+	return nil
+}
+
+// nextStageAfter returns the next stage in the workflow after the given stage.
+// Falls back to hardcoded defaults when no workflow template is set.
+func (l *Loop) nextStageAfter(current Stage) Stage {
+	if l.wf != nil {
+		return l.wf.NextStageAfter(current)
+	}
+	// Fallback: use hardcoded default sequence (feature workflow)
+	defaultOrder := []Stage{
+		StageInit, StagePOConversation, StageArchitectAnalysis,
+		StagePMTaskBreakdown, StageTaskReview, StageAgentExecuting,
+		StageVerification, StagePRCreation, StagePOValidation,
+		StageWikiUpdate, StageCompleted,
+	}
+	for i, s := range defaultOrder {
+		if s == current && i+1 < len(defaultOrder) {
+			return defaultOrder[i+1]
+		}
+	}
+	return StageFailed
+}
+
+// nextWorkflowStageAfter finds the next workflow-member stage after a stage that
+// may NOT be in the workflow. It uses the global stage ordering to find the first
+// workflow stage that follows the given stage. Used by the stage-skip logic.
+func (l *Loop) nextWorkflowStageAfter(current Stage) Stage {
+	if l.wf == nil {
+		return StageFailed
+	}
+	globalOrder := []Stage{
+		StageInit, StagePOConversation, StageArchitectAnalysis,
+		StagePMTaskBreakdown, StageTaskReview, StageAgentExecuting,
+		StageVerification, StagePRCreation, StagePOValidation,
+		StageWikiUpdate, StageCompleted,
+	}
+	found := false
+	for _, s := range globalOrder {
+		if s == current {
+			found = true
+			continue
+		}
+		if found && l.wf.HasStage(s) {
+			return s
+		}
+	}
+	return StageFailed
+}
+
+// skipPRFailure handles PR creation failure by skipping to a safe next stage.
+// If the next stage is POValidation, skips it too (nothing to validate without a PR).
+func (l *Loop) skipPRFailure() error {
+	next := l.nextStageAfter(StagePRCreation)
+	// Skip po_validation when PR failed — nothing to validate
+	if next == StagePOValidation {
+		next = l.nextStageAfter(StagePOValidation)
+	}
+	return l.orch.ForceStage(next)
+}
 
 func (l *Loop) transitionTo(stage Stage) error {
 	return l.orch.TransitionTo(stage)
@@ -1028,6 +1170,71 @@ func (l *Loop) writeDoneFallback(agentName, taskID string) {
 	if err := os.WriteFile(donePath, []byte{}, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ failed to write .done fallback for %s/%s: %v\n", agentName, taskID, err)
 	}
+}
+
+// recordToDLQ saves the current pipeline state to the dead letter queue.
+// This is a best-effort operation — failures are logged but do not block the pipeline.
+func (l *Loop) recordToDLQ(pipelineErr error, output string) {
+	if l.cfg.Store == nil {
+		return
+	}
+
+	snapshot, err := l.orch.Pipeline.Snapshot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ DLQ: failed to snapshot pipeline: %v\n", err)
+		return
+	}
+
+	errMsg := ""
+	if pipelineErr != nil {
+		errMsg = pipelineErr.Error()
+	}
+
+	dlqErr := l.cfg.Store.InsertDLQ(&store.DLQEntry{
+		PipelineID:        l.orch.Pipeline.ID,
+		WorkflowName:      l.orch.Pipeline.WorkflowName,
+		Stage:             string(l.orch.Pipeline.CurrentStage),
+		ErrorMessage:      errMsg,
+		ErrorOutput:       truncateOutput(output, 4096),
+		OriginalStateJSON: string(snapshot),
+	})
+	if dlqErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠ DLQ: failed to record entry: %v\n", dlqErr)
+	} else {
+		fmt.Printf("📋 Pipeline %s recorded to DLQ for later retry\n", l.orch.Pipeline.ID)
+	}
+}
+
+// checkPreconditions blocks the loop while the pipeline is paused.
+// It polls the DB every second to detect resume. Returns nil when unpaused
+// or an error if the context is cancelled.
+func (l *Loop) checkPreconditions(ctx context.Context) error {
+	for l.orch.Pipeline.IsPaused() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+
+		// Re-read pipeline state from DB to detect external resume
+		if l.cfg.Store != nil {
+			rec, err := l.cfg.Store.GetPipeline(l.orch.Pipeline.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "⚠ checkPreconditions: failed to read pipeline state: %v\n", err)
+				continue
+			}
+			if rec != nil {
+				refreshed, err := LoadPipeline([]byte(rec.StateJSON))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "⚠ checkPreconditions: failed to parse pipeline state: %v\n", err)
+					continue
+				}
+				l.orch.Pipeline.Status = refreshed.Status
+				l.orch.Pipeline.PausedAtStage = refreshed.PausedAtStage
+			}
+		}
+	}
+	return nil
 }
 
 func containsStr(ss []string, s string) bool {

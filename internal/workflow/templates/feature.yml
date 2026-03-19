@@ -1,0 +1,17 @@
+name: feature
+description: Full feature development workflow with all stages
+stages:
+  - init
+  - po_conversation
+  - architect_analysis
+  - pm_task_breakdown
+  - task_review
+  - agent_executing
+  - verification
+  - pr_creation
+  - po_validation
+  - wiki_update
+  - completed
+loops:
+  - from: pr_creation
+    to: wiki_update

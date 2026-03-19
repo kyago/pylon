@@ -21,6 +21,16 @@ const (
 	StageFailed            Stage = "failed"
 )
 
+// PipelineStatus represents the operational status of a pipeline (orthogonal to Stage).
+type PipelineStatus string
+
+const (
+	StatusRunning   PipelineStatus = "running"
+	StatusPaused    PipelineStatus = "paused"
+	StatusCompleted PipelineStatus = "completed"
+	StatusFailed    PipelineStatus = "failed"
+)
+
 // AllStages returns all valid pipeline stages.
 func AllStages() []Stage {
 	return []Stage{

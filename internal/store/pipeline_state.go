@@ -8,10 +8,13 @@ import (
 
 // PipelineRecord represents a row in the pipeline_state table.
 type PipelineRecord struct {
-	PipelineID string
-	Stage      string
-	StateJSON  string
-	UpdatedAt  time.Time
+	PipelineID    string
+	Stage         string
+	StateJSON     string
+	WorkflowName  string
+	Status        string
+	PausedAtStage string
+	UpdatedAt     time.Time
 }
 
 // UpsertPipeline inserts or updates a pipeline state record.
@@ -21,13 +24,16 @@ func (s *Store) UpsertPipeline(rec *PipelineRecord) error {
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO pipeline_state (pipeline_id, stage, state_json, updated_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO pipeline_state (pipeline_id, stage, state_json, workflow_name, status, paused_at_stage, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(pipeline_id) DO UPDATE SET
 			stage = excluded.stage,
 			state_json = excluded.state_json,
+			workflow_name = excluded.workflow_name,
+			status = excluded.status,
+			paused_at_stage = excluded.paused_at_stage,
 			updated_at = excluded.updated_at`,
-		rec.PipelineID, rec.Stage, rec.StateJSON, rec.UpdatedAt,
+		rec.PipelineID, rec.Stage, rec.StateJSON, rec.WorkflowName, rec.Status, rec.PausedAtStage, rec.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert pipeline: %w", err)
@@ -39,10 +45,10 @@ func (s *Store) UpsertPipeline(rec *PipelineRecord) error {
 func (s *Store) GetPipeline(pipelineID string) (*PipelineRecord, error) {
 	rec := &PipelineRecord{}
 	err := s.db.QueryRow(`
-		SELECT pipeline_id, stage, state_json, updated_at
+		SELECT pipeline_id, stage, state_json, workflow_name, status, paused_at_stage, updated_at
 		FROM pipeline_state WHERE pipeline_id = ?`,
 		pipelineID,
-	).Scan(&rec.PipelineID, &rec.Stage, &rec.StateJSON, &rec.UpdatedAt)
+	).Scan(&rec.PipelineID, &rec.Stage, &rec.StateJSON, &rec.WorkflowName, &rec.Status, &rec.PausedAtStage, &rec.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -56,7 +62,7 @@ func (s *Store) GetPipeline(pipelineID string) (*PipelineRecord, error) {
 // GetActivePipelines returns all non-completed pipelines.
 func (s *Store) GetActivePipelines() ([]PipelineRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT pipeline_id, stage, state_json, updated_at
+		SELECT pipeline_id, stage, state_json, workflow_name, status, paused_at_stage, updated_at
 		FROM pipeline_state
 		WHERE stage NOT IN ('completed', 'failed')
 		ORDER BY updated_at DESC`)
@@ -68,7 +74,7 @@ func (s *Store) GetActivePipelines() ([]PipelineRecord, error) {
 	var records []PipelineRecord
 	for rows.Next() {
 		var rec PipelineRecord
-		if err := rows.Scan(&rec.PipelineID, &rec.Stage, &rec.StateJSON, &rec.UpdatedAt); err != nil {
+		if err := rows.Scan(&rec.PipelineID, &rec.Stage, &rec.StateJSON, &rec.WorkflowName, &rec.Status, &rec.PausedAtStage, &rec.UpdatedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, rec)
@@ -90,7 +96,7 @@ func (s *Store) TouchPipelineTimestamp(pipelineID string) error {
 // ListAllPipelines returns all pipelines ordered by most recently updated.
 func (s *Store) ListAllPipelines() ([]PipelineRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT pipeline_id, stage, state_json, updated_at
+		SELECT pipeline_id, stage, state_json, workflow_name, status, paused_at_stage, updated_at
 		FROM pipeline_state
 		ORDER BY updated_at DESC`)
 	if err != nil {
@@ -101,7 +107,7 @@ func (s *Store) ListAllPipelines() ([]PipelineRecord, error) {
 	var records []PipelineRecord
 	for rows.Next() {
 		var rec PipelineRecord
-		if err := rows.Scan(&rec.PipelineID, &rec.Stage, &rec.StateJSON, &rec.UpdatedAt); err != nil {
+		if err := rows.Scan(&rec.PipelineID, &rec.Stage, &rec.StateJSON, &rec.WorkflowName, &rec.Status, &rec.PausedAtStage, &rec.UpdatedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, rec)

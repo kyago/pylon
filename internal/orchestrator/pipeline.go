@@ -64,17 +64,35 @@ type StageTransition struct {
 	CompletedAt time.Time `json:"completed_at"`
 }
 
+// PipelineStatus is an alias for domain.PipelineStatus.
+type PipelineStatus = domain.PipelineStatus
+
+// PipelineStatus constants re-exported from domain package.
+const (
+	StatusRunning   = domain.StatusRunning
+	StatusPaused    = domain.StatusPaused
+	StatusCompleted = domain.StatusCompleted
+	StatusFailed    = domain.StatusFailed
+)
+
 // Pipeline represents the state of a single pylon request execution.
 type Pipeline struct {
-	ID           string                 `json:"pipeline_id"`
-	CurrentStage Stage                  `json:"current_stage"`
-	TaskSpec     string                 `json:"task_spec,omitempty"`
-	Agents       map[string]AgentStatus `json:"active_agents,omitempty"`
-	History      []StageTransition      `json:"stage_history,omitempty"`
-	Attempts     int                    `json:"attempts,omitempty"`
-	MaxAttempts  int                    `json:"max_attempts,omitempty"`
-	TaskGraph    *TaskGraph             `json:"task_graph,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
+	ID            string                 `json:"pipeline_id"`
+	CurrentStage  Stage                  `json:"current_stage"`
+	WorkflowName  string                 `json:"workflow_name,omitempty"`
+	Status        PipelineStatus         `json:"status"`
+	PausedAtStage Stage                  `json:"paused_at_stage,omitempty"`
+	TaskSpec      string                 `json:"task_spec,omitempty"`
+	Agents        map[string]AgentStatus `json:"active_agents,omitempty"`
+	History       []StageTransition      `json:"stage_history,omitempty"`
+	Attempts      int                    `json:"attempts,omitempty"`
+	MaxAttempts   int                    `json:"max_attempts,omitempty"`
+	TaskGraph     *TaskGraph             `json:"task_graph,omitempty"`
+	CreatedAt     time.Time              `json:"created_at"`
+
+	// transitions is a runtime-only field (not serialized) that overrides
+	// the default validTransitions when a workflow template is applied.
+	transitions map[Stage][]Stage `json:"-"`
 }
 
 // NewPipeline creates a new pipeline in the init stage.
@@ -85,15 +103,31 @@ func NewPipeline(id string, maxAttempts int) *Pipeline {
 	return &Pipeline{
 		ID:           id,
 		CurrentStage: StageInit,
+		Status:       StatusRunning,
 		Agents:       make(map[string]AgentStatus),
 		MaxAttempts:  maxAttempts,
 		CreatedAt:    time.Now(),
 	}
 }
 
+// SetTransitions overrides the default transition map with a workflow-specific one.
+// This is a runtime-only setting; the transitions are not serialized.
+func (p *Pipeline) SetTransitions(t map[Stage][]Stage) {
+	p.transitions = t
+}
+
+// getTransitions returns the active transition map.
+// Returns the workflow-specific transitions if set, otherwise the default validTransitions.
+func (p *Pipeline) getTransitions() map[Stage][]Stage {
+	if p.transitions != nil {
+		return p.transitions
+	}
+	return validTransitions
+}
+
 // CanTransition checks whether a transition to the target stage is valid.
 func (p *Pipeline) CanTransition(to Stage) bool {
-	allowed, ok := validTransitions[p.CurrentStage]
+	allowed, ok := p.getTransitions()[p.CurrentStage]
 	if !ok {
 		return false
 	}
@@ -125,6 +159,15 @@ func (p *Pipeline) Transition(to Stage) error {
 		CompletedAt: time.Now(),
 	})
 	p.CurrentStage = to
+
+	// Update operational status to reflect terminal outcomes
+	switch to {
+	case StageCompleted:
+		p.Status = StatusCompleted
+	case StageFailed:
+		p.Status = StatusFailed
+	}
+
 	return nil
 }
 
@@ -138,10 +181,14 @@ func (p *Pipeline) Snapshot() ([]byte, error) {
 }
 
 // LoadPipeline deserializes a pipeline from JSON.
+// Older snapshots may lack the "status" field; default to running for backward compatibility.
 func LoadPipeline(data []byte) (*Pipeline, error) {
 	p := &Pipeline{}
 	if err := json.Unmarshal(data, p); err != nil {
 		return nil, fmt.Errorf("failed to load pipeline: %w", err)
+	}
+	if p.Status == "" {
+		p.Status = StatusRunning
 	}
 	return p, nil
 }
@@ -149,4 +196,32 @@ func LoadPipeline(data []byte) (*Pipeline, error) {
 // IsTerminal returns true if the pipeline is in a terminal state.
 func (p *Pipeline) IsTerminal() bool {
 	return p.CurrentStage == StageCompleted || p.CurrentStage == StageFailed
+}
+
+// IsPaused returns true if the pipeline status is paused.
+func (p *Pipeline) IsPaused() bool {
+	return p.Status == StatusPaused
+}
+
+// Pause sets the pipeline status to paused and records the current stage.
+func (p *Pipeline) Pause() error {
+	if p.IsTerminal() {
+		return fmt.Errorf("cannot pause terminal pipeline")
+	}
+	if p.IsPaused() {
+		return fmt.Errorf("pipeline already paused")
+	}
+	p.Status = StatusPaused
+	p.PausedAtStage = p.CurrentStage
+	return nil
+}
+
+// Resume restores the pipeline status to running and clears the paused stage.
+func (p *Pipeline) Resume() error {
+	if !p.IsPaused() {
+		return fmt.Errorf("pipeline is not paused")
+	}
+	p.Status = StatusRunning
+	p.PausedAtStage = ""
+	return nil
 }

@@ -23,6 +23,7 @@ type AgentConfig struct {
 	PermissionMode string            `yaml:"permissionMode"`
 	Isolation      string            `yaml:"isolation"`
 	Model          string            `yaml:"model"`
+	Timeout        string            `yaml:"timeout"`
 	Env            map[string]string `yaml:"env"`
 
 	// Markdown body (everything after the second ---)

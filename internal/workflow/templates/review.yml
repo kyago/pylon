@@ -1,0 +1,7 @@
+name: review
+description: Code review workflow - architect analysis only
+stages:
+  - init
+  - po_conversation
+  - architect_analysis
+  - completed

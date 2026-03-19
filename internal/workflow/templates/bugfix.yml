@@ -1,0 +1,9 @@
+name: bugfix
+description: Bug fix workflow - skips architecture and task breakdown
+stages:
+  - init
+  - po_conversation
+  - agent_executing
+  - verification
+  - pr_creation
+  - completed

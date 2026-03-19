@@ -12,6 +12,7 @@ import (
 // pipelineSnapshot holds the state for change detection.
 type pipelineSnapshot struct {
 	Stage       string
+	Status      string
 	AgentStates map[string]string
 }
 
@@ -71,6 +72,7 @@ func (p *Poller) poll() {
 
 		snap := pipelineSnapshot{
 			Stage:       rec.Stage,
+			Status:      rec.Status,
 			AgentStates: make(map[string]string),
 		}
 
@@ -97,6 +99,29 @@ func (p *Poller) poll() {
 				},
 			})
 			continue
+		}
+
+		// Status change (pause/resume)
+		if prev.Status != snap.Status {
+			if snap.Status == "paused" {
+				p.hub.Publish(SSEEvent{
+					Type: "pipeline_paused",
+					Data: map[string]any{
+						"pipeline_id": rec.PipelineID,
+						"stage":       snap.Stage,
+						"paused_at":   time.Now().Format(time.RFC3339),
+					},
+				})
+			} else if prev.Status == "paused" && snap.Status == "running" {
+				p.hub.Publish(SSEEvent{
+					Type: "pipeline_resumed",
+					Data: map[string]any{
+						"pipeline_id": rec.PipelineID,
+						"stage":       snap.Stage,
+						"resumed_at":  time.Now().Format(time.RFC3339),
+					},
+				})
+			}
 		}
 
 		// Stage change
