@@ -4,15 +4,25 @@
         <a href="/pipelines/{{.ID}}" hx-get="/pipelines/{{.ID}}" hx-target="#main" hx-push-url="true" class="pipeline-id">
             {{truncate .ID 12}}
         </a>
-        <span class="badge {{if .IsActive}}badge-active{{else if eq .CurrentStage "completed"}}badge-completed{{else}}badge-failed{{end}}">
-            {{stageLabel .CurrentStage}}
-        </span>
+        <div class="pipeline-card-badges">
+            {{if .WorkflowName}}<span class="badge badge-sm badge-workflow">{{.WorkflowName}}</span>{{end}}
+            <span class="badge badge-sm {{if .IsActive}}badge-active{{else if eq .CurrentStage "completed"}}badge-completed{{else}}badge-failed{{end}}">
+                {{stageLabel .CurrentStage}}
+            </span>
+        </div>
     </div>
     <div class="stage-bar-mini">
+        {{if .WorkflowStages}}
+        {{$current := .CurrentStage}}
+        {{$idx := .StageIndex}}
+        {{range $i, $s := .WorkflowStages}}
+        <div class="stage-dot {{if lt $i $idx}}stage-done{{else if eq $s $current}}stage-current{{end}} {{if eq $s "failed"}}stage-failed-dot{{end}}"></div>
+        {{end}}
+        {{else}}
         {{$idx := stageIndex .CurrentStage}}
-        {{$total := .TotalStages}}
         {{range $i, $s := allStages}}
         <div class="stage-dot {{if lt $i $idx}}stage-done{{else if eq $i $idx}}stage-current{{end}} {{if eq (printf "%s" $s) "failed"}}stage-failed-dot{{end}}"></div>
+        {{end}}
         {{end}}
     </div>
     {{if .TaskSpec}}

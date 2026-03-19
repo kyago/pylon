@@ -117,6 +117,7 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, workspaceName stri
 		r.Get("/pipelines/{id}", srv.handlePipelineDetail)
 		r.Get("/messages", srv.handleMessages)
 		r.Get("/memory", srv.handleMemory)
+		r.Get("/dlq", srv.handleDLQ)
 
 		// JSON API
 		r.Route("/api", func(r chi.Router) {

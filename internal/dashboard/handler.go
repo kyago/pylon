@@ -13,33 +13,42 @@ import (
 	"github.com/kyago/pylon/internal/domain"
 	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/workflow"
 )
 
 // --- View Models ---
 
 // TaskItemView represents a task within a task graph for template rendering.
 type TaskItemView struct {
-	ID          string
-	Description string
-	AgentName   string
-	DependsOn   []string
+	ID           string
+	Description  string
+	AgentName    string
+	DependsOn    []string
+	Status       string
+	StartedAt    *time.Time
+	CompletedAt  *time.Time
+	ErrorMessage string
+	FileCount    int
+	Duration     string // human-readable duration
 }
 
 // PipelineView is the template-friendly representation of a pipeline.
 type PipelineView struct {
-	ID           string
-	CurrentStage string
-	StageIndex   int
-	TotalStages  int
-	TaskSpec     string
-	Agents       map[string]AgentView
-	History      []TransitionView
-	TaskGraph    []TaskItemView
-	Attempts     int
-	MaxAttempts  int
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	IsActive     bool
+	ID             string
+	CurrentStage   string
+	StageIndex     int
+	TotalStages    int
+	WorkflowName   string
+	WorkflowStages []string // workflow-specific stages (empty = use AllStages)
+	TaskSpec       string
+	Agents         map[string]AgentView
+	History        []TransitionView
+	TaskGraph      []TaskItemView
+	Attempts       int
+	MaxAttempts    int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	IsActive       bool
 }
 
 // AgentView represents an agent within a pipeline.
@@ -74,8 +83,9 @@ type OverviewData struct {
 
 // PipelineDetailData is the view model for the pipeline detail page.
 type PipelineDetailData struct {
-	Pipeline PipelineView
-	Stages   []domain.Stage
+	Pipeline       PipelineView
+	Stages         []domain.Stage
+	WorkflowStages []string // workflow-specific stage names for visualization
 }
 
 // MessagesData is the view model for the messages page.
@@ -84,6 +94,25 @@ type MessagesData struct {
 	QueueStats   []store.MessageQueueStat
 	FilterAgent  string
 	FilterStatus string
+}
+
+// DLQData is the view model for the DLQ page.
+type DLQData struct {
+	Entries     []DLQEntryView
+	TotalCount  int
+	ErrorGroups map[string]int // error type → count
+}
+
+// DLQEntryView is the template-friendly representation of a DLQ entry.
+type DLQEntryView struct {
+	ID           int
+	PipelineID   string
+	WorkflowName string
+	Stage        string
+	ErrorMessage string
+	ErrorOutput  string
+	CreatedAt    time.Time
+	TimeAgo      string
 }
 
 // MemoryData is the view model for the memory page.
@@ -104,6 +133,7 @@ func pipelineRecordToView(rec store.PipelineRecord) PipelineView {
 		CurrentStage: rec.Stage,
 		StageIndex:   stageIndex(rec.Stage),
 		TotalStages:  len(domain.AllStages()),
+		WorkflowName: rec.WorkflowName,
 		UpdatedAt:    rec.UpdatedAt,
 		IsActive:     !isTerminal(rec.Stage),
 		Agents:       make(map[string]AgentView),
@@ -115,6 +145,7 @@ func pipelineRecordToView(rec store.PipelineRecord) PipelineView {
 		view.Attempts = pipeline.Attempts
 		view.MaxAttempts = pipeline.MaxAttempts
 		view.CreatedAt = pipeline.CreatedAt
+		view.WorkflowName = pipeline.WorkflowName
 		for name, agent := range pipeline.Agents {
 			view.Agents[name] = AgentView{
 				Name:   name,
@@ -131,12 +162,26 @@ func pipelineRecordToView(rec store.PipelineRecord) PipelineView {
 		}
 		if pipeline.TaskGraph != nil {
 			for _, t := range pipeline.TaskGraph.Tasks {
-				view.TaskGraph = append(view.TaskGraph, TaskItemView{
-					ID:          t.ID,
-					Description: t.Description,
-					AgentName:   t.AgentName,
-					DependsOn:   t.DependsOn,
-				})
+				tv := TaskItemView{
+					ID:           t.ID,
+					Description:  t.Description,
+					AgentName:    t.AgentName,
+					DependsOn:    t.DependsOn,
+					Status:       t.Status,
+					StartedAt:    t.StartedAt,
+					CompletedAt:  t.CompletedAt,
+					ErrorMessage: t.ErrorMessage,
+					FileCount:    t.FileCount,
+				}
+				if t.StartedAt != nil && t.CompletedAt != nil {
+					tv.Duration = t.CompletedAt.Sub(*t.StartedAt).Round(time.Second).String()
+				} else if t.StartedAt != nil {
+					tv.Duration = time.Since(*t.StartedAt).Round(time.Second).String()
+				}
+				if tv.Status == "" {
+					tv.Status = "pending"
+				}
+				view.TaskGraph = append(view.TaskGraph, tv)
 			}
 		}
 	}
@@ -173,14 +218,54 @@ func (srv *Server) handlePipelineDetail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	view := pipelineRecordToView(*rec)
+
 	data := PipelineDetailData{
-		Pipeline: pipelineRecordToView(*rec),
+		Pipeline: view,
 		Stages:   domain.AllStages(),
+	}
+
+	// Resolve workflow-specific stages for visualization
+	wfName := view.WorkflowName
+	if wfName == "" {
+		wfName = "feature"
+	}
+	if wf, wfErr := workflow.LoadWorkflow(wfName, ""); wfErr == nil {
+		wfStages := make([]string, len(wf.Stages))
+		for i, s := range wf.Stages {
+			wfStages[i] = string(s)
+		}
+		data.WorkflowStages = wfStages
+		view.WorkflowStages = wfStages
+		view.TotalStages = len(wfStages)
+		// Recalculate stage index within workflow stages
+		for i, s := range wfStages {
+			if s == view.CurrentStage {
+				view.StageIndex = i
+				break
+			}
+		}
+		data.Pipeline = view
 	}
 
 	tmplName := "pipeline.html"
 	if r.Header.Get("HX-Request") == "true" {
 		tmplName = "pipeline_content"
+	}
+
+	srv.renderHTML(w, tmplName, data)
+}
+
+func (srv *Server) handleDLQ(w http.ResponseWriter, r *http.Request) {
+	data, err := srv.buildDLQData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	tmplName := "dlq.html"
+	if r.Header.Get("HX-Request") == "true" {
+		tmplName = "dlq_content"
 	}
 
 	srv.renderHTML(w, tmplName, data)
@@ -512,8 +597,34 @@ func (srv *Server) buildOverviewData(r *http.Request) (*OverviewData, error) {
 
 	views := make([]PipelineView, len(records))
 	var runningAgents int
+	wfCache := make(map[string][]string) // workflow name → stage strings
 	for i, rec := range records {
 		views[i] = pipelineRecordToView(rec)
+		// Resolve workflow stages for the mini stage bar (cached)
+		wfName := views[i].WorkflowName
+		if wfName == "" {
+			wfName = "feature"
+		}
+		wfStages, cached := wfCache[wfName]
+		if !cached {
+			if wf, wfErr := workflow.LoadWorkflow(wfName, ""); wfErr == nil {
+				wfStages = make([]string, len(wf.Stages))
+				for j, s := range wf.Stages {
+					wfStages[j] = string(s)
+				}
+			}
+			wfCache[wfName] = wfStages
+		}
+		if wfStages != nil {
+			views[i].WorkflowStages = wfStages
+			views[i].TotalStages = len(wfStages)
+			for j, s := range wfStages {
+				if s == views[i].CurrentStage {
+					views[i].StageIndex = j
+					break
+				}
+			}
+		}
 		for _, agent := range views[i].Agents {
 			if agent.Status == "running" {
 				runningAgents++
@@ -630,6 +741,59 @@ func (srv *Server) buildMemoryData(r *http.Request) (*MemoryData, error) {
 	}
 
 	return data, nil
+}
+
+func (srv *Server) buildDLQData() (*DLQData, error) {
+	entries, err := srv.store.ListDLQ()
+	if err != nil {
+		return nil, err
+	}
+
+	views := make([]DLQEntryView, len(entries))
+	errorGroups := make(map[string]int)
+
+	for i, e := range entries {
+		views[i] = DLQEntryView{
+			ID:           e.ID,
+			PipelineID:   e.PipelineID,
+			WorkflowName: e.WorkflowName,
+			Stage:        e.Stage,
+			ErrorMessage: e.ErrorMessage,
+			ErrorOutput:  e.ErrorOutput,
+			CreatedAt:    e.CreatedAt,
+			TimeAgo:      timeAgo(e.CreatedAt),
+		}
+
+		errType := classifyError(e.ErrorMessage)
+		errorGroups[errType]++
+	}
+
+	return &DLQData{
+		Entries:     views,
+		TotalCount:  len(entries),
+		ErrorGroups: errorGroups,
+	}, nil
+}
+
+// classifyError extracts a short error type from an error message.
+func classifyError(msg string) string {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "timeout"):
+		return "Timeout"
+	case strings.Contains(lower, "exit code"), strings.Contains(lower, "exit status"):
+		return "Process Error"
+	case strings.Contains(lower, "permission"), strings.Contains(lower, "auth"):
+		return "Auth/Permission"
+	case strings.Contains(lower, "network"), strings.Contains(lower, "connection"):
+		return "Network Error"
+	case strings.Contains(lower, "not found"), strings.Contains(lower, "404"):
+		return "Not Found"
+	case strings.Contains(lower, "max attempts"), strings.Contains(lower, "max retries"):
+		return "Max Retries"
+	default:
+		return "Other"
+	}
 }
 
 // renderHTML renders a template to a buffer first, then writes to w.

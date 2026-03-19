@@ -77,7 +77,7 @@ Phase 5 (고급)
 | Phase 0: 기반 강화 | ✅ 완료 | `8e43d9b` | 2026-03-19 |
 | Phase 1: 적응형 워크플로우 | ✅ 완료 | `63a8e60` | 2026-03-19 |
 | Phase 2: 운영 안정성 | ✅ 완료 | `2654980` | 2026-03-19 |
-| Phase 3: 가시성 & UX | ⬜ 미착수 | - | - |
+| Phase 3: 가시성 & UX | ✅ 완료 | - | 2026-03-19 |
 | Phase 4: 확장성 | ⬜ 미착수 | - | - |
 | Phase 5: 고급 기능 | ⬜ 미착수 | - | - |
 
@@ -124,6 +124,47 @@ Phase 5 (고급)
 **알려진 제약** (Phase 4에서 해소 예정):
 - Pause race: `saveState`가 in-memory Status를 DB에 쓸 때 외부 pause 신호 덮어쓸 수 있음
 - `RequeueDLQ`: 실행 중인 orchestrator에 requeue 알림 없음 → `pylon continue` 필요
+
+---
+
+#### Phase 3 완료 체크리스트
+
+- [x] **3-1 워크플로우 자동 선택**
+  - [x] `SuggestWorkflow(requirement) (name, keywords)` 키워드 매칭 엔진 (`selector.go`)
+  - [x] 6개 워크플로우 키워드 세트 (hotfix, bugfix, docs, refactor, review, explore) + feature 기본값
+  - [x] 우선순위 기반 매칭 (hotfix > bugfix > ...)
+  - [x] 한/영 키워드 지원
+  - [x] 단위 테스트 14종 (`selector_test.go`)
+
+- [x] **3-2 스테이지 시각화 개선**
+  - [x] `PipelineView.WorkflowName`, `WorkflowStages` 필드 추가 (`handler.go`)
+  - [x] `PipelineDetailData.WorkflowStages` 필드 추가 (`handler.go`)
+  - [x] `handlePipelineDetail`에서 워크플로우 템플릿 로드 → 동적 단계 설정
+  - [x] `stage_progress.html` 워크플로우별 단계 표시 + AllStages 폴백
+  - [x] `pipeline_card.html` stage-bar-mini 워크플로우별 동적 렌더링
+  - [x] 워크플로우 이름 뱃지 표시
+
+- [x] **3-3 태스크 테이블 뷰**
+  - [x] `TaskItem` 확장: Status, StartedAt, CompletedAt, ErrorMessage, FileCount (`taskgraph.go`)
+  - [x] `TaskItemView` 확장 + Duration 계산 (`handler.go`)
+  - [x] 태스크 테이블 Status/Duration/Files/Error 컬럼 (`pipeline.html`)
+  - [x] 태스크 상태별 CSS 클래스 (running/completed/failed/pending)
+
+- [x] **3-4 DLQ 페이지**
+  - [x] `GET /dlq` HTML 페이지 라우트 (`server.go`)
+  - [x] navbar에 DLQ 링크 추가 (`layout.html`)
+  - [x] DLQ 테이블: ID, Pipeline, Workflow, Stage, Error, Time, Actions (`dlq.html`)
+  - [x] Requeue/Dismiss HTMX 버튼 + after-request 새로고침
+  - [x] 에러 output tail 펼치기/접기 (`<details>/<summary>`)
+  - [x] 에러 유형별 그룹 카운트 (`classifyError`)
+  - [x] 빈 상태 메시지
+
+- [x] **3-5 CLI 워크플로우 선택**
+  - [x] `--workflow` 미지정 시 `SuggestWorkflow()` 자동 추천 + 키워드 표시 (`request.go`)
+  - [x] `--workflow auto` 자동 선택 모드
+  - [x] 사용 가능한 워크플로우 목록 표시
+
+**검증 결과**: `go build ./...` ✅ | `go test ./internal/workflow/...` ✅ | `go test ./internal/orchestrator/...` ✅ | `go test ./internal/dashboard/...` ✅ | `go test ./internal/store/...` ✅
 
 ---
 

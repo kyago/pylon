@@ -1,0 +1,96 @@
+{{define "dlq.html"}}
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<body>
+{{template "nav" .}}
+<main id="main" hx-ext="sse" sse-connect="/api/events">
+{{template "dlq_content" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "dlq_content"}}
+<div class="container">
+    <div class="section-header">
+        <h1 class="page-title">Dead Letter Queue</h1>
+        <span class="badge">{{.TotalCount}} entries</span>
+    </div>
+
+    {{/* Error Group Summary */}}
+    {{if .ErrorGroups}}
+    <div class="card-grid metrics-row" style="margin-bottom: 20px;">
+        {{range $type, $count := .ErrorGroups}}
+        <div class="metric-card small">
+            <div class="metric-label">{{$type}}</div>
+            <div class="metric-value failed-text">{{$count}}</div>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+
+    {{/* DLQ Table */}}
+    {{if .Entries}}
+    <div class="card">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Pipeline</th>
+                    <th>Workflow</th>
+                    <th>Stage</th>
+                    <th>Error</th>
+                    <th>Time</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Entries}}
+                <tr>
+                    <td><code>{{.ID}}</code></td>
+                    <td>
+                        <a href="/pipelines/{{.PipelineID}}" hx-get="/pipelines/{{.PipelineID}}" hx-target="#main" hx-push-url="true" class="pipeline-id">
+                            {{truncate .PipelineID 16}}
+                        </a>
+                    </td>
+                    <td>{{if .WorkflowName}}<span class="badge badge-sm">{{.WorkflowName}}</span>{{else}}<span class="text-muted">-</span>{{end}}</td>
+                    <td><span class="badge badge-sm badge-failed">{{stageLabel .Stage}}</span></td>
+                    <td class="dlq-error-cell">
+                        <details>
+                            <summary class="dlq-error-summary">{{truncate .ErrorMessage 60}}</summary>
+                            <div class="dlq-error-detail">
+                                <div class="dlq-error-msg">{{.ErrorMessage}}</div>
+                                {{if .ErrorOutput}}
+                                <pre class="dlq-output-tail">{{.ErrorOutput}}</pre>
+                                {{end}}
+                            </div>
+                        </details>
+                    </td>
+                    <td class="text-muted">{{.TimeAgo}}</td>
+                    <td class="dlq-actions">
+                        <button class="btn btn-sm btn-primary"
+                                hx-post="/api/dlq/{{.ID}}/requeue"
+                                hx-confirm="Requeue this pipeline?"
+                                hx-swap="none"
+                                hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '/dlq', '#main')">
+                            Requeue
+                        </button>
+                        <button class="btn btn-sm btn-danger"
+                                hx-delete="/api/dlq/{{.ID}}"
+                                hx-confirm="Dismiss this DLQ entry?"
+                                hx-swap="none"
+                                hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '/dlq', '#main')">
+                            Dismiss
+                        </button>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{else}}
+    <div class="empty-state">No failed pipelines in DLQ</div>
+    {{end}}
+</div>
+{{end}}

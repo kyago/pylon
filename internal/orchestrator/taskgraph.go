@@ -1,13 +1,21 @@
 package orchestrator
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // TaskItem represents a single task in the dependency graph.
 type TaskItem struct {
-	ID          string   `json:"id"`
-	Description string   `json:"description"`
-	AgentName   string   `json:"agent_name,omitempty"`
-	DependsOn   []string `json:"depends_on,omitempty"`
+	ID           string   `json:"id"`
+	Description  string   `json:"description"`
+	AgentName    string   `json:"agent_name,omitempty"`
+	DependsOn    []string `json:"depends_on,omitempty"`
+	Status       string   `json:"status,omitempty"`        // pending, running, completed, failed
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ErrorMessage string   `json:"error_message,omitempty"`
+	FileCount    int      `json:"file_count,omitempty"`
 }
 
 // TaskGraph holds tasks with dependency information for wave-based execution.
