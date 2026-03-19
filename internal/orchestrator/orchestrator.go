@@ -85,10 +85,13 @@ func (o *Orchestrator) savePipelineState() error {
 
 	if o.Store != nil {
 		if err := o.Store.UpsertPipeline(&store.PipelineRecord{
-			PipelineID: o.Pipeline.ID,
-			Stage:      string(o.Pipeline.CurrentStage),
-			StateJSON:  string(data),
-			UpdatedAt:  time.Now(),
+			PipelineID:    o.Pipeline.ID,
+			Stage:         string(o.Pipeline.CurrentStage),
+			StateJSON:     string(data),
+			WorkflowName:  o.Pipeline.WorkflowName,
+			Status:        string(o.Pipeline.Status),
+			PausedAtStage: string(o.Pipeline.PausedAtStage),
+			UpdatedAt:     time.Now(),
 		}); err != nil {
 			return fmt.Errorf("failed to persist pipeline state: %w", err)
 		}

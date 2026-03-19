@@ -64,17 +64,31 @@ type StageTransition struct {
 	CompletedAt time.Time `json:"completed_at"`
 }
 
+// PipelineStatus is an alias for domain.PipelineStatus.
+type PipelineStatus = domain.PipelineStatus
+
+// PipelineStatus constants re-exported from domain package.
+const (
+	StatusRunning   = domain.StatusRunning
+	StatusPaused    = domain.StatusPaused
+	StatusCompleted = domain.StatusCompleted
+	StatusFailed    = domain.StatusFailed
+)
+
 // Pipeline represents the state of a single pylon request execution.
 type Pipeline struct {
-	ID           string                 `json:"pipeline_id"`
-	CurrentStage Stage                  `json:"current_stage"`
-	TaskSpec     string                 `json:"task_spec,omitempty"`
-	Agents       map[string]AgentStatus `json:"active_agents,omitempty"`
-	History      []StageTransition      `json:"stage_history,omitempty"`
-	Attempts     int                    `json:"attempts,omitempty"`
-	MaxAttempts  int                    `json:"max_attempts,omitempty"`
-	TaskGraph    *TaskGraph             `json:"task_graph,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
+	ID            string                 `json:"pipeline_id"`
+	CurrentStage  Stage                  `json:"current_stage"`
+	WorkflowName  string                 `json:"workflow_name,omitempty"`
+	Status        PipelineStatus         `json:"status"`
+	PausedAtStage Stage                  `json:"paused_at_stage,omitempty"`
+	TaskSpec      string                 `json:"task_spec,omitempty"`
+	Agents        map[string]AgentStatus `json:"active_agents,omitempty"`
+	History       []StageTransition      `json:"stage_history,omitempty"`
+	Attempts      int                    `json:"attempts,omitempty"`
+	MaxAttempts   int                    `json:"max_attempts,omitempty"`
+	TaskGraph     *TaskGraph             `json:"task_graph,omitempty"`
+	CreatedAt     time.Time              `json:"created_at"`
 }
 
 // NewPipeline creates a new pipeline in the init stage.
@@ -85,6 +99,7 @@ func NewPipeline(id string, maxAttempts int) *Pipeline {
 	return &Pipeline{
 		ID:           id,
 		CurrentStage: StageInit,
+		Status:       StatusRunning,
 		Agents:       make(map[string]AgentStatus),
 		MaxAttempts:  maxAttempts,
 		CreatedAt:    time.Now(),

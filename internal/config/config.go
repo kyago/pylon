@@ -22,6 +22,8 @@ type Config struct {
 	Dashboard    DashboardConfig          `yaml:"dashboard"`
 	Memory       MemoryConfig             `yaml:"memory"`
 	Conversation ConversationConfig       `yaml:"conversation"`
+	Workflow     WorkflowConfig           `yaml:"workflow"`
+	WIPLimits    WIPLimitsConfig          `yaml:"wip_limits"`
 }
 
 // RuntimeConfig defines agent runtime settings.
@@ -98,6 +100,18 @@ type MemoryConfig struct {
 // Spec Reference: Section 16 "conversation"
 type ConversationConfig struct {
 	RetentionDays int `yaml:"retention_days"`
+}
+
+// WorkflowConfig defines workflow template settings.
+type WorkflowConfig struct {
+	DefaultWorkflow string `yaml:"default_workflow"`
+	TemplateDir     string `yaml:"template_dir"`
+}
+
+// WIPLimitsConfig defines work-in-progress limits for pipeline execution.
+type WIPLimitsConfig struct {
+	MaxPipelines int            `yaml:"max_pipelines"`
+	PerStage     map[string]int `yaml:"per_stage"`
 }
 
 // ParseTaskTimeout parses the TaskTimeout string into a time.Duration.
@@ -337,5 +351,15 @@ func applyDefaults(cfg *Config) {
 	// Conversation defaults
 	if cfg.Conversation.RetentionDays == 0 {
 		cfg.Conversation.RetentionDays = 90
+	}
+
+	// Workflow defaults
+	if cfg.Workflow.DefaultWorkflow == "" {
+		cfg.Workflow.DefaultWorkflow = "feature"
+	}
+
+	// WIP limits defaults
+	if cfg.WIPLimits.MaxPipelines == 0 {
+		cfg.WIPLimits.MaxPipelines = 1
 	}
 }
