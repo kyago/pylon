@@ -123,6 +123,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			return nil
 		}
 
+		// Check preconditions before each stage transition
+		if err := l.checkPreconditions(ctx); err != nil {
+			return err
+		}
+
 		var err error
 		// Skip stages not in the current workflow (e.g., after recovery with different workflow)
 		if l.wf != nil && !l.wf.HasStage(l.orch.Pipeline.CurrentStage) {
@@ -165,6 +170,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			// ErrInteractiveRequired is a signal, not a failure
 			if errors.Is(err, ErrInteractiveRequired) {
 				return err
+			}
+			// Record to DLQ before transitioning to failed.
+			// Skip if the stage handler already recorded (e.g., runVerification on max attempts).
+			if !l.orch.Pipeline.IsTerminal() {
+				l.recordToDLQ(err, "")
 			}
 			// Attempt to transition to failed state
 			failErr := l.transitionTo(StageFailed)
@@ -560,7 +570,16 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	}
 
 	// Verification failed
-	fmt.Printf("✗ Verification failed:\n%s\n", FailedSummary(results))
+	failSummary := FailedSummary(results)
+	fmt.Printf("✗ Verification failed:\n%s\n", failSummary)
+
+	// Classify failure to decide retry vs terminal
+	class := ClassifyFailure(nil, failSummary)
+	if class == FailureTerminal {
+		fmt.Println("✗ Failure classified as terminal — skipping retry")
+		l.recordToDLQ(fmt.Errorf("terminal verification failure"), failSummary)
+		return l.transitionTo(StageFailed)
+	}
 
 	// Attempts tracking and max check are handled inside Pipeline.Transition()
 	// when transitioning from StageVerification → StageAgentExecuting.
@@ -573,8 +592,10 @@ func (l *Loop) runVerification(ctx context.Context) error {
 	// Retry: go back to agent execution (Transition increments Attempts and enforces MaxAttempts)
 	err = l.transitionTo(StageAgentExecuting)
 	if err != nil {
+		// Max attempts exceeded — record to DLQ
+		l.recordToDLQ(fmt.Errorf("max retry attempts exceeded"), failSummary)
 		return fmt.Errorf("verification failed after %d attempts (%w):\n%s",
-			l.orch.Pipeline.Attempts, err, FailedSummary(results))
+			l.orch.Pipeline.Attempts, err, failSummary)
 	}
 	return nil
 }
@@ -1149,6 +1170,71 @@ func (l *Loop) writeDoneFallback(agentName, taskID string) {
 	if err := os.WriteFile(donePath, []byte{}, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ failed to write .done fallback for %s/%s: %v\n", agentName, taskID, err)
 	}
+}
+
+// recordToDLQ saves the current pipeline state to the dead letter queue.
+// This is a best-effort operation — failures are logged but do not block the pipeline.
+func (l *Loop) recordToDLQ(pipelineErr error, output string) {
+	if l.cfg.Store == nil {
+		return
+	}
+
+	snapshot, err := l.orch.Pipeline.Snapshot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ DLQ: failed to snapshot pipeline: %v\n", err)
+		return
+	}
+
+	errMsg := ""
+	if pipelineErr != nil {
+		errMsg = pipelineErr.Error()
+	}
+
+	dlqErr := l.cfg.Store.InsertDLQ(&store.DLQEntry{
+		PipelineID:        l.orch.Pipeline.ID,
+		WorkflowName:      l.orch.Pipeline.WorkflowName,
+		Stage:             string(l.orch.Pipeline.CurrentStage),
+		ErrorMessage:      errMsg,
+		ErrorOutput:       truncateOutput(output, 4096),
+		OriginalStateJSON: string(snapshot),
+	})
+	if dlqErr != nil {
+		fmt.Fprintf(os.Stderr, "⚠ DLQ: failed to record entry: %v\n", dlqErr)
+	} else {
+		fmt.Printf("📋 Pipeline %s recorded to DLQ for later retry\n", l.orch.Pipeline.ID)
+	}
+}
+
+// checkPreconditions blocks the loop while the pipeline is paused.
+// It polls the DB every second to detect resume. Returns nil when unpaused
+// or an error if the context is cancelled.
+func (l *Loop) checkPreconditions(ctx context.Context) error {
+	for l.orch.Pipeline.IsPaused() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+
+		// Re-read pipeline state from DB to detect external resume
+		if l.cfg.Store != nil {
+			rec, err := l.cfg.Store.GetPipeline(l.orch.Pipeline.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "⚠ checkPreconditions: failed to read pipeline state: %v\n", err)
+				continue
+			}
+			if rec != nil {
+				refreshed, err := LoadPipeline([]byte(rec.StateJSON))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "⚠ checkPreconditions: failed to parse pipeline state: %v\n", err)
+					continue
+				}
+				l.orch.Pipeline.Status = refreshed.Status
+				l.orch.Pipeline.PausedAtStage = refreshed.PausedAtStage
+			}
+		}
+	}
+	return nil
 }
 
 func containsStr(ss []string, s string) bool {

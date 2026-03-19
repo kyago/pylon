@@ -184,3 +184,31 @@ func LoadPipeline(data []byte) (*Pipeline, error) {
 func (p *Pipeline) IsTerminal() bool {
 	return p.CurrentStage == StageCompleted || p.CurrentStage == StageFailed
 }
+
+// IsPaused returns true if the pipeline status is paused.
+func (p *Pipeline) IsPaused() bool {
+	return p.Status == StatusPaused
+}
+
+// Pause sets the pipeline status to paused and records the current stage.
+func (p *Pipeline) Pause() error {
+	if p.IsTerminal() {
+		return fmt.Errorf("cannot pause terminal pipeline")
+	}
+	if p.IsPaused() {
+		return fmt.Errorf("pipeline already paused")
+	}
+	p.Status = StatusPaused
+	p.PausedAtStage = p.CurrentStage
+	return nil
+}
+
+// Resume restores the pipeline status to running and clears the paused stage.
+func (p *Pipeline) Resume() error {
+	if !p.IsPaused() {
+		return fmt.Errorf("pipeline is not paused")
+	}
+	p.Status = StatusRunning
+	p.PausedAtStage = ""
+	return nil
+}

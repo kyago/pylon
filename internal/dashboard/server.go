@@ -58,6 +58,14 @@ type DashboardStore interface {
 
 	// Metrics
 	GetPipelineMetrics() (*store.PipelineMetrics, error)
+	GetAdvancedMetrics() (*store.AdvancedMetrics, error)
+
+	// DLQ
+	ListDLQ() ([]store.DLQEntry, error)
+	GetDLQEntry(id int) (*store.DLQEntry, error)
+	DeleteDLQEntry(id int) error
+	RequeueDLQ(id int) error
+	CountDLQ() (int, error)
 }
 
 // Server is the dashboard HTTP server.
@@ -116,8 +124,13 @@ func NewServer(s DashboardStore, cfg *config.DashboardConfig, workspaceName stri
 			r.Get("/pipelines", srv.handleAPIPipelines)
 			r.Get("/pipelines/{id}", srv.handleAPIPipelineDetail)
 			r.Post("/pipelines/{id}/cancel", srv.handleAPIPipelineCancel)
+			r.Post("/pipelines/{id}/pause", srv.handleAPIPipelinePause)
+			r.Post("/pipelines/{id}/resume", srv.handleAPIPipelineResume)
 			r.Get("/messages", srv.handleAPIMessages)
 			r.Get("/memory", srv.handleAPIMemory)
+			r.Get("/dlq", srv.handleAPIDLQ)
+			r.Post("/dlq/{id}/requeue", srv.handleAPIDLQRequeue)
+			r.Delete("/dlq/{id}", srv.handleAPIDLQDelete)
 		})
 	})
 

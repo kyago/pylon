@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -63,10 +64,11 @@ type ConcurrencyView struct {
 
 // OverviewData is the view model for the overview page.
 type OverviewData struct {
-	Pipelines   []PipelineView
-	Concurrency ConcurrencyView
-	QueueStats  map[string]int
-	Metrics     *store.PipelineMetrics
+	Pipelines       []PipelineView
+	Concurrency     ConcurrencyView
+	QueueStats      map[string]int
+	Metrics         *store.PipelineMetrics
+	AdvancedMetrics *store.AdvancedMetrics
 }
 
 // PipelineDetailData is the view model for the pipeline detail page.
@@ -331,6 +333,144 @@ func (srv *Server) handleAPIPipelineCancel(w http.ResponseWriter, r *http.Reques
 	srv.writeJSON(w, map[string]string{"status": "cancelled", "pipeline_id": id})
 }
 
+// handleAPIPipelinePause pauses a running pipeline.
+func (srv *Server) handleAPIPipelinePause(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	rec, err := srv.store.GetPipeline(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rec == nil {
+		http.Error(w, "pipeline not found", http.StatusNotFound)
+		return
+	}
+
+	pipeline, err := orchestrator.LoadPipeline([]byte(rec.StateJSON))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := pipeline.Pause(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	snapshot, err := pipeline.Snapshot()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = srv.store.UpsertPipeline(&store.PipelineRecord{
+		PipelineID:    id,
+		Stage:         string(pipeline.CurrentStage),
+		StateJSON:     string(snapshot),
+		WorkflowName:  pipeline.WorkflowName,
+		Status:        string(pipeline.Status),
+		PausedAtStage: string(pipeline.PausedAtStage),
+		UpdatedAt:     time.Now(),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	srv.writeJSON(w, map[string]string{"status": "paused", "pipeline_id": id})
+}
+
+// handleAPIPipelineResume resumes a paused pipeline.
+func (srv *Server) handleAPIPipelineResume(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	rec, err := srv.store.GetPipeline(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rec == nil {
+		http.Error(w, "pipeline not found", http.StatusNotFound)
+		return
+	}
+
+	pipeline, err := orchestrator.LoadPipeline([]byte(rec.StateJSON))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := pipeline.Resume(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	snapshot, err := pipeline.Snapshot()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = srv.store.UpsertPipeline(&store.PipelineRecord{
+		PipelineID:    id,
+		Stage:         string(pipeline.CurrentStage),
+		StateJSON:     string(snapshot),
+		WorkflowName:  pipeline.WorkflowName,
+		Status:        string(pipeline.Status),
+		PausedAtStage: string(pipeline.PausedAtStage),
+		UpdatedAt:     time.Now(),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	srv.writeJSON(w, map[string]string{"status": "resumed", "pipeline_id": id})
+}
+
+// handleAPIDLQ returns all DLQ entries.
+func (srv *Server) handleAPIDLQ(w http.ResponseWriter, r *http.Request) {
+	entries, err := srv.store.ListDLQ()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	srv.writeJSON(w, entries)
+}
+
+// handleAPIDLQRequeue moves a DLQ entry back to the pipeline for retry.
+func (srv *Server) handleAPIDLQRequeue(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id := 0
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		http.Error(w, "invalid DLQ entry ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := srv.store.RequeueDLQ(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	srv.writeJSON(w, map[string]string{"status": "requeued", "dlq_id": idStr})
+}
+
+// handleAPIDLQDelete removes a DLQ entry (dismiss).
+func (srv *Server) handleAPIDLQDelete(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id := 0
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		http.Error(w, "invalid DLQ entry ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := srv.store.DeleteDLQEntry(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	srv.writeJSON(w, map[string]string{"status": "deleted", "dlq_id": idStr})
+}
+
 func (srv *Server) handleAPIMessages(w http.ResponseWriter, r *http.Request) {
 	data, err := srv.buildMessagesData(r)
 	if err != nil {
@@ -378,6 +518,12 @@ func (srv *Server) buildOverviewData(r *http.Request) (*OverviewData, error) {
 		return nil, err
 	}
 
+	advMetrics, err := srv.store.GetAdvancedMetrics()
+	if err != nil {
+		// Non-fatal: advanced metrics may fail during migration transition
+		advMetrics = &store.AdvancedMetrics{}
+	}
+
 	return &OverviewData{
 		Pipelines: views,
 		Concurrency: ConcurrencyView{
@@ -385,8 +531,9 @@ func (srv *Server) buildOverviewData(r *http.Request) (*OverviewData, error) {
 			TotalPipelines:  metrics.TotalPipelines,
 			ActivePipelines: metrics.ActivePipelines,
 		},
-		QueueStats: queueStats,
-		Metrics:    metrics,
+		QueueStats:      queueStats,
+		Metrics:         metrics,
+		AdvancedMetrics: advMetrics,
 	}, nil
 }
 

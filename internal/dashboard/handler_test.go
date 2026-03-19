@@ -101,6 +101,30 @@ func (m *mockStore) GetPipelineMetrics() (*store.PipelineMetrics, error) {
 	return &store.PipelineMetrics{}, nil
 }
 
+func (m *mockStore) GetAdvancedMetrics() (*store.AdvancedMetrics, error) {
+	return &store.AdvancedMetrics{}, nil
+}
+
+func (m *mockStore) ListDLQ() ([]store.DLQEntry, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetDLQEntry(id int) (*store.DLQEntry, error) {
+	return nil, nil
+}
+
+func (m *mockStore) DeleteDLQEntry(id int) error {
+	return nil
+}
+
+func (m *mockStore) RequeueDLQ(id int) error {
+	return nil
+}
+
+func (m *mockStore) CountDLQ() (int, error) {
+	return 0, nil
+}
+
 func newTestServer(t *testing.T, mock *mockStore) *Server {
 	t.Helper()
 	cfg := &config.DashboardConfig{Host: "localhost", Port: 0}
