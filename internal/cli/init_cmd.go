@@ -18,6 +18,9 @@ import (
 //go:embed agents/*.md
 var embeddedAgents embed.FS
 
+//go:embed scripts/bash/*.sh
+var embeddedScripts embed.FS
+
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
@@ -136,6 +139,11 @@ git:
 		return err
 	}
 
+	// Create pipeline script templates
+	if err := writeScriptTemplates(pylonDir); err != nil {
+		return err
+	}
+
 	// Create symlinks in .claude/agents/ for Claude CLI native discovery
 	if err := syncClaudeAgentLinks(workDir, pylonDir); err != nil {
 		return err
@@ -247,6 +255,28 @@ func writeAgentTemplates(pylonDir string) error {
 		path := filepath.Join(pylonDir, "agents", entry.Name())
 		if err := os.WriteFile(path, content, 0644); err != nil {
 			return fmt.Errorf("failed to create agent %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
+}
+
+func writeScriptTemplates(pylonDir string) error {
+	entries, err := embeddedScripts.ReadDir("scripts/bash")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded scripts: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sh") {
+			continue
+		}
+		content, err := embeddedScripts.ReadFile("scripts/bash/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("failed to read script %s: %w", entry.Name(), err)
+		}
+		path := filepath.Join(pylonDir, "scripts", "bash", entry.Name())
+		if err := os.WriteFile(path, content, 0755); err != nil {
+			return fmt.Errorf("failed to create script %s: %w", entry.Name(), err)
 		}
 	}
 	return nil
