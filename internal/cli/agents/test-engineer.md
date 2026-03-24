@@ -1,10 +1,6 @@
 ---
 name: test-engineer
 role: Test Engineer
-backend: claude-code
-maxTurns: 30
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # Test Engineer

@@ -1,30 +1,25 @@
 package cli
 
 import (
-	"context"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
-	"os/signal"
+	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
-	"time"
-
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/dashboard"
-	"github.com/kyago/pylon/internal/executor"
-	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
 )
 
 //go:embed hooks.json
 var defaultHooksJSON []byte
+
+//go:embed commands/*.md
+var embeddedCommands embed.FS
 
 // runLaunch is the main entry point when `pylon` is invoked without subcommands.
 // It generates .claude/ artifacts from .pylon/ (source of truth) and launches
@@ -61,7 +56,7 @@ func runLaunch() error {
 		if err == nil {
 			_ = s.Migrate()
 			memoryContext = buildMemoryContext(s, projects)
-			s.Close() // 즉시 닫기 — runWithDashboard에서 별도 Store를 열므로 동시 연결 방지
+			s.Close()
 		}
 	}
 
@@ -79,249 +74,63 @@ func runLaunch() error {
 		return err
 	}
 
-	// Step 7: Launch Claude Code
-	if cfg.Dashboard.AutoDashboard {
-		return runWithDashboard(root, cfg, permMode)
+	// Step 7: Launch Claude Code (replace process)
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		return fmt.Errorf("claude 실행 파일을 찾을 수 없습니다: %w", err)
 	}
 
-	// Default: replace process with claude (no dashboard)
-	exec := executor.NewDirectExecutor()
+	args := append([]string{"claude"}, buildClaudeArgs(cfg, permMode)...)
+
+	// Build env with config overrides (deduplicated — config wins over existing)
+	envMap := make(map[string]string)
+	for _, e := range os.Environ() {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			envMap[k] = v
+		}
+	}
+	for k, v := range cfg.Runtime.Env {
+		envMap[k] = v
+	}
+	env := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		env = append(env, k+"="+v)
+	}
+
 	fmt.Println("Claude Code를 시작합니다...")
-	return exec.ExecInteractive(executor.ExecConfig{
-		Name:    "claude",
-		Command: "claude",
-		Args:    buildClaudeArgs(cfg, permMode),
-		WorkDir: root,
-		Env:     cfg.Runtime.Env,
-	})
+	return syscall.Exec(claudePath, args, env)
 }
 
-// runWithDashboard launches the dashboard in background and Claude Code as a child process.
-// When Claude Code exits, the dashboard is automatically shut down via context cancellation.
-func runWithDashboard(root string, cfg *config.Config, permMode string) error {
-	// Check if a dashboard is already running for this workspace
-	if existing := checkExistingDashboard(root); existing != nil {
-		fmt.Printf("📊 대시보드 이미 실행 중: http://%s:%d\n", existing.Host, existing.Port)
 
-		// Create TUI pipeline so the existing dashboard can track this session.
-		// ExecInteractive replaces the process, so completion is handled by
-		// cleanupStaleTUIPipelines() at next startup.
-		var pipelineID string
-		dbPath := filepath.Join(root, ".pylon", "pylon.db")
-		if tmpStore, err := store.NewStore(dbPath); err == nil {
-			_ = tmpStore.Migrate()
-			cleanupStaleTUIPipelines(tmpStore, cfg, root)
-			pipelineID, _ = createTUIPipeline(tmpStore, cfg, root)
-			tmpStore.Close()
-		}
-
-		fmt.Println("Claude Code를 시작합니다...")
-		exec := executor.NewDirectExecutor()
-		return exec.ExecInteractive(executor.ExecConfig{
-			Name:    "claude",
-			Command: "claude",
-			Args:    buildClaudeArgs(cfg, permMode),
-			WorkDir: root,
-			Env:     envWithPipeline(cfg.Runtime.Env, pipelineID),
-		})
+// openWorkspaceStore is a shared helper that finds the workspace root, loads config,
+// and opens the SQLite store. Caller must close the returned Store.
+func openWorkspaceStore() (string, *config.Config, *store.Store, error) {
+	startDir := flagWorkspace
+	if startDir == "" {
+		startDir = "."
+	}
+	root, err := config.FindWorkspaceRoot(startDir)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("not in a pylon workspace")
 	}
 
-	// Open store for dashboard
+	cfg, err := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml"))
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
 	dbPath := filepath.Join(root, ".pylon", "pylon.db")
 	s, err := store.NewStore(dbPath)
 	if err != nil {
-		return fmt.Errorf("대시보드용 스토어 열기 실패: %w", err)
-	}
-	defer s.Close()
-	_ = s.Migrate()
-
-	// Derive workspace name from directory basename
-	wsName := filepath.Base(root)
-
-	// Create file logger for dashboard (prevents log output from corrupting Claude Code TUI)
-	logDir := filepath.Join(root, ".pylon", "logs")
-	dashLogger, logFile, err := dashboard.NewFileLogger(logDir)
-	if err != nil {
-		return fmt.Errorf("대시보드 로거 생성 실패: %w", err)
-	}
-	defer logFile.Close()
-
-	// Create dashboard server
-	srv, err := dashboard.NewServer(s, &cfg.Dashboard, wsName, dashLogger)
-	if err != nil {
-		return fmt.Errorf("대시보드 서버 생성 실패: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to open store: %w", err)
 	}
 
-	// Listen with port fallback (configured port → OS-assigned free port)
-	ln, err := srv.Listen()
-	if err != nil {
-		return fmt.Errorf("대시보드 포트 바인딩 실패: %w", err)
-	}
-	actualPort := ln.Addr().(*net.TCPAddr).Port
-
-	// Write dashboard info for other pylon instances to discover
-	if err := writeDashboardInfo(root, cfg.Dashboard.Host, actualPort); err != nil {
-		dashLogger.Printf("대시보드 정보 기록 실패: %v", err)
-	}
-	defer removeDashboardInfo(root)
-
-	// Start dashboard in background goroutine
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	dashDone := make(chan struct{})
-	go func() {
-		defer close(dashDone)
-		if err := srv.Serve(ctx, ln); err != nil {
-			dashLogger.Printf("서버 오류: %v", err)
-		}
-	}()
-
-	// Ignore SIGINT/SIGTERM in parent — let Claude Code (child) handle them.
-	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Reset(syscall.SIGINT, syscall.SIGTERM)
-
-	// Clean up stale TUI pipelines from previous sessions that didn't get completed
-	cleanupStaleTUIPipelines(s, cfg, root)
-
-	// Create TUI pipeline so the dashboard can track the session
-	pipelineID, err := createTUIPipeline(s, cfg, root)
-	if err != nil {
-		dashLogger.Printf("TUI 파이프라인 생성 실패: %v", err)
+	if err := s.Migrate(); err != nil {
+		s.Close()
+		return "", nil, nil, fmt.Errorf("failed to migrate: %w", err)
 	}
 
-	fmt.Printf("📊 대시보드: http://%s:%d (%s)\n", cfg.Dashboard.Host, actualPort, wsName)
-	fmt.Printf("   로그: %s\n", filepath.Join(logDir, "dashboard.log"))
-	fmt.Println("Claude Code를 시작합니다...")
-
-	// Launch Claude Code as child process (parent stays alive for dashboard)
-	exec := executor.NewDirectExecutor()
-	claudeErr := exec.RunInteractive(executor.ExecConfig{
-		Name:    "claude",
-		Command: "claude",
-		Args:    buildClaudeArgs(cfg, permMode),
-		WorkDir: root,
-		Env:     envWithPipeline(cfg.Runtime.Env, pipelineID),
-	})
-
-	// Claude exited → mark pipeline completed and stop dashboard
-	if pipelineID != "" {
-		completeTUIPipeline(s, cfg, root, pipelineID)
-	}
-	fmt.Println("\n📊 대시보드를 종료합니다...")
-	cancel()
-	<-dashDone
-
-	return claudeErr
-}
-
-// createTUIPipeline creates a pipeline record for the TUI session so the dashboard
-// can track it. Returns the pipeline ID.
-func createTUIPipeline(s *store.Store, cfg *config.Config, root string) (string, error) {
-	orch := orchestrator.NewOrchestrator(cfg, s, root)
-	pipelineID := fmt.Sprintf("tui-%s-%d", time.Now().Format("20060102-150405"), os.Getpid())
-
-	if err := orch.StartPipeline(pipelineID); err != nil {
-		return "", fmt.Errorf("파이프라인 생성 실패: %w", err)
-	}
-
-	// TUI session is a direct conversation — force to po_conversation stage
-	if err := orch.ForceStage(orchestrator.StagePOConversation); err != nil {
-		return "", fmt.Errorf("파이프라인 상태 전이 실패: %w", err)
-	}
-
-	// Register Claude as the active agent
-	orch.Pipeline.Agents["claude"] = orchestrator.AgentStatus{
-		TaskID:  "tui-session",
-		AgentID: "claude",
-		Status:  orchestrator.AgentStatusRunning,
-	}
-	if err := orch.SaveState(); err != nil {
-		return "", fmt.Errorf("파이프라인 상태 저장 실패: %w", err)
-	}
-
-	return pipelineID, nil
-}
-
-// completeTUIPipeline marks a TUI pipeline as completed (idempotent).
-// Safe to call from both the parent process path and the Stop hook path.
-func completeTUIPipeline(s *store.Store, cfg *config.Config, root, pipelineID string) {
-	if !strings.HasPrefix(pipelineID, "tui-") {
-		return
-	}
-
-	rec, err := s.GetPipeline(pipelineID)
-	if err != nil || rec == nil {
-		return
-	}
-
-	pipeline, err := orchestrator.LoadPipeline([]byte(rec.StateJSON))
-	if err != nil {
-		return
-	}
-
-	// Already terminal — skip to avoid duplicate History entries
-	if pipeline.IsTerminal() {
-		return
-	}
-
-	orch := orchestrator.NewOrchestrator(cfg, s, root)
-	orch.Pipeline = pipeline
-	if agent, ok := orch.Pipeline.Agents["claude"]; ok {
-		agent.Status = orchestrator.AgentStatusCompleted
-		orch.Pipeline.Agents["claude"] = agent
-	}
-	_ = orch.ForceStage(orchestrator.StageCompleted)
-}
-
-// cleanupStaleTUIPipelines completes tui-* pipelines whose owning process is no longer alive.
-// This handles the ExecInteractive path where the parent process can't do cleanup.
-// Pipelines belonging to still-running sessions are left untouched.
-func cleanupStaleTUIPipelines(s *store.Store, cfg *config.Config, root string) {
-	records, err := s.GetActivePipelines()
-	if err != nil {
-		return
-	}
-	for _, rec := range records {
-		if !strings.HasPrefix(rec.PipelineID, "tui-") {
-			continue
-		}
-		// Pipeline ID format: tui-YYYYMMDD-HHMMSS-{pid}
-		parts := strings.Split(rec.PipelineID, "-")
-		if len(parts) >= 4 {
-			pidStr := parts[len(parts)-1]
-			if pid, err := strconv.Atoi(pidStr); err == nil {
-				if isProcessAlive(pid) {
-					continue // still-running session — skip
-				}
-			}
-		}
-		completeTUIPipeline(s, cfg, root, rec.PipelineID)
-	}
-}
-
-// isProcessAlive checks if a process with the given PID is still running.
-func isProcessAlive(pid int) bool {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 checks process existence without actually sending a signal.
-	return p.Signal(syscall.Signal(0)) == nil
-}
-
-// envWithPipeline returns a copy of env with PYLON_PIPELINE_ID added.
-// If pipelineID is empty, returns the original env unchanged.
-func envWithPipeline(env map[string]string, pipelineID string) map[string]string {
-	if pipelineID == "" {
-		return env
-	}
-	merged := make(map[string]string, len(env)+1)
-	for k, v := range env {
-		merged[k] = v
-	}
-	merged["PYLON_PIPELINE_ID"] = pipelineID
-	return merged
+	return root, cfg, s, nil
 }
 
 // selectPermissionMode presents an interactive selector for Claude Code permission mode.
@@ -399,16 +208,65 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		}
 	}
 
-	// Generate slash commands
+	// Generate slash commands from Go code
 	commands := buildSlashCommands(root)
 	for name, content := range commands {
 		cmdPath := filepath.Join(commandsDir, filepath.FromSlash(name)+".md")
-		// Ensure parent directory exists for namespaced commands (e.g., pl/index)
 		if err := os.MkdirAll(filepath.Dir(cmdPath), 0755); err != nil {
 			return fmt.Errorf("커맨드 디렉토리 생성 실패: %w", err)
 		}
 		if err := os.WriteFile(cmdPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("커맨드 %s 생성 실패: %w", name, err)
+		}
+	}
+
+	// Pipeline slash commands → .claude/commands/pl/
+	// Priority: .pylon/commands/ (user customization) > embedded defaults
+	plDir := filepath.Join(commandsDir, "pl")
+	if err := os.MkdirAll(plDir, 0755); err != nil {
+		return fmt.Errorf("pl/ 디렉토리 생성 실패: %w", err)
+	}
+
+	pylonCmdsDir := filepath.Join(root, ".pylon", "commands")
+	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
+		// Use workspace .pylon/commands/ (user may have customized)
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			content, err := os.ReadFile(filepath.Join(pylonCmdsDir, entry.Name()))
+			if err != nil {
+				continue
+			}
+			destName := strings.TrimPrefix(entry.Name(), "pl-")
+			if err := os.WriteFile(filepath.Join(plDir, destName), content, 0644); err != nil {
+				return fmt.Errorf("커맨드 복사 실패 (%s): %w", entry.Name(), err)
+			}
+		}
+	} else {
+		// Fallback: use embedded default commands (existing workspaces without .pylon/commands/)
+		embedded, _ := embeddedCommands.ReadDir("commands")
+		for _, entry := range embedded {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			content, err := embeddedCommands.ReadFile("commands/" + entry.Name())
+			if err != nil {
+				continue
+			}
+			destName := strings.TrimPrefix(entry.Name(), "pl-")
+			if err := os.WriteFile(filepath.Join(plDir, destName), content, 0644); err != nil {
+				return fmt.Errorf("내장 커맨드 생성 실패 (%s): %w", entry.Name(), err)
+			}
+		}
+		// Also bootstrap .pylon/commands/ for future customization
+		os.MkdirAll(pylonCmdsDir, 0755)
+		for _, entry := range embedded {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			content, _ := embeddedCommands.ReadFile("commands/" + entry.Name())
+			_ = os.WriteFile(filepath.Join(pylonCmdsDir, entry.Name()), content, 0644)
 		}
 	}
 
@@ -466,12 +324,10 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 
 	// State management
 	b.WriteString("## 상태 관리\n\n")
-	b.WriteString("파이프라인 상태 전이는 `pylon stage` CLI를 사용합니다:\n")
-	b.WriteString("```bash\n")
-	b.WriteString("pylon stage transition --pipeline <id> --to <stage>  # 상태 전이\n")
-	b.WriteString("pylon stage status --pipeline <id>                   # 상태 조회\n")
-	b.WriteString("pylon stage list                                     # 파이프라인 목록\n")
-	b.WriteString("```\n\n")
+	b.WriteString("파이프라인 상태는 파일 기반으로 관리됩니다:\n")
+	b.WriteString("- `.pylon/runtime/{pipeline-id}/` 디렉토리에 산출물이 파일로 저장됩니다\n")
+	b.WriteString("- 산출물 존재 = 해당 스테이지 완료\n")
+	b.WriteString("- `pylon status` CLI로 상태를 조회합니다\n\n")
 
 	// Memory access
 	b.WriteString("## 프로젝트 메모리\n\n")
@@ -484,18 +340,22 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 
 	// Available skills
 	b.WriteString("## 사용 가능한 스킬 (슬래시 커맨드)\n\n")
-	b.WriteString("- `/pl:index` — 프로젝트 코드베이스 인덱싱 (도메인 위키 갱신)\n")
-	b.WriteString("- `/pl:status` — 파이프라인 및 에이전트 상태 조회\n")
+	b.WriteString("- `/pl:pipeline` — 전체 파이프라인 실행 (요구사항 → PR)\n")
+	b.WriteString("- `/pl:architect` — 아키텍처 분석 단독 실행\n")
+	b.WriteString("- `/pl:breakdown` — PM 태스크 분해\n")
+	b.WriteString("- `/pl:execute` — 에이전트 병렬 실행\n")
 	b.WriteString("- `/pl:verify` — 교차 검증 실행 (빌드/테스트/린트)\n")
-	b.WriteString("- `/pl:add-project` — 새 프로젝트 추가 (git submodule)\n")
-	b.WriteString("- `/pl:cancel` — 진행 중인 파이프라인 취소\n")
-	b.WriteString("- `/pl:review` — PR 코드 리뷰 요청\n\n")
+	b.WriteString("- `/pl:pr` — PR 생성\n")
+	b.WriteString("- `/pl:status` — 파이프라인 상태 조회\n")
+	b.WriteString("- `/pl:cancel` — 파이프라인 취소\n")
+	b.WriteString("- `/pl:index` — 프로젝트 코드베이스 인덱싱\n\n")
 
 	// Sub-agent orchestration
 	b.WriteString("## 서브 에이전트 오케스트레이션\n\n")
-	b.WriteString("Claude Code의 Agent 도구를 사용하여 서브 에이전트를 실행합니다.\n")
-	b.WriteString("각 에이전트 정의는 `.pylon/agents/`에 있습니다.\n\n")
-	b.WriteString("서브 에이전트 실행 결과는 `.pylon/runtime/results/`에 JSON으로 저장합니다.\n\n")
+	b.WriteString("Claude Code의 Agent 도구를 사용하여 서브 에이전트를 병렬 실행합니다.\n")
+	b.WriteString("각 에이전트 정의는 `.pylon/agents/`에 있습니다.\n")
+	b.WriteString("독립 태스크는 단일 메시지에서 여러 Agent 호출로 병렬 실행합니다.\n")
+	b.WriteString("`isolation: \"worktree\"` 옵션으로 git worktree 격리를 사용합니다.\n\n")
 
 	// Domain knowledge
 	b.WriteString("## 도메인 지식\n\n")
@@ -522,8 +382,8 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 	b.WriteString("- 사용자와 한국어로 대화합니다\n")
 	b.WriteString("- 요구사항이 모호하면 역질문으로 구체화합니다\n")
 	b.WriteString("- 코드를 직접 작성하지 말고, 서브 에이전트에게 위임합니다\n")
-	b.WriteString("- 모든 파이프라인 상태 전이는 `pylon stage transition`을 사용합니다\n")
-	b.WriteString("- 교차 검증은 `/pl:verify` 또는 `pylon verify`를 사용합니다\n")
+	b.WriteString("- 파이프라인 상태는 `.pylon/runtime/` 산출물로 자동 추적됩니다\n")
+	b.WriteString("- 교차 검증은 `/pl:verify` 또는 `.pylon/scripts/bash/run-verification.sh`를 사용합니다\n")
 	b.WriteString("- 작업 완료 후 도메인 지식 갱신을 잊지 마세요\n")
 	b.WriteString("- 추측이 아닌 코드에서 확인된 사실만 기록합니다\n")
 
@@ -556,102 +416,6 @@ func buildSlashCommands(root string) map[string]string {
 - 기존 내용이 있으면 보존하되, 변경된 부분만 업데이트
 - 추측이 아닌 코드에서 확인된 사실만 기록
 - 위키 문서는 마크다운 형식으로 작성
-`,
-		"pl/status": `# /pl:status — 상태 조회
-
-현재 파이프라인과 에이전트의 상태를 조회합니다.
-
-## 절차
-
-1. 파이프라인 상태를 확인합니다:
-   ` + "```" + `bash
-   pylon stage list
-   ` + "```" + `
-
-2. 활성 파이프라인이 있으면 상세 상태를 확인합니다:
-   ` + "```" + `bash
-   pylon stage status --pipeline <id>
-   ` + "```" + `
-
-3. 결과를 사용자에게 요약하여 보고합니다
-`,
-		"pl/verify": `# /pl:verify — 교차 검증 실행
-
-프로젝트의 빌드/테스트/린트를 실행하여 코드 품질을 검증합니다.
-
-## 절차
-
-1. 대상 프로젝트를 확인합니다
-2. 프로젝트의 ` + "`" + `.pylon/verify.yml` + "`" + `을 읽어 검증 명령을 파악합니다
-3. 각 검증 명령을 순서대로 실행합니다:
-   ` + "```" + `bash
-   # verify.yml에 정의된 명령 실행
-   cd <project-dir>
-   <build-command>
-   <test-command>
-   <lint-command>
-   ` + "```" + `
-4. 실패한 항목이 있으면 원인을 분석하고 보고합니다
-5. 모든 검증 통과 시 파이프라인 상태를 갱신합니다:
-   ` + "```" + `bash
-   pylon stage transition --pipeline <id> --to pr_creation
-   ` + "```" + `
-`,
-		"pl/add-project": `# /pl:add-project — 프로젝트 추가
-
-새 프로젝트를 워크스페이스에 git submodule로 추가합니다.
-
-## 절차
-
-1. 사용자에게 git URL을 확인합니다
-2. 프로젝트 이름을 결정합니다 (URL에서 추론 또는 사용자 지정)
-3. git submodule을 추가합니다:
-   ` + "```" + `bash
-   git submodule add <git-url> <project-name>
-   ` + "```" + `
-4. 프로젝트 ` + "`" + `.pylon/` + "`" + ` 구조를 생성합니다:
-   - ` + "`" + `.pylon/context.md` + "`" + ` — 기술 스택 분석 결과
-   - ` + "`" + `.pylon/verify.yml` + "`" + ` — 검증 명령
-   - ` + "`" + `.pylon/agents/` + "`" + ` — 프로젝트별 에이전트
-5. 코드베이스를 분석하여 기본 컨텍스트를 생성합니다
-6. 사용자에게 결과를 보고합니다
-`,
-		"pl/cancel": `# /pl:cancel — 파이프라인 취소
-
-진행 중인 파이프라인을 취소합니다.
-
-## 절차
-
-1. 활성 파이프라인 목록을 확인합니다:
-   ` + "```" + `bash
-   pylon stage list
-   ` + "```" + `
-2. 취소할 파이프라인을 사용자에게 확인합니다
-3. 파이프라인 상태를 failed로 전이합니다:
-   ` + "```" + `bash
-   pylon stage transition --pipeline <id> --to failed
-   ` + "```" + `
-4. 사용자에게 취소 완료를 알립니다
-`,
-		"pl/review": `# /pl:review — PR 코드 리뷰
-
-생성된 PR의 코드를 리뷰합니다.
-
-## 절차
-
-1. 현재 브랜치의 변경사항을 확인합니다:
-   ` + "```" + `bash
-   git diff main...HEAD
-   ` + "```" + `
-2. 변경된 파일들을 분석합니다:
-   - 코드 품질
-   - 보안 취약점
-   - 테스트 커버리지
-   - 컨벤션 준수 여부 (` + "`" + `.pylon/domain/conventions.md` + "`" + ` 참조)
-3. 리뷰 결과를 구조화하여 보고합니다:
-   - 승인 가능 여부
-   - 수정 필요 사항 (있으면)
-   - 개선 제안 (선택)
 `,
 	}
 	return commands

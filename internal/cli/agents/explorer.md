@@ -1,13 +1,6 @@
 ---
 name: explorer
 role: Codebase Explorer
-backend: claude-code
-maxTurns: 10
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Codebase Explorer

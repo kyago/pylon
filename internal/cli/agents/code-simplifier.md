@@ -1,10 +1,6 @@
 ---
 name: code-simplifier
 role: Code Simplifier
-backend: claude-code
-maxTurns: 20
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # Code Simplifier

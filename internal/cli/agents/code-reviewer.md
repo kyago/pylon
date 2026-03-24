@@ -1,13 +1,6 @@
 ---
 name: code-reviewer
 role: Code Reviewer
-backend: claude-code
-maxTurns: 10
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Code Reviewer

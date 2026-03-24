@@ -80,8 +80,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 		filepath.Join(pylonDir, "domain"),
 		filepath.Join(pylonDir, "agents"),
 		filepath.Join(pylonDir, "skills"),
-		filepath.Join(pylonDir, "runtime", "inbox"),
-		filepath.Join(pylonDir, "runtime", "outbox"),
+		filepath.Join(pylonDir, "scripts", "bash"),
+		filepath.Join(pylonDir, "commands"),
 		filepath.Join(pylonDir, "runtime", "memory"),
 		filepath.Join(pylonDir, "runtime", "sessions"),
 		filepath.Join(pylonDir, "conversations"),
@@ -214,6 +214,8 @@ git:
 	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
 	fmt.Println("  .pylon/agents/             - agent definitions (23 agents)")
 	fmt.Println("  .pylon/skills/             - agent skills")
+	fmt.Println("  .pylon/scripts/bash/       - pipeline shell scripts")
+	fmt.Println("  .pylon/commands/           - pipeline slash commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
 	fmt.Println("  .pylon/conversations/      - conversation history")
 	fmt.Println("  .pylon/tasks/              - confirmed task specs")
@@ -222,7 +224,7 @@ git:
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
 	fmt.Println("  2. Add projects: pylon add-project <name>")
-	fmt.Println("  3. Start working: pylon request \"<requirement>\"")
+	fmt.Println("  3. Start working: /pl:pipeline in Claude Code TUI")
 
 	return nil
 }

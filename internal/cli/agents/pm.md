@@ -1,9 +1,6 @@
 ---
 name: pm
 role: Project Manager
-backend: claude-code
-maxTurns: 50
-permissionMode: acceptEdits
 ---
 
 # Project Manager

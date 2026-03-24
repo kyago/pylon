@@ -1,13 +1,6 @@
 ---
 name: security-reviewer
 role: Security Reviewer
-backend: claude-code
-maxTurns: 10
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Security Reviewer

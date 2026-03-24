@@ -1,13 +1,6 @@
 ---
 name: doc-specialist
 role: Documentation Specialist
-backend: claude-code
-maxTurns: 20
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Documentation Specialist

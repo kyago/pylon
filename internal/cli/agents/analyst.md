@@ -1,13 +1,6 @@
 ---
 name: analyst
 role: Requirements Analyst
-backend: claude-code
-maxTurns: 30
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Requirements Analyst

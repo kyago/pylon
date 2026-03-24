@@ -1,9 +1,6 @@
 ---
 name: git-master
 role: Git Master
-backend: claude-code
-maxTurns: 15
-permissionMode: acceptEdits
 ---
 
 # Git Master

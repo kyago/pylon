@@ -16,7 +16,7 @@ type ClaudeMDBuilder struct {
 // BuildInput defines the 5-level priority content for CLAUDE.md.
 // Priority order: 1 (highest) to 5 (lowest).
 type BuildInput struct {
-	CommunicationRules string   // Priority 1: inbox/outbox protocol (~30 lines)
+	CommunicationRules string   // Priority 1: agent execution rules (~30 lines)
 	TaskContext        string   // Priority 2: acceptance criteria, constraints (~50 lines)
 	CompactionRules    string   // Priority 3: context management rules (~20 lines)
 	ProjectMemory      string   // Priority 4: proactive memory summary (~80 lines)
@@ -93,55 +93,39 @@ func buildDomainSection(paths []string) string {
 	return strings.Join(lines, "\n")
 }
 
-// DefaultCommunicationRules returns the standard inbox/outbox protocol rules.
-// Used for PO/index agents where concrete paths are not needed.
-// Spec Reference: Section 8 "CLAUDE.md Injection" communication rules
+// DefaultCommunicationRules returns the standard v2 agent output rules.
 func DefaultCommunicationRules() string {
 	return CommunicationRulesWithPaths("", "", "")
 }
 
-// CommunicationRulesWithPaths returns inbox/outbox protocol rules with concrete absolute paths.
-// When outboxPath is non-empty, the agent receives an exact file path to write results to.
-func CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir string) string {
-	outboxInstruction := `2. 작업 완료 후 결과를 ` + "`" + `.pylon/runtime/outbox/{에이전트명}/{task-id}.tmp.json` + "`" + `에 JSON으로 작성합니다
-3. 작성 완료 후 mv 명령을 실행합니다:
-   ` + "```" + `bash
-   mv .pylon/runtime/outbox/{에이전트명}/{task-id}.tmp.json \
-      .pylon/runtime/outbox/{에이전트명}/{task-id}.result.json
-   ` + "```"
-
-	if outboxPath != "" {
-		tmpPath := strings.TrimSuffix(outboxPath, ".result.json") + ".tmp.json"
-		outboxInstruction = fmt.Sprintf(`2. 작업 완료 후 결과를 아래 경로에 JSON으로 작성합니다:
-   - 임시 파일: `+"`%s`"+`
-3. 작성 완료 후 mv 명령을 실행합니다:
-   `+"```"+`bash
-   mv '%s' '%s'
-   `+"```", tmpPath, tmpPath, outboxPath)
+// CommunicationRulesWithPaths returns agent output rules with optional pipeline directory path.
+// In v2, agents write results as artifacts in the pipeline runtime directory.
+func CommunicationRulesWithPaths(_, outputPath, outputDir string) string {
+	outputInstruction := `2. 작업 완료 후 결과를 파이프라인 런타임 디렉토리에 산출물로 저장합니다`
+	if outputPath != "" {
+		outputInstruction = fmt.Sprintf("2. 작업 완료 후 결과를 `%s`에 저장합니다", outputPath)
 	}
 
-	// Ensure outbox directory exists instruction
 	mkdirInstruction := ""
-	if outboxDir != "" {
-		mkdirInstruction = fmt.Sprintf("\n   (디렉토리가 없으면 먼저 생성: `mkdir -p %s`)", outboxDir)
+	if outputDir != "" {
+		mkdirInstruction = fmt.Sprintf("\n   (디렉토리가 없으면 먼저 생성: `mkdir -p %s`)", outputDir)
 	}
 
-	return `### 파일 기반 메시지 프로토콜
+	return `### 에이전트 실행 규칙
 - 태스크를 완료하면 반드시 다음 절차를 따르세요:
 
-1. inbox에서 태스크 파일을 읽어 작업을 수행합니다
-` + outboxInstruction + mkdirInstruction + `
-4. 절대로 SQLite(pylon.db)에 직접 접근하지 마세요
+1. 할당된 태스크를 수행합니다
+` + outputInstruction + mkdirInstruction + `
+3. 절대로 SQLite(pylon.db)에 직접 접근하지 마세요
 
-### 결과 파일 JSON 형식
-다음 형식으로 작성하세요:
+### 결과 JSON 형식
 ` + "```json" + `
 {
   "task_id": "수행한 태스크 ID",
   "status": "completed",
   "summary": "작업 결과 요약",
   "files_changed": ["변경한 파일 목록"],
-  "commits": ["생성한 커밋 해시 (git log --oneline -1 으로 확인)"],
+  "commits": ["생성한 커밋 해시"],
   "learnings": ["작업 중 발견한 교훈/패턴"]
 }
 ` + "```" + `
@@ -152,9 +136,9 @@ func CommunicationRulesWithPaths(inboxPath, outboxPath, outboxDir string) string
 // DefaultCompactionRules returns the standard context management rules.
 func DefaultCompactionRules() string {
 	return `### 컨텍스트 관리
-- inbox 메시지의 context 필드를 반드시 참조하세요:
+- 태스크의 context 필드를 반드시 참조하세요:
   - summary: 이전 단계 요약
   - decisions: 내려진 아키텍처 결정
   - references: 참고할 문서 경로
-- 컨텍스트가 부족하면 query 메시지를 작성하세요`
+- 컨텍스트가 부족하면 필요한 파일을 직접 읽어 참고하세요`
 }

@@ -37,8 +37,6 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		{"git.worktree.auto_cleanup", cfg.Git.Worktree.AutoCleanup, true},
 		{"git.pr.draft", cfg.Git.PR.Draft, false},
 		{"wiki.auto_update", cfg.Wiki.AutoUpdate, true},
-		{"dashboard.host", cfg.Dashboard.Host, "localhost"},
-		{"dashboard.port", cfg.Dashboard.Port, 7777},
 		{"memory.compaction_threshold", cfg.Memory.CompactionThreshold, 0.7},
 		{"memory.proactive_injection", cfg.Memory.ProactiveInjection, true},
 		{"memory.proactive_max_tokens", cfg.Memory.ProactiveMaxTokens, 2000},
@@ -117,8 +115,6 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 		{"wiki.auto_update (default)", cfg.Wiki.AutoUpdate, true},
 		{"memory.proactive_injection (default)", cfg.Memory.ProactiveInjection, true},
 		{"memory.session_archive (default)", cfg.Memory.SessionArchive, true},
-		{"dashboard.host (default)", cfg.Dashboard.Host, "localhost"},
-		{"dashboard.port (default)", cfg.Dashboard.Port, 7777},
 		{"memory.compaction_threshold (default)", cfg.Memory.CompactionThreshold, 0.7},
 		{"memory.proactive_max_tokens (default)", cfg.Memory.ProactiveMaxTokens, 2000},
 		{"conversation.retention_days (default)", cfg.Conversation.RetentionDays, 90},
@@ -224,9 +220,6 @@ func TestParseConfig_WorkflowDefaults(t *testing.T) {
 	if cfg.Workflow.DefaultWorkflow != "feature" {
 		t.Errorf("expected default workflow 'feature', got %q", cfg.Workflow.DefaultWorkflow)
 	}
-	if cfg.WIPLimits.MaxPipelines != 1 {
-		t.Errorf("expected default max_pipelines 1, got %d", cfg.WIPLimits.MaxPipelines)
-	}
 }
 
 func TestParseConfig_WorkflowCustomValues(t *testing.T) {
@@ -235,11 +228,6 @@ version: "0.1"
 workflow:
   default_workflow: bugfix
   template_dir: .pylon/workflows
-wip_limits:
-  max_pipelines: 3
-  per_stage:
-    agent_executing: 2
-    verification: 1
 `)
 	cfg, err := ParseConfig(data)
 	if err != nil {
@@ -251,15 +239,6 @@ wip_limits:
 	}
 	if cfg.Workflow.TemplateDir != ".pylon/workflows" {
 		t.Errorf("expected template_dir '.pylon/workflows', got %q", cfg.Workflow.TemplateDir)
-	}
-	if cfg.WIPLimits.MaxPipelines != 3 {
-		t.Errorf("expected max_pipelines 3, got %d", cfg.WIPLimits.MaxPipelines)
-	}
-	if cfg.WIPLimits.PerStage["agent_executing"] != 2 {
-		t.Errorf("expected per_stage agent_executing=2, got %d", cfg.WIPLimits.PerStage["agent_executing"])
-	}
-	if cfg.WIPLimits.PerStage["verification"] != 1 {
-		t.Errorf("expected per_stage verification=1, got %d", cfg.WIPLimits.PerStage["verification"])
 	}
 }
 
@@ -276,9 +255,6 @@ runtime:
 git:
   branch_prefix: feature
   default_base: develop
-dashboard:
-  host: 0.0.0.0
-  port: 8080
 memory:
   compaction_threshold: 0.8
   proactive_max_tokens: 4000
@@ -305,8 +281,6 @@ conversation:
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "bypassPermissions"},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "feature"},
 		{"git.default_base", cfg.Git.DefaultBase, "develop"},
-		{"dashboard.host", cfg.Dashboard.Host, "0.0.0.0"},
-		{"dashboard.port", cfg.Dashboard.Port, 8080},
 		{"memory.compaction_threshold", cfg.Memory.CompactionThreshold, 0.8},
 		{"memory.proactive_max_tokens", cfg.Memory.ProactiveMaxTokens, 4000},
 		{"conversation.retention_days", cfg.Conversation.RetentionDays, 30},

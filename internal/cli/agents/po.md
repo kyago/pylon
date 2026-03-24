@@ -1,9 +1,6 @@
 ---
 name: po
 role: Product Owner
-backend: claude-code
-maxTurns: 50
-permissionMode: default
 ---
 
 # Product Owner

@@ -12,7 +12,6 @@ import (
 var (
 	ErrConfidenceOutOfRange = errors.New("confidence must be between 0.0 and 1.0")
 	ErrInvalidPipelineStage = errors.New("invalid pipeline stage")
-	ErrInvalidMessageStatus = errors.New("invalid message queue status")
 )
 
 // validPipelineStages is built from domain.AllStages() to guarantee
@@ -24,14 +23,6 @@ var validPipelineStages = func() map[string]bool {
 	}
 	return m
 }()
-
-var validMessageStatuses = map[string]bool{
-	"queued":    true,
-	"delivered": true,
-	"acked":     true,
-	"expired":   true,
-	"failed":    true,
-}
 
 // validateConfidence checks that a confidence value is within [0.0, 1.0].
 func validateConfidence(confidence float64) error {
@@ -48,14 +39,6 @@ func validateConfidence(confidence float64) error {
 func validatePipelineStage(stage string) error {
 	if !validPipelineStages[stage] {
 		return fmt.Errorf("%w: %q", ErrInvalidPipelineStage, stage)
-	}
-	return nil
-}
-
-// validateMessageStatus checks that a status is one of the valid message statuses.
-func validateMessageStatus(status string) error {
-	if !validMessageStatuses[status] {
-		return fmt.Errorf("%w: %q", ErrInvalidMessageStatus, status)
 	}
 	return nil
 }

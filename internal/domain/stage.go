@@ -48,3 +48,45 @@ func AllStages() []Stage {
 		StageFailed,
 	}
 }
+
+// ArtifactToStage maps a pipeline artifact filename to its corresponding stage.
+// In v2, artifact existence in .pylon/runtime/{pipeline-id}/ indicates stage completion.
+var ArtifactToStage = map[string]Stage{
+	"requirement.md":          StageInit,
+	"requirement-analysis.md": StagePOConversation,
+	"architecture.md":         StageArchitectAnalysis,
+	"tasks.json":              StagePMTaskBreakdown,
+	"execution-log.json":      StageAgentExecuting,
+	"verification.json":       StageVerification,
+	"pr.json":                 StagePRCreation,
+}
+
+// StageFromArtifacts determines the current stage based on which artifacts exist.
+// Returns the highest completed stage.
+func StageFromArtifacts(existingFiles []string) Stage {
+	fileSet := make(map[string]bool, len(existingFiles))
+	for _, f := range existingFiles {
+		fileSet[f] = true
+	}
+
+	// Check in reverse pipeline order
+	orderedArtifacts := []struct {
+		file  string
+		stage Stage
+	}{
+		{"pr.json", StagePRCreation},
+		{"verification.json", StageVerification},
+		{"execution-log.json", StageAgentExecuting},
+		{"tasks.json", StagePMTaskBreakdown},
+		{"architecture.md", StageArchitectAnalysis},
+		{"requirement-analysis.md", StagePOConversation},
+		{"requirement.md", StageInit},
+	}
+
+	for _, a := range orderedArtifacts {
+		if fileSet[a.file] {
+			return a.stage
+		}
+	}
+	return StageInit
+}
