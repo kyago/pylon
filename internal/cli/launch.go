@@ -290,6 +290,13 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		return fmt.Errorf("settings.json hooks 생성 실패: %w", err)
 	}
 
+	// Generate .mcp.json for pylon-ontology MCP server if enabled
+	if cfg.Ontology.Enabled {
+		if err := generateOntologyMCPConfig(root, cfg); err != nil {
+			return fmt.Errorf(".mcp.json 온톨로지 설정 실패: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -385,6 +392,28 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 		}
 	}
 	b.WriteString("\n")
+
+	// Ontology integration (pylon-ontology MCP server)
+	if cfg.Ontology.Enabled {
+		b.WriteString("## 온톨로지 자동화 (pylon-ontology)\n\n")
+		b.WriteString("이 워크스페이스는 pylon-ontology MCP 서버가 연동되어 있습니다.\n")
+		b.WriteString("코드에서 도메인 용어, 아키텍처 결정, 코딩 컨벤션을 자동으로 추출·축적합니다.\n\n")
+		b.WriteString("### 사용 가능한 온톨로지 도구\n\n")
+		b.WriteString("- `extract_ontology` — 파일에서 구조적 심볼을 AST 파싱으로 추출\n")
+		b.WriteString("- `add_term` / `add_decision` / `add_convention` — 온톨로지 항목 등록\n")
+		b.WriteString("- `query_ontology` — FTS5+BM25 키워드 검색\n")
+		b.WriteString("- `verify_ontology` — stale/conflict 감지 (liveness check)\n")
+		b.WriteString("- `export_ontology` — YAML/JSON 내보내기\n")
+		b.WriteString("- `get_context` — 현재 온톨로지 요약을 마크다운으로 조회\n\n")
+		b.WriteString("### 워크플로우 통합\n\n")
+		if cfg.Ontology.AutoExtract {
+			b.WriteString("- 파일 편집/생성 시 `extract_ontology`가 자동 호출됩니다 (PostToolUse 훅)\n")
+		}
+		if cfg.Ontology.AutoVerify {
+			b.WriteString("- 파이프라인 완료 시 `verify_ontology`로 부패한 항목을 자동 감지합니다\n")
+		}
+		b.WriteString("- `.pylon/domain/` 파일은 레거시이며, 온톨로지 DB(`.pylon/ontology.db`)가 정식 저장소입니다\n\n")
+	}
 
 	// Rules
 	b.WriteString("## 행동 규칙\n\n")
@@ -612,6 +641,41 @@ func isPylonHookGroup(entryMap map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// generateOntologyMCPConfig creates or updates .mcp.json with pylon-ontology server config.
+// Existing entries are preserved; only the pylon-ontology entry is added/updated.
+func generateOntologyMCPConfig(root string, cfg *config.Config) error {
+	mcpPath := filepath.Join(root, ".mcp.json")
+
+	existing := make(map[string]any)
+	if data, err := os.ReadFile(mcpPath); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			existing = make(map[string]any)
+		}
+	}
+
+	// Ensure mcpServers map exists
+	servers, ok := existing["mcpServers"].(map[string]any)
+	if !ok {
+		servers = make(map[string]any)
+	}
+
+	// Add pylon-ontology entry
+	servers[cfg.Ontology.PackageName] = map[string]any{
+		"command": "npx",
+		"args":    []string{cfg.Ontology.PackageName},
+		"env": map[string]string{
+			"PYLON_ROOT": root,
+		},
+	}
+	existing["mcpServers"] = servers
+
+	data, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return fmt.Errorf(".mcp.json 직렬화 실패: %w", err)
+	}
+	return os.WriteFile(mcpPath, data, 0644)
 }
 
 // mergeHooks merges pylon hook entries into existing settings, preserving

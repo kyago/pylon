@@ -71,6 +71,20 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		t.Errorf("expected CLAUDE_CODE_EFFORT_LEVEL=high, got %v", cfg.Runtime.Env)
 	}
 
+	// Check ontology
+	if !cfg.Ontology.Enabled {
+		t.Error("expected ontology.enabled=true")
+	}
+	if cfg.Ontology.PackageName != "pylon-ontology" {
+		t.Errorf("expected ontology.package_name=pylon-ontology, got %q", cfg.Ontology.PackageName)
+	}
+	if !cfg.Ontology.AutoExtract {
+		t.Error("expected ontology.auto_extract=true")
+	}
+	if !cfg.Ontology.AutoVerify {
+		t.Error("expected ontology.auto_verify=true")
+	}
+
 	// Check wiki update_on
 	if len(cfg.Wiki.UpdateOn) != 2 {
 		t.Errorf("expected 2 update_on triggers, got %d", len(cfg.Wiki.UpdateOn))
@@ -207,6 +221,28 @@ func TestLoadConfig_FileNotFound(t *testing.T) {
 	_, err := LoadConfig("/nonexistent/path/config.yml")
 	if err == nil {
 		t.Fatal("expected error for nonexistent file, got nil")
+	}
+}
+
+func TestParseConfig_OntologyDefaults(t *testing.T) {
+	data := []byte(`version: "0.1"`)
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+
+	// Ontology defaults: enabled=false, auto_extract=true, auto_verify=true, package_name=pylon-ontology
+	if cfg.Ontology.Enabled {
+		t.Error("expected ontology.enabled=false by default")
+	}
+	if cfg.Ontology.PackageName != "pylon-ontology" {
+		t.Errorf("expected default package_name=pylon-ontology, got %q", cfg.Ontology.PackageName)
+	}
+	if !cfg.Ontology.AutoExtract {
+		t.Error("expected ontology.auto_extract=true by default")
+	}
+	if !cfg.Ontology.AutoVerify {
+		t.Error("expected ontology.auto_verify=true by default")
 	}
 }
 
