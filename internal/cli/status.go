@@ -38,70 +38,67 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("Pylon Status")
 	fmt.Println("─────────────────────────")
 
+	foundAny := false
+
 	// v2: Show file-based pipeline status
 	runtimeDir := filepath.Join(root, ".pylon", "runtime")
-	entries, dirErr := os.ReadDir(runtimeDir)
-	if dirErr == nil {
-		var filePipelines []string
+	if entries, dirErr := os.ReadDir(runtimeDir); dirErr == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
 			}
 			pipelineDir := filepath.Join(runtimeDir, entry.Name())
-			// Check if it has a requirement.md (valid pipeline)
-			if _, err := os.Stat(filepath.Join(pipelineDir, "requirement.md")); err != nil {
+			if _, statErr := os.Stat(filepath.Join(pipelineDir, "requirement.md")); statErr != nil {
 				continue
 			}
-			filePipelines = append(filePipelines, entry.Name())
-		}
 
-		if len(filePipelines) > 0 {
-			fmt.Println("\n## 파일 기반 파이프라인")
-			for _, id := range filePipelines {
-				pipelineDir := filepath.Join(runtimeDir, id)
-				// Detect stage from artifacts
-				var existingFiles []string
-				artifacts, _ := os.ReadDir(pipelineDir)
-				for _, a := range artifacts {
-					existingFiles = append(existingFiles, a.Name())
-				}
-				stage := domain.StageFromArtifacts(existingFiles)
+			if !foundAny {
+				fmt.Println("\n## 파일 기반 파이프라인")
+				foundAny = true
+			}
 
-				// Read status.json if exists
-				status := "running"
-				if data, err := os.ReadFile(filepath.Join(pipelineDir, "status.json")); err == nil {
-					var sj map[string]string
-					if json.Unmarshal(data, &sj) == nil {
-						if s, ok := sj["status"]; ok {
-							status = s
-						}
+			// Detect stage from artifacts
+			var existingFiles []string
+			artifacts, _ := os.ReadDir(pipelineDir)
+			for _, a := range artifacts {
+				existingFiles = append(existingFiles, a.Name())
+			}
+			stage := domain.StageFromArtifacts(existingFiles)
+
+			// Read status.json if exists
+			status := "running"
+			if data, readErr := os.ReadFile(filepath.Join(pipelineDir, "status.json")); readErr == nil {
+				var sj map[string]string
+				if json.Unmarshal(data, &sj) == nil {
+					if s, ok := sj["status"]; ok {
+						status = s
 					}
 				}
+			}
 
-				fmt.Printf("\nPipeline: %s\n", id)
-				fmt.Printf("  Stage:  %s\n", stage)
-				fmt.Printf("  Status: %s\n", status)
+			fmt.Printf("\nPipeline: %s\n", entry.Name())
+			fmt.Printf("  Stage:  %s\n", stage)
+			fmt.Printf("  Status: %s\n", status)
 
-				// List artifacts
-				sort.Strings(existingFiles)
-				fmt.Println("  Artifacts:")
-				for _, f := range existingFiles {
-					fmt.Printf("    ✓ %s\n", f)
-				}
+			sort.Strings(existingFiles)
+			fmt.Println("  Artifacts:")
+			for _, f := range existingFiles {
+				fmt.Printf("    ✓ %s\n", f)
 			}
 		}
 	}
 
 	// Legacy: Show SQLite pipeline status
 	dbPath := filepath.Join(root, ".pylon", "pylon.db")
-	s, err := store.NewStore(dbPath)
-	if err == nil {
+	s, storeErr := store.NewStore(dbPath)
+	if storeErr == nil {
 		defer s.Close()
 		s.Migrate()
 
 		actives, listErr := s.GetActivePipelines()
 		if listErr == nil && len(actives) > 0 {
 			fmt.Println("\n## SQLite 파이프라인 (레거시)")
+			foundAny = true
 			for _, rec := range actives {
 				pipeline, pErr := orchestrator.LoadPipeline([]byte(rec.StateJSON))
 				if pErr != nil {
@@ -115,9 +112,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// If no pipelines found at all
-	if dirErr != nil && err != nil {
-		fmt.Println("No active pipeline.")
+	if !foundAny {
+		fmt.Println("\nNo active pipeline.")
 	}
 
 	return nil
