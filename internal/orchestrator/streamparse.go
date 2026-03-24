@@ -92,6 +92,15 @@ func extractToolUseFiles(msg map[string]any, files map[string]bool) {
 	}
 }
 
+// truncateOutput truncates a string to maxLen runes, appending "..." if truncated.
+func truncateOutput(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
+}
+
 // extractBashCommits finds git commit commands from Bash tool_use events.
 func extractBashCommits(msg map[string]any, sr *StreamResult) {
 	message, ok := msg["message"].(map[string]any)

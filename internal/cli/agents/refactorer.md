@@ -1,10 +1,6 @@
 ---
 name: refactorer
 role: Refactoring Expert
-backend: claude-code
-maxTurns: 30
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # Refactoring Expert

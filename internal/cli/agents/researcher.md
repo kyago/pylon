@@ -1,13 +1,6 @@
 ---
 name: researcher
 role: Deep Researcher
-backend: claude-code
-maxTurns: 30
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Deep Researcher

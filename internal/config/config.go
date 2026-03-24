@@ -19,11 +19,9 @@ type Config struct {
 	Git          GitConfig                `yaml:"git"`
 	Projects     map[string]ProjectConfig `yaml:"projects"`
 	Wiki         WikiConfig               `yaml:"wiki"`
-	Dashboard    DashboardConfig          `yaml:"dashboard"`
 	Memory       MemoryConfig             `yaml:"memory"`
 	Conversation ConversationConfig       `yaml:"conversation"`
 	Workflow     WorkflowConfig           `yaml:"workflow"`
-	WIPLimits    WIPLimitsConfig          `yaml:"wip_limits"`
 }
 
 // RuntimeConfig defines agent runtime settings.
@@ -80,14 +78,6 @@ type WikiConfig struct {
 	UpdateOn   []string `yaml:"update_on"`
 }
 
-// DashboardConfig defines web dashboard settings.
-// Spec Reference: Section 16 "dashboard"
-type DashboardConfig struct {
-	Host          string `yaml:"host"`
-	Port          int    `yaml:"port"`
-	AutoDashboard bool   `yaml:"auto_dashboard"`
-}
-
 // MemoryConfig defines agent memory management settings.
 // Spec Reference: Section 16 "memory"
 type MemoryConfig struct {
@@ -108,12 +98,6 @@ type ConversationConfig struct {
 type WorkflowConfig struct {
 	DefaultWorkflow string `yaml:"default_workflow"`
 	TemplateDir     string `yaml:"template_dir"`
-}
-
-// WIPLimitsConfig defines work-in-progress limits for pipeline execution.
-type WIPLimitsConfig struct {
-	MaxPipelines int            `yaml:"max_pipelines"`
-	PerStage     map[string]int `yaml:"per_stage"`
 }
 
 // ParseTaskTimeout parses the TaskTimeout string into a time.Duration.
@@ -261,9 +245,6 @@ func ParseConfig(data []byte) (*Config, error) {
 				AutoCleanup: true,
 			},
 		},
-		Dashboard: DashboardConfig{
-			AutoDashboard: true,
-		},
 		Wiki: WikiConfig{
 			AutoUpdate: true,
 		},
@@ -332,14 +313,6 @@ func applyDefaults(cfg *Config) {
 		cfg.Wiki.UpdateOn = []string{"task_complete", "pr_merged"}
 	}
 
-	// Dashboard defaults
-	if cfg.Dashboard.Host == "" {
-		cfg.Dashboard.Host = "localhost"
-	}
-	if cfg.Dashboard.Port == 0 {
-		cfg.Dashboard.Port = 7777
-	}
-
 	// Memory defaults
 	if cfg.Memory.CompactionThreshold == 0 {
 		cfg.Memory.CompactionThreshold = 0.7
@@ -360,8 +333,4 @@ func applyDefaults(cfg *Config) {
 		cfg.Workflow.DefaultWorkflow = "feature"
 	}
 
-	// WIP limits defaults
-	if cfg.WIPLimits.MaxPipelines == 0 {
-		cfg.WIPLimits.MaxPipelines = 1
-	}
 }

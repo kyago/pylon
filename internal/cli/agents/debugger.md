@@ -1,10 +1,6 @@
 ---
 name: debugger
 role: Debugger
-backend: claude-code
-maxTurns: 30
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # Debugger

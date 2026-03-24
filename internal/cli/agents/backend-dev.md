@@ -1,10 +1,6 @@
 ---
 name: backend-dev
 role: Backend Developer
-backend: claude-code
-maxTurns: 30
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # Backend Developer

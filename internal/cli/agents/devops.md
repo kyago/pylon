@@ -1,10 +1,6 @@
 ---
 name: devops
 role: DevOps Architect
-backend: claude-code
-maxTurns: 30
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # DevOps Architect

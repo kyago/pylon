@@ -1,9 +1,6 @@
 ---
 name: architect
 role: Architect
-backend: claude-code
-maxTurns: 50
-permissionMode: acceptEdits
 ---
 
 # Architect

@@ -1,13 +1,6 @@
 ---
 name: tracer
 role: Causal Tracer
-backend: claude-code
-maxTurns: 20
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Causal Tracer

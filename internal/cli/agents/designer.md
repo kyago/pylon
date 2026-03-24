@@ -1,10 +1,6 @@
 ---
 name: designer
 role: UI/UX Designer
-backend: claude-code
-maxTurns: 30
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # UI/UX Designer

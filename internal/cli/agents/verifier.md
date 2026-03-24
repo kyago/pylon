@@ -1,13 +1,6 @@
 ---
 name: verifier
 role: Verifier
-backend: claude-code
-maxTurns: 15
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Verifier

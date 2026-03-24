@@ -1,10 +1,6 @@
 ---
 name: frontend-dev
 role: Frontend Developer
-backend: claude-code
-maxTurns: 30
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # Frontend Developer

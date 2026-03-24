@@ -1,9 +1,6 @@
 ---
 name: tech-writer
 role: Tech Writer
-backend: claude-code
-maxTurns: 50
-permissionMode: acceptEdits
 ---
 
 # Tech Writer

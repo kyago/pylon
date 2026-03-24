@@ -164,19 +164,12 @@ func (o *Orchestrator) Recover() ([]UnprocessedResult, error) {
 				for _, f := range files {
 					if strings.HasSuffix(f.Name(), ".result.json") {
 						taskID := strings.TrimSuffix(f.Name(), ".result.json")
-						processed, chkErr := o.Store.IsResultProcessed(agentName, taskID)
-						if chkErr != nil {
-							fmt.Printf("[recovery] failed to check result status for %s/%s: %v\n", agentName, f.Name(), chkErr)
-							continue
-						}
-						if !processed {
-							fmt.Printf("[recovery] unprocessed result: %s/%s\n", agentName, f.Name())
-							unprocessed = append(unprocessed, UnprocessedResult{
-								AgentName: agentName,
-								FilePath:  filepath.Join(agentDir, f.Name()),
-								TaskID:    taskID,
-							})
-						}
+						fmt.Printf("[recovery] unprocessed result: %s/%s\n", agentName, f.Name())
+						unprocessed = append(unprocessed, UnprocessedResult{
+							AgentName: agentName,
+							FilePath:  filepath.Join(agentDir, f.Name()),
+							TaskID:    taskID,
+						})
 					}
 				}
 			}

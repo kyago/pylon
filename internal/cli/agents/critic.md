@@ -1,13 +1,6 @@
 ---
 name: critic
 role: Plan Critic
-backend: claude-code
-maxTurns: 15
-permissionMode: default
-disallowedTools:
-  - Edit
-  - Write
-  - NotebookEdit
 ---
 
 # Plan Critic

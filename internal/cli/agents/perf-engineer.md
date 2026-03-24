@@ -1,10 +1,6 @@
 ---
 name: perf-engineer
 role: Performance Engineer
-backend: claude-code
-maxTurns: 20
-permissionMode: acceptEdits
-isolation: worktree
 ---
 
 # Performance Engineer
