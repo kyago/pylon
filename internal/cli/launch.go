@@ -1,7 +1,7 @@
 package cli
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,6 +17,9 @@ import (
 
 //go:embed hooks.json
 var defaultHooksJSON []byte
+
+//go:embed commands/*.md
+var embeddedCommands embed.FS
 
 // runLaunch is the main entry point when `pylon` is invoked without subcommands.
 // It generates .claude/ artifacts from .pylon/ (source of truth) and launches
@@ -217,31 +220,53 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		}
 	}
 
-	// Copy pipeline slash commands from .pylon/commands/*.md → .claude/commands/pl/
+	// Pipeline slash commands → .claude/commands/pl/
+	// Priority: .pylon/commands/ (user customization) > embedded defaults
+	plDir := filepath.Join(commandsDir, "pl")
+	if err := os.MkdirAll(plDir, 0755); err != nil {
+		return fmt.Errorf("pl/ 디렉토리 생성 실패: %w", err)
+	}
+
 	pylonCmdsDir := filepath.Join(root, ".pylon", "commands")
-	if entries, err := os.ReadDir(pylonCmdsDir); err == nil {
-		plDir := filepath.Join(commandsDir, "pl")
-		if err := os.MkdirAll(plDir, 0755); err != nil {
-			return fmt.Errorf("pl/ 디렉토리 생성 실패: %w", err)
-		}
+	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
+		// Use workspace .pylon/commands/ (user may have customized)
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 				continue
 			}
-			src := filepath.Join(pylonCmdsDir, entry.Name())
-			content, err := os.ReadFile(src)
+			content, err := os.ReadFile(filepath.Join(pylonCmdsDir, entry.Name()))
 			if err != nil {
 				continue
 			}
-			// Strip "pl-" prefix so pl-pipeline.md → pipeline.md → /pl:pipeline
-			destName := entry.Name()
-			if strings.HasPrefix(destName, "pl-") {
-				destName = strings.TrimPrefix(destName, "pl-")
-			}
-			dst := filepath.Join(plDir, destName)
-			if err := os.WriteFile(dst, content, 0644); err != nil {
+			destName := strings.TrimPrefix(entry.Name(), "pl-")
+			if err := os.WriteFile(filepath.Join(plDir, destName), content, 0644); err != nil {
 				return fmt.Errorf("커맨드 복사 실패 (%s): %w", entry.Name(), err)
 			}
+		}
+	} else {
+		// Fallback: use embedded default commands (existing workspaces without .pylon/commands/)
+		embedded, _ := embeddedCommands.ReadDir("commands")
+		for _, entry := range embedded {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			content, err := embeddedCommands.ReadFile("commands/" + entry.Name())
+			if err != nil {
+				continue
+			}
+			destName := strings.TrimPrefix(entry.Name(), "pl-")
+			if err := os.WriteFile(filepath.Join(plDir, destName), content, 0644); err != nil {
+				return fmt.Errorf("내장 커맨드 생성 실패 (%s): %w", entry.Name(), err)
+			}
+		}
+		// Also bootstrap .pylon/commands/ for future customization
+		os.MkdirAll(pylonCmdsDir, 0755)
+		for _, entry := range embedded {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			content, _ := embeddedCommands.ReadFile("commands/" + entry.Name())
+			_ = os.WriteFile(filepath.Join(pylonCmdsDir, entry.Name()), content, 0644)
 		}
 	}
 
