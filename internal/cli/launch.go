@@ -78,8 +78,19 @@ func runLaunch() error {
 	}
 
 	args := append([]string{"claude"}, buildClaudeArgs(cfg, permMode)...)
-	env := os.Environ()
+
+	// Build env with config overrides (deduplicated — config wins over existing)
+	envMap := make(map[string]string)
+	for _, e := range os.Environ() {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			envMap[k] = v
+		}
+	}
 	for k, v := range cfg.Runtime.Env {
+		envMap[k] = v
+	}
+	env := make([]string, 0, len(envMap))
+	for k, v := range envMap {
 		env = append(env, k+"="+v)
 	}
 
