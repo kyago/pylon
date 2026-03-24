@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
@@ -26,6 +27,8 @@ import (
 
 var flagContinue string
 var flagWorkflow string
+var flagHeadless bool
+var flagBackground bool
 
 func newRequestCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -46,12 +49,22 @@ Spec Reference: Section 7 "pylon request"`,
 
 	cmd.Flags().StringVar(&flagContinue, "continue", "", "continue a pipeline from the given ID (after PO conversation)")
 	cmd.Flags().StringVar(&flagWorkflow, "workflow", "", "workflow template name (auto: keyword-based detection, or: feature, bugfix, hotfix, docs, explore, review, refactor)")
+	cmd.Flags().BoolVar(&flagHeadless, "headless", false, "run all stages headless (PO runs as headless agent, task review auto-approved)")
+	cmd.Flags().BoolVar(&flagBackground, "background", false, "run pipeline in background and return pipeline ID immediately (requires --headless)")
 
 	return cmd
 }
 
 func runRequest(cmd *cobra.Command, args []string) error {
 	requirement := args[0]
+
+	// Validate flag combinations
+	if flagBackground && !flagHeadless {
+		return fmt.Errorf("--background requires --headless (interactive stages cannot run in background)")
+	}
+	if flagBackground && flagContinue != "" {
+		return fmt.Errorf("--background and --continue cannot be used together (resume requires foreground execution)")
+	}
 
 	// Find workspace
 	startDir := flagWorkspace
@@ -163,12 +176,64 @@ func runRequest(cmd *cobra.Command, args []string) error {
 		Requirement:  requirement,
 		Branch:       branch,
 		WorkflowName: workflowName,
+		Headless:     flagHeadless,
 		MemManager:   memMgr,
 		Runner:       runner,
 		WorktreeMgr:  wtMgr,
 		Agents:       agents,
 		Projects:     projects,
 	})
+
+	// Background mode: re-exec self with --headless (without --background) in a detached process
+	if flagBackground {
+		logDir := filepath.Join(root, ".pylon", "logs")
+		if mkErr := os.MkdirAll(logDir, 0700); mkErr != nil {
+			return fmt.Errorf("failed to create log directory: %w", mkErr)
+		}
+		logFile := filepath.Join(logDir, fmt.Sprintf("pipeline-%s.log", pipelineID))
+
+		// Resolve the current executable path reliably (not os.Args[0] which can be relative/spoofed)
+		selfPath, exeErr := os.Executable()
+		if exeErr != nil {
+			selfPath = os.Args[0] // last-resort fallback
+		}
+
+		// Build command: pylon request --headless --workflow <wf> "<requirement>"
+		// The resolved workflow name is forwarded (never "auto") so the child
+		// does not re-run keyword detection on the same requirement string.
+		bgArgs := []string{"request", "--headless"}
+		if flagWorkspace != "" {
+			bgArgs = append(bgArgs, "--workspace", flagWorkspace)
+		}
+		if workflowName != "" {
+			bgArgs = append(bgArgs, "--workflow", workflowName)
+		}
+		bgArgs = append(bgArgs, requirement)
+
+		bgCmd := exec.Command(selfPath, bgArgs...)
+		bgCmd.Dir = root
+
+		outFile, fileErr := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		if fileErr != nil {
+			return fmt.Errorf("failed to create log file: %w", fileErr)
+		}
+		defer outFile.Close()
+		bgCmd.Stdout = outFile
+		bgCmd.Stderr = outFile
+		bgCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+		if startErr := bgCmd.Start(); startErr != nil {
+			return fmt.Errorf("failed to start background pipeline: %w", startErr)
+		}
+
+		fmt.Printf("🚀 Pipeline started in background\n")
+		fmt.Printf("   ID:  %s\n", pipelineID)
+		fmt.Printf("   PID: %d\n", bgCmd.Process.Pid)
+		fmt.Printf("   Log: %s\n", logFile)
+		fmt.Printf("\n   Check status: pylon status\n")
+		fmt.Printf("   Or use:       /pl:status\n")
+		return nil
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -488,6 +488,7 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 	b.WriteString("- `/pl:status` — 파이프라인 및 에이전트 상태 조회\n")
 	b.WriteString("- `/pl:verify` — 교차 검증 실행 (빌드/테스트/린트)\n")
 	b.WriteString("- `/pl:add-project` — 새 프로젝트 추가 (git submodule)\n")
+	b.WriteString("- `/pl:request` — TUI에서 파이프라인 백그라운드 실행\n")
 	b.WriteString("- `/pl:cancel` — 진행 중인 파이프라인 취소\n")
 	b.WriteString("- `/pl:review` — PR 코드 리뷰 요청\n\n")
 
@@ -615,6 +616,46 @@ func buildSlashCommands(root string) map[string]string {
    - ` + "`" + `.pylon/agents/` + "`" + ` — 프로젝트별 에이전트
 5. 코드베이스를 분석하여 기본 컨텍스트를 생성합니다
 6. 사용자에게 결과를 보고합니다
+`,
+		"pl/request": `# /pl:request — TUI에서 파이프라인 실행
+
+Claude Code TUI 내에서 Pylon 파이프라인을 백그라운드로 실행합니다.
+PO 에이전트가 headless 모드로 요구사항을 분석하고, 전체 파이프라인이 자동으로 진행됩니다.
+
+## 사용법
+
+` + "```" + `
+/pl:request <요구사항>
+` + "```" + `
+
+## 절차
+
+1. 사용자에게 요구사항을 확인합니다 (인자가 없으면 질문)
+2. 워크플로우를 선택합니다 (기본: auto 감지)
+3. 백그라운드에서 파이프라인을 실행합니다:
+   ` + "```" + `bash
+   pylon request --headless --background "$ARGUMENTS"
+   ` + "```" + `
+4. 반환된 pipeline ID와 로그 경로를 사용자에게 안내합니다
+5. 진행 상황 확인 방법을 안내합니다:
+   ` + "```" + `bash
+   pylon status
+   # 또는
+   /pl:status
+   ` + "```" + `
+
+## 워크플로우 지정
+
+특정 워크플로우를 사용하려면:
+` + "```" + `bash
+pylon request --headless --background --workflow bugfix "$ARGUMENTS"
+` + "```" + `
+
+## 주의사항
+
+- 파이프라인은 백그라운드 프로세스로 실행되므로 TUI가 블로킹되지 않습니다
+- PO 대화가 headless로 진행되므로 요구사항을 상세히 작성할수록 좋습니다
+- 로그는 .pylon/logs/pipeline-<id>.log 에서 확인 가능합니다
 `,
 		"pl/cancel": `# /pl:cancel — 파이프라인 취소
 

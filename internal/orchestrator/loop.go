@@ -32,6 +32,7 @@ type LoopConfig struct {
 	Branch       string
 	WorkflowName string // workflow template name (e.g., "feature", "bugfix")
 	Requires     []string // pipeline IDs this pipeline depends on (cross-pipeline dependency)
+	Headless     bool     // if true, interactive stages run as headless agents instead of ExecInteractive
 	MemManager   *memory.Manager
 	Runner       agent.AgentRunner
 	WorktreeMgr  *git.WorktreeManager
@@ -192,9 +193,13 @@ func (l *Loop) Run(ctx context.Context) error {
 var ErrInteractiveRequired = errors.New("interactive PO session required")
 
 // runPOConversation handles the PO interactive conversation stage.
-// Since PO uses ExecInteractive (syscall.Exec), the loop returns ErrInteractiveRequired
-// so that the CLI can handle the handoff.
+// In headless mode, PO runs as a headless agent with the requirement text as input.
+// Otherwise, the loop returns ErrInteractiveRequired so that the CLI can handle the handoff.
 func (l *Loop) runPOConversation(ctx context.Context) error {
+	if l.cfg.Headless {
+		fmt.Printf("🤖 PO 에이전트를 headless 모드로 실행합니다: %s\n", l.cfg.Requirement)
+		return l.runHeadlessAgent(ctx, "po", StagePOConversation, l.nextStageAfter(StagePOConversation))
+	}
 	return ErrInteractiveRequired
 }
 
@@ -370,11 +375,11 @@ func (l *Loop) runPMTaskBreakdown(ctx context.Context) error {
 }
 
 // runTaskReview handles the task review gate between PM breakdown and agent execution.
-// If AutoApproveTaskReview is true or no PO agent is configured, it auto-approves.
+// If AutoApproveTaskReview is true, headless mode, or no PO agent is configured, it auto-approves.
 // Otherwise, it returns ErrInteractiveRequired for PO review.
 func (l *Loop) runTaskReview(ctx context.Context) error {
-	// Auto-approve if configured or PO agent not available
-	if l.cfg.Config.Runtime.AutoApproveTaskReview || l.findAgent("po") == nil {
+	// Auto-approve if configured, headless mode, or PO agent not available
+	if l.cfg.Headless || l.cfg.Config.Runtime.AutoApproveTaskReview || l.findAgent("po") == nil {
 		fmt.Println("✓ Task review: auto-approved")
 		return l.transitionTo(l.nextStageAfter(StageTaskReview))
 	}
