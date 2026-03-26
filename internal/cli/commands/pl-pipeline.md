@@ -1,5 +1,5 @@
 ---
-description: "Pylon 파이프라인 실행 — 요구사항 → 분석 → 설계 → 구현 → PR"
+description: "Pylon 파이프라인 실행 — 요구사항 → 분석 → 설계 → 구현 → 검증"
 handoffs:
   - label: 아키텍처 분석만
     command: pl-architect
@@ -111,7 +111,13 @@ Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T003 내용]", isolation="
 
 실패 시 에러를 분석하고 수정 후 재실행합니다.
 
-### Step 8: PR 생성
+### Step 8: PR 생성 (선택)
+
+> PR 생성은 기본적으로 비활성화되어 있습니다.
+> `config.yml`의 `git.pr.auto_pr: true` 설정 시에만 자동 실행됩니다.
+> 수동으로 PR을 생성하려면 `/pl:pr` 커맨드를 사용하세요.
+
+`config.yml`에서 `git.pr.auto_pr`이 `true`인 경우에만 실행합니다:
 
 ```bash
 .pylon/scripts/bash/create-pr.sh "$PIPELINE_DIR" --title "feat: [요구사항 요약]"
@@ -122,7 +128,7 @@ Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T003 내용]", isolation="
 실행 결과를 요약합니다:
 - 생성/변경된 파일 목록
 - 테스트 결과
-- PR URL
+- PR URL (auto_pr 활성화 시)
 - 총 소요 시간
 
 ## 메모리 활용

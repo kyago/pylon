@@ -4,5 +4,4 @@ stages:
   - init
   - agent_executing
   - verification
-  - pr_creation
   - completed

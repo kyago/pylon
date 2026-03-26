@@ -15,8 +15,8 @@ func TestLoadWorkflow_BuiltinFeature(t *testing.T) {
 	if wf.Name != "feature" {
 		t.Errorf("expected name 'feature', got %q", wf.Name)
 	}
-	if len(wf.Stages) != 11 {
-		t.Errorf("expected 11 stages, got %d", len(wf.Stages))
+	if len(wf.Stages) != 10 {
+		t.Errorf("expected 10 stages, got %d", len(wf.Stages))
 	}
 	if wf.Stages[0] != StageInit {
 		t.Errorf("expected first stage 'init', got %q", wf.Stages[0])

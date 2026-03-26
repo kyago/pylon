@@ -28,6 +28,35 @@ func TestNewPipeline_DefaultMaxAttempts(t *testing.T) {
 func TestPipeline_ValidTransitions(t *testing.T) {
 	p := NewPipeline("test-1", 2)
 
+	// Default path: pr_creation is skipped (opt-in only)
+	transitions := []Stage{
+		StagePOConversation,
+		StageArchitectAnalysis,
+		StagePMTaskBreakdown,
+		StageTaskReview,
+		StageAgentExecuting,
+		StageVerification,
+		StageCompleted,
+	}
+
+	for _, stage := range transitions {
+		if !p.CanTransition(stage) {
+			t.Errorf("expected valid transition %s → %s", p.CurrentStage, stage)
+		}
+		if err := p.Transition(stage); err != nil {
+			t.Errorf("transition %s failed: %v", stage, err)
+		}
+	}
+
+	if len(p.History) != len(transitions) {
+		t.Errorf("expected %d history entries, got %d", len(transitions), len(p.History))
+	}
+}
+
+func TestPipeline_ValidTransitions_WithPRCreation(t *testing.T) {
+	p := NewPipeline("test-pr", 2)
+
+	// Full path with opt-in pr_creation
 	transitions := []Stage{
 		StagePOConversation,
 		StageArchitectAnalysis,
@@ -52,6 +81,32 @@ func TestPipeline_ValidTransitions(t *testing.T) {
 
 	if len(p.History) != len(transitions) {
 		t.Errorf("expected %d history entries, got %d", len(transitions), len(p.History))
+	}
+}
+
+func TestPipeline_VerificationSkipsToPOValidation(t *testing.T) {
+	p := NewPipeline("test-skip-pr", 2)
+	p.CurrentStage = StageVerification
+
+	// verification → po_validation (skipping pr_creation)
+	if !p.CanTransition(StagePOValidation) {
+		t.Error("should allow verification → po_validation (skip pr_creation)")
+	}
+	if err := p.Transition(StagePOValidation); err != nil {
+		t.Fatalf("transition to po_validation failed: %v", err)
+	}
+}
+
+func TestPipeline_VerificationSkipsToWikiUpdate(t *testing.T) {
+	p := NewPipeline("test-skip-pr-wiki", 2)
+	p.CurrentStage = StageVerification
+
+	// verification → wiki_update (skipping pr_creation)
+	if !p.CanTransition(StageWikiUpdate) {
+		t.Error("should allow verification → wiki_update (skip pr_creation)")
+	}
+	if err := p.Transition(StageWikiUpdate); err != nil {
+		t.Fatalf("transition to wiki_update failed: %v", err)
 	}
 }
 
@@ -296,8 +351,8 @@ func TestLoadPipeline_DefaultStatusWhenEmpty(t *testing.T) {
 
 func TestPipeline_TransitionToCompleted_SetsStatus(t *testing.T) {
 	p := NewPipeline("test-status", 2)
-	// Walk through to wiki_update
-	for _, s := range []Stage{StagePOConversation, StageArchitectAnalysis, StagePMTaskBreakdown, StageTaskReview, StageAgentExecuting, StageVerification, StagePRCreation, StagePOValidation, StageWikiUpdate, StageCompleted} {
+	// Walk through default path (no pr_creation)
+	for _, s := range []Stage{StagePOConversation, StageArchitectAnalysis, StagePMTaskBreakdown, StageTaskReview, StageAgentExecuting, StageVerification, StageCompleted} {
 		if err := p.Transition(s); err != nil {
 			t.Fatalf("transition to %s failed: %v", s, err)
 		}

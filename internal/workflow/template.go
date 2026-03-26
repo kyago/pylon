@@ -47,7 +47,13 @@ type WorkflowTemplate struct {
 //  2. All non-terminal stages → StageFailed
 //  3. Auto-infer: if StageVerification is present, add loopback to the preceding stage
 //  4. Add explicit transitions from Loops
-func (w *WorkflowTemplate) BuildTransitions() map[Stage][]Stage {
+//  5. If autoPR is true, inject StagePRCreation as an alternative target from StageVerification
+//
+// The autoPR parameter allows opt-in PR creation even when the workflow template
+// does not include pr_creation in its stage list. When true, StageVerification gains
+// an additional transition to StagePRCreation, and StagePRCreation gains transitions
+// to the stage that follows StageVerification in the template plus StageFailed.
+func (w *WorkflowTemplate) BuildTransitions(autoPR ...bool) map[Stage][]Stage {
 	transitions := make(map[Stage][]Stage)
 
 	// 1. Linear chain
@@ -73,6 +79,22 @@ func (w *WorkflowTemplate) BuildTransitions() map[Stage][]Stage {
 	// 4. Explicit loops / extra transitions
 	for _, loop := range w.Loops {
 		transitions[loop.From] = appendUnique(transitions[loop.From], loop.To)
+	}
+
+	// 5. Auto-inject pr_creation when autoPR is enabled
+	if len(autoPR) > 0 && autoPR[0] && !w.HasStage(StagePRCreation) {
+		for i, s := range w.Stages {
+			if s == StageVerification && i+1 < len(w.Stages) {
+				nextStage := w.Stages[i+1]
+				transitions[StageVerification] = appendUnique(transitions[StageVerification], StagePRCreation)
+				prTargets := []Stage{nextStage, StageFailed}
+				if nextStage != StageCompleted {
+					prTargets = append(prTargets, StageCompleted)
+				}
+				transitions[StagePRCreation] = prTargets
+				break
+			}
+		}
 	}
 
 	return transitions
