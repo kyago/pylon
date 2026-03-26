@@ -101,6 +101,36 @@ func TestBuildTransitions_AutoPRInjection(t *testing.T) {
 	}
 }
 
+func TestBuildTransitions_AutoPRInjection_FeatureWorkflow(t *testing.T) {
+	wf := &WorkflowTemplate{
+		Name: "feature",
+		Stages: []Stage{
+			StageInit, StagePOConversation, StageArchitectAnalysis,
+			StagePMTaskBreakdown, StageTaskReview, StageAgentExecuting,
+			StageVerification, StagePOValidation, StageWikiUpdate, StageCompleted,
+		},
+	}
+
+	got := wf.BuildTransitions(true)
+
+	// verification should have pr_creation as additional target
+	if !containsStage(got[StageVerification], StagePRCreation) {
+		t.Errorf("feature+autoPR: verification should include pr_creation, got %v", got[StageVerification])
+	}
+
+	// pr_creation should transition to po_validation (next stage), completed (emergency exit), and failed
+	prTargets := got[StagePRCreation]
+	if !containsStage(prTargets, StagePOValidation) {
+		t.Errorf("feature+autoPR: pr_creation should transition to po_validation, got %v", prTargets)
+	}
+	if !containsStage(prTargets, StageCompleted) {
+		t.Errorf("feature+autoPR: pr_creation should have completed as emergency exit, got %v", prTargets)
+	}
+	if !containsStage(prTargets, StageFailed) {
+		t.Errorf("feature+autoPR: pr_creation should transition to failed, got %v", prTargets)
+	}
+}
+
 func TestBuildTransitions_AutoVerificationLoopback(t *testing.T) {
 	wf := &WorkflowTemplate{
 		Name:   "test",
