@@ -55,7 +55,7 @@ func runLaunch() error {
 		s, err := store.NewStore(dbPath)
 		if err == nil {
 			_ = s.Migrate()
-			memoryContext = buildMemoryContext(s, projects)
+			memoryContext = buildMemoryContext(s, projects, root)
 			s.Close()
 		}
 	}
@@ -432,7 +432,7 @@ func buildSlashCommands(root string) map[string]string {
    pylon sync-projects
    ` + "```" + `
 
-2. 각 프로젝트의 인덱싱 상태를 판단합니다. 다음 두 가지를 모두 확인합니다:
+2. 각 프로젝트의 인덱싱 상태를 판단합니다. 다음 두 지표를 확인하여 판단합니다:
 
    a. 컨텍스트 파일 존재 여부 (인덱싱의 주요 지표):
       - ` + "`" + `<프로젝트명>/.pylon/context.md` + "`" + ` 파일이 존재하면 인덱싱 완료로 판단
@@ -502,21 +502,35 @@ func buildSlashCommands(root string) map[string]string {
 }
 
 // buildMemoryContext reads project memory from SQLite and formats it for CLAUDE.md injection.
-func buildMemoryContext(s *store.Store, projects []config.ProjectInfo) string {
+func buildMemoryContext(s *store.Store, projects []config.ProjectInfo, root string) string {
 	if len(projects) == 0 {
 		return ""
 	}
+
+	workspaceName := filepath.Base(root)
 
 	var b strings.Builder
 	for _, p := range projects {
 		entries, err := s.ListProjectMemory(p.Name)
 		if err != nil || len(entries) == 0 {
-			continue
+			// Fallback: multi-project workspaces store memory under workspace name
+			if p.Name != workspaceName {
+				entries, err = s.ListProjectMemory(workspaceName)
+				if err != nil || len(entries) == 0 {
+					continue
+				}
+			} else {
+				continue
+			}
 		}
 
 		b.WriteString(fmt.Sprintf("### %s\n", p.Name))
 		for _, e := range entries {
-			b.WriteString(fmt.Sprintf("- **%s**: %s\n", e.Key, e.Content))
+			// Skip high-volume "change" entries to avoid CLAUDE.md bloat
+			if e.Category == "change" {
+				continue
+			}
+			b.WriteString(fmt.Sprintf("- **[%s] %s**: %s\n", e.Category, e.Key, e.Content))
 		}
 		b.WriteString("\n")
 	}
