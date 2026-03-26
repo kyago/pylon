@@ -270,6 +270,33 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		}
 	}
 
+	// Pipeline scripts → .pylon/scripts/bash/
+	// Bootstrap embedded scripts if workspace doesn't have them yet (existing workspaces)
+	pylonScriptsDir := filepath.Join(root, ".pylon", "scripts", "bash")
+	if err := os.MkdirAll(pylonScriptsDir, 0755); err != nil {
+		return fmt.Errorf("scripts/bash/ 디렉토리 생성 실패: %w", err)
+	}
+	scriptEntries, err := embeddedScripts.ReadDir("scripts/bash")
+	if err == nil {
+		for _, entry := range scriptEntries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sh") {
+				continue
+			}
+			destPath := filepath.Join(pylonScriptsDir, entry.Name())
+			// Only write if file doesn't exist (preserve user customizations)
+			if _, err := os.Stat(destPath); os.IsNotExist(err) {
+				content, err := embeddedScripts.ReadFile("scripts/bash/" + entry.Name())
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "경고: 내장 스크립트 읽기 실패 (%s): %v\n", entry.Name(), err)
+					continue
+				}
+				if err := os.WriteFile(destPath, content, 0755); err != nil {
+					fmt.Fprintf(os.Stderr, "경고: 스크립트 배포 실패 (%s): %v\n", entry.Name(), err)
+				}
+			}
+		}
+	}
+
 	// Generate hooks in .claude/settings.json for Claude Code session lifecycle
 	if err := generateSettingsHooks(claudeDir); err != nil {
 		return fmt.Errorf("settings.json hooks 생성 실패: %w", err)
