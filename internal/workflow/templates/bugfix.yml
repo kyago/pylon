@@ -5,5 +5,4 @@ stages:
   - po_conversation
   - agent_executing
   - verification
-  - pr_creation
   - completed

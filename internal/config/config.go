@@ -59,6 +59,7 @@ type WorktreeConfig struct {
 // PRConfig defines pull request settings.
 // Spec Reference: Section 16 "git.pr"
 type PRConfig struct {
+	AutoPR    bool     `yaml:"auto_pr"`
 	Reviewers []string `yaml:"reviewers"`
 	Draft     bool     `yaml:"draft"`
 	Template  *string  `yaml:"template"`

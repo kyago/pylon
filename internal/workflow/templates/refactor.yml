@@ -6,5 +6,4 @@ stages:
   - architect_analysis
   - agent_executing
   - verification
-  - pr_creation
   - completed

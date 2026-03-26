@@ -11,17 +11,14 @@ func TestBuildTransitions_Feature(t *testing.T) {
 		Stages: []Stage{
 			StageInit, StagePOConversation, StageArchitectAnalysis,
 			StagePMTaskBreakdown, StageTaskReview, StageAgentExecuting,
-			StageVerification, StagePRCreation, StagePOValidation,
+			StageVerification, StagePOValidation,
 			StageWikiUpdate, StageCompleted,
-		},
-		Loops: []LoopDef{
-			{From: StagePRCreation, To: StageWikiUpdate},
 		},
 	}
 
 	got := wf.BuildTransitions()
 
-	// Expected transitions (same as hardcoded validTransitions)
+	// Expected transitions (pr_creation removed from default flow)
 	expected := map[Stage][]Stage{
 		StageInit:              {StagePOConversation, StageFailed},
 		StagePOConversation:    {StageArchitectAnalysis, StageFailed},
@@ -29,8 +26,7 @@ func TestBuildTransitions_Feature(t *testing.T) {
 		StagePMTaskBreakdown:   {StageTaskReview, StageFailed},
 		StageTaskReview:        {StageAgentExecuting, StageFailed},
 		StageAgentExecuting:    {StageVerification, StageFailed},
-		StageVerification:      {StagePRCreation, StageFailed, StageAgentExecuting},
-		StagePRCreation:        {StagePOValidation, StageFailed, StageWikiUpdate},
+		StageVerification:      {StagePOValidation, StageFailed, StageAgentExecuting},
 		StagePOValidation:      {StageWikiUpdate, StageFailed},
 		StageWikiUpdate:        {StageCompleted, StageFailed},
 	}
@@ -54,7 +50,7 @@ func TestBuildTransitions_Feature(t *testing.T) {
 func TestBuildTransitions_Bugfix(t *testing.T) {
 	wf := &WorkflowTemplate{
 		Name:   "bugfix",
-		Stages: []Stage{StageInit, StagePOConversation, StageAgentExecuting, StageVerification, StagePRCreation, StageCompleted},
+		Stages: []Stage{StageInit, StagePOConversation, StageAgentExecuting, StageVerification, StageCompleted},
 	}
 
 	got := wf.BuildTransitions()
@@ -64,8 +60,8 @@ func TestBuildTransitions_Bugfix(t *testing.T) {
 	if !containsStage(verTargets, StageAgentExecuting) {
 		t.Errorf("bugfix verification should loopback to agent_executing, got %v", verTargets)
 	}
-	if !containsStage(verTargets, StagePRCreation) {
-		t.Errorf("bugfix verification should forward to pr_creation, got %v", verTargets)
+	if !containsStage(verTargets, StageCompleted) {
+		t.Errorf("bugfix verification should forward to completed, got %v", verTargets)
 	}
 
 	// PO should go to agent_executing (skipping architect/PM/task_review)
@@ -75,6 +71,33 @@ func TestBuildTransitions_Bugfix(t *testing.T) {
 	}
 	if containsStage(poTargets, StageArchitectAnalysis) {
 		t.Errorf("bugfix po_conversation should NOT go to architect_analysis, got %v", poTargets)
+	}
+}
+
+func TestBuildTransitions_AutoPRInjection(t *testing.T) {
+	wf := &WorkflowTemplate{
+		Name:   "bugfix",
+		Stages: []Stage{StageInit, StagePOConversation, StageAgentExecuting, StageVerification, StageCompleted},
+	}
+
+	// Without autoPR: verification should NOT have pr_creation
+	got := wf.BuildTransitions()
+	if containsStage(got[StageVerification], StagePRCreation) {
+		t.Errorf("without autoPR, verification should not transition to pr_creation, got %v", got[StageVerification])
+	}
+
+	// With autoPR: verification should have pr_creation as additional target
+	gotPR := wf.BuildTransitions(true)
+	if !containsStage(gotPR[StageVerification], StagePRCreation) {
+		t.Errorf("with autoPR, verification should transition to pr_creation, got %v", gotPR[StageVerification])
+	}
+	// pr_creation should transition to the next stage (completed) and failed
+	prTargets := gotPR[StagePRCreation]
+	if !containsStage(prTargets, StageCompleted) {
+		t.Errorf("pr_creation should transition to completed, got %v", prTargets)
+	}
+	if !containsStage(prTargets, StageFailed) {
+		t.Errorf("pr_creation should transition to failed, got %v", prTargets)
 	}
 }
 

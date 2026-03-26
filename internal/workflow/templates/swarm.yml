@@ -7,6 +7,5 @@ stages:
   - task_review
   - agent_executing
   - verification
-  - pr_creation
   - completed
 allow_dynamic_spawn: true
