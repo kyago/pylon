@@ -432,12 +432,21 @@ func buildSlashCommands(root string) map[string]string {
    pylon sync-projects
    ` + "```" + `
 
-2. 각 프로젝트별 인덱싱 정보(메모리)를 조회합니다:
-   ` + "```" + `bash
-   pylon mem list --project <프로젝트명> --category codebase
-   ` + "```" + `
+2. 각 프로젝트의 인덱싱 상태를 판단합니다. 다음 두 가지를 모두 확인합니다:
 
-3. 각 프로젝트의 컨텍스트 파일을 확인합니다:
+   a. 컨텍스트 파일 존재 여부 (인덱싱의 주요 지표):
+      - ` + "`" + `<프로젝트명>/.pylon/context.md` + "`" + ` 파일이 존재하면 인덱싱 완료로 판단
+
+   b. 프로젝트 메모리 조회 (카테고리 필터 없이 전체 조회):
+      ` + "```" + `bash
+      pylon mem list --project <프로젝트명>
+      ` + "```" + `
+      결과가 없으면 워크스페이스명으로 재시도합니다 (멀티 프로젝트 워크스페이스에서는 워크스페이스명으로 저장됨):
+      ` + "```" + `bash
+      pylon mem list --project <워크스페이스명>
+      ` + "```" + `
+
+3. 각 프로젝트의 추가 정보를 확인합니다:
    - ` + "`" + `<프로젝트명>/.pylon/context.md` + "`" + ` — 프로젝트 컨텍스트 (존재 여부 및 요약)
    - ` + "`" + `<프로젝트명>/.pylon/agents/` + "`" + ` — 프로젝트 전용 에이전트 정의
 
@@ -447,15 +456,21 @@ func buildSlashCommands(root string) map[string]string {
    - 프로젝트명
    - 경로
    - 기술 스택 (tech stack)
-   - 인덱싱 상태 (codebase 메모리 엔트리 수, context.md 파일 수정 시각)
+   - 인덱싱 상태 (context.md 존재 여부 + 메모리 엔트리 수)
    - 컨텍스트 파일 존재 여부
    - 등록된 에이전트 수
+
+## 인덱싱 상태 판단 기준
+
+- **인덱싱 완료**: ` + "`" + `<프로젝트명>/.pylon/context.md` + "`" + ` 파일이 존재하거나, 해당 프로젝트의 메모리 엔트리가 1개 이상 있는 경우
+- **미인덱싱**: 위 조건을 모두 만족하지 않는 경우
 
 ## 주의사항
 
 - 인덱싱이 되지 않은 프로젝트는 "미인덱싱" 상태로 표시하고 ` + "`" + `/pl:index` + "`" + ` 실행을 안내
 - 프로젝트가 없는 경우 ` + "`" + `pylon add-project <git-url>` + "`" + `로 추가하도록 안내
 - 출력은 테이블 또는 구조화된 목록 형태로 보기 좋게 정리
+- 메모리 조회 시 ` + "`" + `--category` + "`" + ` 필터를 사용하지 않습니다 (실제 데이터는 change, learning 등 다양한 카테고리로 저장됨)
 `,
 
 		"pl/index": `# /pl:index — 프로젝트 코드베이스 인덱싱
@@ -494,7 +509,7 @@ func buildMemoryContext(s *store.Store, projects []config.ProjectInfo) string {
 
 	var b strings.Builder
 	for _, p := range projects {
-		entries, err := s.GetMemoryByCategory(p.Name, "codebase")
+		entries, err := s.ListProjectMemory(p.Name)
 		if err != nil || len(entries) == 0 {
 			continue
 		}
