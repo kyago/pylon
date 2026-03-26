@@ -9,10 +9,12 @@ BRANCH="${2:-}"
 
 CLEANED=()
 
-# Remove worktrees associated with the branch
+# Remove worktrees associated with the branch (exact branch match via porcelain output)
 if [[ -n "$BRANCH" ]]; then
   while IFS= read -r wt; do
-    if [[ -n "$wt" && "$wt" == *"$BRANCH"* ]]; then
+    [[ -z "$wt" ]] && continue
+    wt_branch=$(git worktree list --porcelain | grep -A2 "^worktree ${wt}$" | grep "^branch " | sed 's|^branch refs/heads/||')
+    if [[ "$wt_branch" == "$BRANCH" || "$wt_branch" == "$BRANCH/"* ]]; then
       git worktree remove "$wt" --force 2>/dev/null && CLEANED+=("worktree:$wt")
     fi
   done < <(git worktree list --porcelain | grep "^worktree " | sed 's/^worktree //')
