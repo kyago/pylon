@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
-require_cmd git
+require_cmd git jq
 
 PIPELINE_DIR="${1:-}"
 BRANCH="${2:-}"

@@ -34,7 +34,7 @@ if [[ -z "$BODY" ]]; then
 fi
 
 # Create PR
-PR_URL=$(gh pr create --title "$TITLE" --body "$(echo -e "$BODY")" $DRAFT 2>&1)
+PR_URL=$(gh pr create --title "$TITLE" --body "$(printf '%b' "$BODY")" $DRAFT)
 PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$' || echo "")
 
 OUTPUT=$(jq -cn \

@@ -287,9 +287,12 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 			if _, err := os.Stat(destPath); os.IsNotExist(err) {
 				content, err := embeddedScripts.ReadFile("scripts/bash/" + entry.Name())
 				if err != nil {
+					fmt.Fprintf(os.Stderr, "경고: 내장 스크립트 읽기 실패 (%s): %v\n", entry.Name(), err)
 					continue
 				}
-				_ = os.WriteFile(destPath, content, 0755)
+				if err := os.WriteFile(destPath, content, 0755); err != nil {
+					fmt.Fprintf(os.Stderr, "경고: 스크립트 배포 실패 (%s): %v\n", entry.Name(), err)
+				}
 			}
 		}
 	}

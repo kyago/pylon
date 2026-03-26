@@ -2,6 +2,8 @@
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
+require_cmd jq
+
 usage() {
   echo "Usage: check-prerequisites.sh --pipeline-dir <dir> [--require-requirement] [--require-architecture] [--require-tasks]"
   exit 1
