@@ -105,6 +105,9 @@ func TestPipeline_VerificationSkipsToWikiUpdate(t *testing.T) {
 	if !p.CanTransition(StageWikiUpdate) {
 		t.Error("should allow verification → wiki_update (skip pr_creation)")
 	}
+	if err := p.Transition(StageWikiUpdate); err != nil {
+		t.Fatalf("transition to wiki_update failed: %v", err)
+	}
 }
 
 func TestPipeline_InvalidTransition(t *testing.T) {

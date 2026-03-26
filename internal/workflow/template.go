@@ -87,7 +87,11 @@ func (w *WorkflowTemplate) BuildTransitions(autoPR ...bool) map[Stage][]Stage {
 			if s == StageVerification && i+1 < len(w.Stages) {
 				nextStage := w.Stages[i+1]
 				transitions[StageVerification] = appendUnique(transitions[StageVerification], StagePRCreation)
-				transitions[StagePRCreation] = []Stage{nextStage, StageCompleted, StageFailed}
+				prTargets := []Stage{nextStage, StageFailed}
+				if nextStage != StageCompleted {
+					prTargets = append(prTargets, StageCompleted)
+				}
+				transitions[StagePRCreation] = prTargets
 				break
 			}
 		}

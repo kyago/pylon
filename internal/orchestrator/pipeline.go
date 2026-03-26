@@ -38,7 +38,7 @@ var validTransitions = map[Stage][]Stage{
 	StageTaskReview:        {StageAgentExecuting, StageFailed},
 	StageAgentExecuting:    {StageVerification, StageFailed},
 	StageVerification:      {StageAgentExecuting, StagePRCreation, StagePOValidation, StageWikiUpdate, StageCompleted, StageFailed}, // retry, PR (opt-in), or skip to next
-	StagePRCreation:        {StagePOValidation, StageWikiUpdate, StageCompleted, StageFailed},
+	StagePRCreation:        {StagePOValidation, StageCompleted, StageFailed},
 	StagePOValidation:      {StageWikiUpdate, StageFailed},
 	StageWikiUpdate:        {StageCompleted, StageFailed},
 }
