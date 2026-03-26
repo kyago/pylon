@@ -374,9 +374,9 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 	b.WriteString("- `/pl:verify` — 교차 검증 실행 (빌드/테스트/린트)\n")
 	b.WriteString("- `/pl:pr` — PR 생성\n")
 	b.WriteString("- `/pl:status` — 파이프라인 상태 조회\n")
-	b.WriteString("- `/pl:cancel` — 파이프라인 취소\n")
 	b.WriteString("- `/pl:project-list` — 프로젝트 목록 및 인덱싱 정보 조회\n")
-	b.WriteString("- `/pl:index` — 프로젝트 코드베이스 인덱싱\n\n")
+	b.WriteString("- `/pl:index` — 프로젝트 코드베이스 인덱싱\n")
+	b.WriteString("- `/pl:cancel` — 파이프라인 취소\n\n")
 
 	// Sub-agent orchestration
 	b.WriteString("## 서브 에이전트 오케스트레이션\n\n")
@@ -427,19 +427,19 @@ func buildSlashCommands(root string) map[string]string {
 
 ## 절차
 
-1. 프로젝트 목록을 동기화하고 조회합니다:
+1. 프로젝트 목록을 동기화하고 조회합니다 (DB에 최신 상태를 반영하기 위해 sync를 먼저 실행):
    ` + "```" + `bash
    pylon sync-projects
    ` + "```" + `
 
 2. 각 프로젝트별 인덱싱 정보(메모리)를 조회합니다:
    ` + "```" + `bash
-   pylon mem list --project <프로젝트명>
+   pylon mem list --project <프로젝트명> --category codebase
    ` + "```" + `
 
 3. 각 프로젝트의 컨텍스트 파일을 확인합니다:
-   - ` + "`" + `{프로젝트}/.pylon/context.md` + "`" + ` — 프로젝트 컨텍스트 (존재 여부 및 요약)
-   - ` + "`" + `{프로젝트}/.pylon/agents/` + "`" + ` — 프로젝트 전용 에이전트 정의
+   - ` + "`" + `<프로젝트명>/.pylon/context.md` + "`" + ` — 프로젝트 컨텍스트 (존재 여부 및 요약)
+   - ` + "`" + `<프로젝트명>/.pylon/agents/` + "`" + ` — 프로젝트 전용 에이전트 정의
 
 4. 수집한 정보를 다음 형식으로 정리하여 사용자에게 보여줍니다:
 
@@ -447,7 +447,7 @@ func buildSlashCommands(root string) map[string]string {
    - 프로젝트명
    - 경로
    - 기술 스택 (tech stack)
-   - 인덱싱 상태 (메모리 엔트리 수, 마지막 인덱싱 시점)
+   - 인덱싱 상태 (codebase 메모리 엔트리 수, context.md 파일 수정 시각)
    - 컨텍스트 파일 존재 여부
    - 등록된 에이전트 수
 
