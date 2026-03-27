@@ -41,4 +41,4 @@ release:
     name: pylon
   draft: false
   prerelease: auto
-  name_template: "v{{.Version}}"
+  name_template: "{{.Version}}"

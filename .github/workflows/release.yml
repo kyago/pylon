@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -17,6 +17,31 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate CalVer tag
+        id: tag
+        run: |
+          YEAR=$(date -u +%Y)
+          MONTH=$(date -u +%-m)
+          PREFIX="${YEAR}.${MONTH}"
+
+          LAST_SEQ=$(git tag -l "${PREFIX}.*" | sed "s/${PREFIX}\.//" | sort -n | tail -1)
+          if [ -z "$LAST_SEQ" ]; then
+            SEQ=1
+          else
+            SEQ=$((LAST_SEQ + 1))
+          fi
+
+          TAG="${PREFIX}.${SEQ}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Generated tag: ${TAG}"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.tag.outputs.tag }}" -m "Release ${{ steps.tag.outputs.tag }}"
+          git push origin "${{ steps.tag.outputs.tag }}"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -29,3 +54,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.tag.outputs.tag }}
