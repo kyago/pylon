@@ -24,6 +24,10 @@ func TestValidateVersion(t *testing.T) {
 		{"1.2.3.4.5", false},
 		{"v.1.2.3", false},
 		{"hello-world", false},
+		{"01.2.3", false},
+		{"v01.2.3", false},
+		{"1.02.3", false},
+		{"1.2.03", false},
 	}
 
 	for _, tt := range tests {

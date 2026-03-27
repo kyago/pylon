@@ -13,7 +13,7 @@ import (
 const installPkg = "github.com/kyago/pylon/cmd/pylon"
 
 // semverRe matches semver: optional 'v' prefix + MAJOR.MINOR.PATCH with optional pre-release/build.
-var semverRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+var semverRe = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
 
 func newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
