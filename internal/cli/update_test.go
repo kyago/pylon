@@ -72,6 +72,8 @@ func TestResolveInstallTarget(t *testing.T) {
 		{"empty string", []string{""}, "latest", false},
 		{"whitespace only", []string{"  "}, "latest", false},
 		{"latest keyword", []string{"latest"}, "latest", false},
+		{"latest uppercase", []string{"LATEST"}, "latest", false},
+		{"latest mixed case", []string{"Latest"}, "latest", false},
 		{"version with v", []string{"v0.3.0"}, "v0.3.0", false},
 		{"version without v", []string{"0.3.0"}, "v0.3.0", false},
 		{"pre-release", []string{"v1.0.0-rc.1"}, "v1.0.0-rc.1", false},

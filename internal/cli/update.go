@@ -54,7 +54,11 @@ Examples:
 				return fmt.Errorf("업데이트 실패: %w", err)
 			}
 
-			fmt.Printf("✅ pylon %s 설치 완료\n", target)
+			if target == "latest" {
+				fmt.Println("✅ pylon 최신 버전 설치 완료")
+			} else {
+				fmt.Printf("✅ pylon %s 설치 완료\n", target)
+			}
 
 			// Run config sync using the NEW binary
 			fmt.Println("\n설정 동기화 중...")
