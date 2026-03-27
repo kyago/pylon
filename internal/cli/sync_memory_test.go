@@ -450,6 +450,16 @@ func TestResolveProject_FilePathInference(t *testing.T) {
 	if got != expected {
 		t.Errorf("resolveProject() = %q, want %q (workspace fallback)", got, expected)
 	}
+
+	// Test: relative path should resolve against workspace root
+	relPath := "project-a/src/handler.go"
+	got, err = resolveProject(tmpDir, "", relPath)
+	if err != nil {
+		t.Fatalf("resolveProject() error = %v", err)
+	}
+	if got != "project-a" {
+		t.Errorf("resolveProject() with relative path = %q, want %q", got, "project-a")
+	}
 }
 
 func TestGenerateSettingsHooks(t *testing.T) {

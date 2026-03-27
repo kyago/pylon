@@ -56,13 +56,13 @@ func runLaunch() error {
 	// Ensure .claude/ and CLAUDE.md are in .gitignore
 	ensureGitignore(root)
 
-	// Step 6: Select permission mode
+	// Step 5: Select permission mode
 	permMode, err := selectPermissionMode(cfg.Runtime.PermissionMode)
 	if err != nil {
 		return err
 	}
 
-	// Step 7: Launch Claude Code (replace process)
+	// Step 6: Launch Claude Code (replace process)
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		return fmt.Errorf("claude 실행 파일을 찾을 수 없습니다: %w", err)
