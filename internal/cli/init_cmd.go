@@ -114,6 +114,12 @@ runtime:
 git:
   pr:
 %s
+
+ontology:
+  enabled: false
+  package_name: pylon-ontology
+  auto_extract: true
+  auto_verify: true
 `, backendInput, reviewerSection)
 
 	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte(configContent), 0644); err != nil {

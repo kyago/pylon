@@ -49,3 +49,9 @@ memory:
 
 conversation:
   retention_days: 90
+
+ontology:
+  enabled: true
+  package_name: pylon-ontology
+  auto_extract: true
+  auto_verify: true
