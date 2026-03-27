@@ -34,6 +34,8 @@ changelog:
       - "^test:"
       - "^ci:"
       - "^chore:"
+      - "^Merge"
+      - "^Revert"
 
 release:
   draft: false

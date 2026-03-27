@@ -23,6 +23,7 @@ clean:
 	rm -rf bin/
 
 release-dry-run:
+	@which goreleaser > /dev/null 2>&1 || (echo "ERROR: goreleaser not installed. See https://goreleaser.com/install"; exit 1)
 	goreleaser release --snapshot --clean
 
 tag:
