@@ -663,6 +663,9 @@ func generateOntologyMCPConfig(root string, cfg *config.Config) error {
 	// Ensure mcpServers map exists
 	servers, ok := existing["mcpServers"].(map[string]any)
 	if !ok {
+		if _, exists := existing["mcpServers"]; exists {
+			return fmt.Errorf(".mcp.json의 mcpServers 필드가 예상하지 못한 형식입니다")
+		}
 		servers = make(map[string]any)
 	}
 
