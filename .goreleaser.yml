@@ -36,9 +36,6 @@ changelog:
       - "^chore:"
 
 release:
-  github:
-    owner: kyago
-    name: pylon
   draft: false
   prerelease: auto
   name_template: "{{.Version}}"
