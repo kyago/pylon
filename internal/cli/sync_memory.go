@@ -77,8 +77,8 @@ func runSyncFromSession(project, agent, content string) error {
 	}
 	defer s.Close()
 
-	// Resolve project name
-	project, err = resolveProject(root, project)
+	// Resolve project name (no file path available in session sync)
+	project, err = resolveProject(root, project, "")
 	if err != nil {
 		return err
 	}
@@ -130,12 +130,6 @@ func runSyncIncremental(project, agent, filePath, content string) error {
 	}
 	defer s.Close()
 
-	// Resolve project name
-	project, err = resolveProject(root, project)
-	if err != nil {
-		return err
-	}
-
 	// Read content from stdin if not provided via flag
 	if content == "" {
 		content = readStdin()
@@ -152,6 +146,12 @@ func runSyncIncremental(project, agent, filePath, content string) error {
 		if parsedFile != "" && filePath == "" {
 			filePath = parsedFile
 		}
+	}
+
+	// Resolve project name using file path for multi-project inference
+	project, err = resolveProject(root, project, filePath)
+	if err != nil {
+		return err
 	}
 
 	if content == "" {
@@ -194,8 +194,10 @@ func runSyncIncremental(project, agent, filePath, content string) error {
 	return nil
 }
 
-// resolveProject determines the project name from flag or workspace context.
-func resolveProject(root, project string) (string, error) {
+// resolveProject determines the project name from flag, file path, or workspace context.
+// When filePath is provided in a multi-project workspace, it is matched against each
+// project's root directory to infer which project the file belongs to.
+func resolveProject(root, project, filePath string) (string, error) {
 	if project != "" {
 		return project, nil
 	}
@@ -215,7 +217,20 @@ func resolveProject(root, project string) (string, error) {
 		// Single project discovered: use its name
 		return projects[0].Name, nil
 	default:
-		// Multiple projects: fall back to workspace directory name.
+		// Multiple projects: try to infer from file path
+		if filePath != "" {
+			cleanFile := filepath.Clean(filePath)
+			// If filePath is relative, resolve against workspace root
+			if !filepath.IsAbs(cleanFile) {
+				cleanFile = filepath.Join(root, cleanFile)
+			}
+			for _, p := range projects {
+				projRoot := filepath.Clean(p.Path)
+				if strings.HasPrefix(cleanFile, projRoot+string(filepath.Separator)) || cleanFile == projRoot {
+					return p.Name, nil
+				}
+			}
+		}
 		// Hooks cannot pass --project dynamically, so erroring here would
 		// cause all hook invocations to fail in multi-project workspaces.
 		return filepath.Base(root), nil

@@ -48,33 +48,21 @@ func runLaunch() error {
 		projects = nil
 	}
 
-	// Step 4: Load project memory for context injection
-	var memoryContext string
-	dbPath := filepath.Join(root, ".pylon", "pylon.db")
-	if _, err := os.Stat(dbPath); err == nil {
-		s, err := store.NewStore(dbPath)
-		if err == nil {
-			_ = s.Migrate()
-			memoryContext = buildMemoryContext(s, projects, root)
-			s.Close()
-		}
-	}
-
-	// Step 5: Generate .claude/ directory structure
-	if err := generateClaudeDir(root, cfg, projects, memoryContext); err != nil {
+	// Step 4: Generate .claude/ directory structure
+	if err := generateClaudeDir(root, cfg, projects); err != nil {
 		return fmt.Errorf(".claude/ 생성 실패: %w", err)
 	}
 
 	// Ensure .claude/ and CLAUDE.md are in .gitignore
 	ensureGitignore(root)
 
-	// Step 6: Select permission mode
+	// Step 5: Select permission mode
 	permMode, err := selectPermissionMode(cfg.Runtime.PermissionMode)
 	if err != nil {
 		return err
 	}
 
-	// Step 7: Launch Claude Code (replace process)
+	// Step 6: Launch Claude Code (replace process)
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		return fmt.Errorf("claude 실행 파일을 찾을 수 없습니다: %w", err)
@@ -184,7 +172,7 @@ func buildClaudeArgs(cfg *config.Config, permMode string) []string {
 }
 
 // generateClaudeDir creates/updates the .claude/ directory from .pylon/ source of truth.
-func generateClaudeDir(root string, cfg *config.Config, projects []config.ProjectInfo, memoryContext string) error {
+func generateClaudeDir(root string, cfg *config.Config, projects []config.ProjectInfo) error {
 	claudeDir := filepath.Join(root, ".claude")
 	commandsDir := filepath.Join(claudeDir, "commands")
 
@@ -194,7 +182,7 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 	}
 
 	// Generate CLAUDE.md at workspace root
-	claudeMD := buildRootCLAUDEMD(cfg, projects, memoryContext, root)
+	claudeMD := buildRootCLAUDEMD(cfg, projects, root)
 	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte(claudeMD), 0644); err != nil {
 		return fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
 	}
@@ -306,7 +294,7 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 }
 
 // buildRootCLAUDEMD generates the root agent system prompt.
-func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memoryContext string, root string) string {
+func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root string) string {
 	var b strings.Builder
 
 	// Identity
@@ -397,13 +385,6 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, memory
 		}
 	}
 	b.WriteString("\n")
-
-	// Memory context (pre-injected from SQLite)
-	if memoryContext != "" {
-		b.WriteString("## 프로젝트 메모리 요약\n\n")
-		b.WriteString(memoryContext)
-		b.WriteString("\n")
-	}
 
 	// Rules
 	b.WriteString("## 행동 규칙\n\n")
@@ -501,42 +482,6 @@ func buildSlashCommands(root string) map[string]string {
 	return commands
 }
 
-// buildMemoryContext reads project memory from SQLite and formats it for CLAUDE.md injection.
-func buildMemoryContext(s *store.Store, projects []config.ProjectInfo, root string) string {
-	if len(projects) == 0 {
-		return ""
-	}
-
-	workspaceName := filepath.Base(root)
-
-	var b strings.Builder
-	for _, p := range projects {
-		entries, err := s.ListProjectMemory(p.Name)
-		if err != nil || len(entries) == 0 {
-			// Fallback: multi-project workspaces store memory under workspace name
-			if p.Name != workspaceName {
-				entries, err = s.ListProjectMemory(workspaceName)
-				if err != nil || len(entries) == 0 {
-					continue
-				}
-			} else {
-				continue
-			}
-		}
-
-		b.WriteString(fmt.Sprintf("### %s\n", p.Name))
-		for _, e := range entries {
-			// Skip high-volume "change" entries to avoid CLAUDE.md bloat
-			if e.Category == "change" {
-				continue
-			}
-			b.WriteString(fmt.Sprintf("- **[%s] %s**: %s\n", e.Category, e.Key, e.Content))
-		}
-		b.WriteString("\n")
-	}
-
-	return b.String()
-}
 
 // addToGitignore appends pylon-managed entries to .gitignore if not already present.
 func addClaudeDirToGitignore(root string) error {

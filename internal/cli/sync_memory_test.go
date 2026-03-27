@@ -302,7 +302,7 @@ func TestResolveProject_MultiProject(t *testing.T) {
 	// (not error) because hooks cannot pass --project dynamically
 	tmpDir := t.TempDir()
 	// DiscoverProjects will find 0 projects in an empty dir, so we test the fallback directly
-	got, err := resolveProject(tmpDir, "")
+	got, err := resolveProject(tmpDir, "", "")
 	if err != nil {
 		t.Fatalf("resolveProject() should not error: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestBuildIncrementalKey_UniqueTimestamp(t *testing.T) {
 
 func TestResolveProject(t *testing.T) {
 	// When project flag is explicitly set, use it directly
-	got, err := resolveProject("/tmp/test", "myproject")
+	got, err := resolveProject("/tmp/test", "myproject", "")
 	if err != nil {
 		t.Fatalf("resolveProject() error = %v", err)
 	}
@@ -386,7 +386,7 @@ func TestResolveProject(t *testing.T) {
 
 func TestResolveProject_FallbackToDirName(t *testing.T) {
 	tmpDir := t.TempDir()
-	got, err := resolveProject(tmpDir, "")
+	got, err := resolveProject(tmpDir, "", "")
 	if err != nil {
 		t.Fatalf("resolveProject() error = %v", err)
 	}
@@ -394,6 +394,71 @@ func TestResolveProject_FallbackToDirName(t *testing.T) {
 	expected := filepath.Base(tmpDir)
 	if got != expected {
 		t.Errorf("resolveProject() = %q, want %q", got, expected)
+	}
+}
+
+func TestResolveProject_FilePathInference(t *testing.T) {
+	// Setup: create a workspace with two projects
+	tmpDir := t.TempDir()
+	projADir := filepath.Join(tmpDir, "project-a")
+	projBDir := filepath.Join(tmpDir, "project-b")
+	for _, d := range []string{projADir, projBDir} {
+		pylonDir := filepath.Join(d, ".pylon")
+		if err := os.MkdirAll(pylonDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Create workspace-level .pylon/config.yml with projects
+	wsPylon := filepath.Join(tmpDir, ".pylon")
+	if err := os.MkdirAll(wsPylon, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsPylon, "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test: file in project-a should resolve to project-a
+	filePath := filepath.Join(projADir, "src", "main.go")
+	got, err := resolveProject(tmpDir, "", filePath)
+	if err != nil {
+		t.Fatalf("resolveProject() error = %v", err)
+	}
+	if got != "project-a" {
+		t.Errorf("resolveProject() = %q, want %q", got, "project-a")
+	}
+
+	// Test: file in project-b should resolve to project-b
+	filePath = filepath.Join(projBDir, "pkg", "util.go")
+	got, err = resolveProject(tmpDir, "", filePath)
+	if err != nil {
+		t.Fatalf("resolveProject() error = %v", err)
+	}
+	if got != "project-b" {
+		t.Errorf("resolveProject() = %q, want %q", got, "project-b")
+	}
+
+	// Test: file outside both projects should fallback to workspace name
+	filePath = filepath.Join(tmpDir, "README.md")
+	got, err = resolveProject(tmpDir, "", filePath)
+	if err != nil {
+		t.Fatalf("resolveProject() error = %v", err)
+	}
+	expected := filepath.Base(tmpDir)
+	if got != expected {
+		t.Errorf("resolveProject() = %q, want %q (workspace fallback)", got, expected)
+	}
+
+	// Test: relative path should resolve against workspace root
+	relPath := "project-a/src/handler.go"
+	got, err = resolveProject(tmpDir, "", relPath)
+	if err != nil {
+		t.Fatalf("resolveProject() error = %v", err)
+	}
+	if got != "project-a" {
+		t.Errorf("resolveProject() with relative path = %q, want %q", got, "project-a")
 	}
 }
 
@@ -784,7 +849,7 @@ func TestGenerateClaudeDir_IncludesSettings(t *testing.T) {
 		t.Fatalf("ParseConfig() error = %v", err)
 	}
 
-	err = generateClaudeDir(tmpDir, cfg, nil, "")
+	err = generateClaudeDir(tmpDir, cfg, nil)
 	if err != nil {
 		t.Fatalf("generateClaudeDir() error = %v", err)
 	}
