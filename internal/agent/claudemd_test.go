@@ -163,7 +163,6 @@ func TestClaudeMDBuilder_BuildWithCommunicationRules(t *testing.T) {
 		CommunicationRules: commRules,
 		TaskContext:        "백엔드 API 개발\n수용 기준: POST /api/users",
 		CompactionRules:    DefaultCompactionRules(),
-		ProjectMemory:      "Echo 프레임워크 사용",
 		DomainPaths:        []string{".pylon/domain/architecture.md"},
 	})
 	if err != nil {

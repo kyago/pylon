@@ -19,8 +19,7 @@ type BuildInput struct {
 	CommunicationRules string   // Priority 1: agent execution rules (~30 lines)
 	TaskContext        string   // Priority 2: acceptance criteria, constraints (~50 lines)
 	CompactionRules    string   // Priority 3: context management rules (~20 lines)
-	ProjectMemory      string   // Priority 4: proactive memory summary (~80 lines)
-	DomainPaths        []string // Priority 5: domain knowledge file paths (~20 lines)
+	DomainPaths        []string // Priority 4: domain knowledge file paths (~20 lines)
 }
 
 // Build constructs the CLAUDE.md content within the line limit.
@@ -39,7 +38,6 @@ func (b *ClaudeMDBuilder) Build(input BuildInput) (string, error) {
 		{"Communication Rules", input.CommunicationRules},
 		{"Task Context", input.TaskContext},
 		{"Context Management", input.CompactionRules},
-		{"Project Memory", input.ProjectMemory},
 		{"Domain Knowledge", buildDomainSection(input.DomainPaths)},
 	}
 
