@@ -234,14 +234,14 @@ func inferProjectName(repoURL string) string {
 	return name
 }
 
-// excludePylonFromSubmodule adds ".pylon/" to the submodule's git exclude file
-// so that generated .pylon/ files do not show up as untracked changes.
-func excludePylonFromSubmodule(projectDir string) error {
+// resolveGitExcludePath returns the absolute path to a project's .git/info/exclude file.
+// It uses "git rev-parse --git-dir" to correctly resolve submodule git directories.
+func resolveGitExcludePath(projectDir string) (string, error) {
 	gitDirCmd := exec.Command("git", "rev-parse", "--git-dir")
 	gitDirCmd.Dir = projectDir
 	out, err := gitDirCmd.Output()
 	if err != nil {
-		return fmt.Errorf("not a git repository: %w", err)
+		return "", fmt.Errorf("not a git repository: %w", err)
 	}
 
 	gitDir := strings.TrimSpace(string(out))
@@ -249,7 +249,16 @@ func excludePylonFromSubmodule(projectDir string) error {
 		gitDir = filepath.Join(projectDir, gitDir)
 	}
 
-	excludePath := filepath.Join(gitDir, "info", "exclude")
+	return filepath.Join(gitDir, "info", "exclude"), nil
+}
+
+// excludePylonFromSubmodule adds ".pylon/" to the submodule's git exclude file
+// so that generated .pylon/ files do not show up as untracked changes.
+func excludePylonFromSubmodule(projectDir string) error {
+	excludePath, err := resolveGitExcludePath(projectDir)
+	if err != nil {
+		return err
+	}
 
 	// Read existing exclude file if it exists
 	existing, err := os.ReadFile(excludePath)
@@ -263,7 +272,8 @@ func excludePylonFromSubmodule(projectDir string) error {
 	}
 
 	// Ensure info/ directory exists
-	if err := os.MkdirAll(filepath.Join(gitDir, "info"), 0755); err != nil {
+	infoDir := filepath.Dir(excludePath)
+	if err := os.MkdirAll(infoDir, 0755); err != nil {
 		return fmt.Errorf("failed to create git info directory: %w", err)
 	}
 
