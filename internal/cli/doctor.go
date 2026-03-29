@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -41,12 +42,19 @@ var checks = []Check{
 }
 
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check required tool installations and versions",
-		Long:  "Verify that all required tools (git, gh, claude) are installed and configured.",
-		RunE:  runDoctor,
+		Long: `Verify that all required tools (git, gh, claude) are installed and configured.
+
+Use --fix-excludes to automatically add .pylon/ to submodule .git/info/exclude
+for any projects that are missing the local-scope ignore entry.`,
+		RunE: runDoctor,
 	}
+
+	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in submodules")
+
+	return cmd
 }
 
 // runChecks executes all doctor checks and returns results.
@@ -79,6 +87,11 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	syncConfigIfWorkspace()
 
+	// Check submodule .pylon/ exclude settings
+	fixExcludes, _ := cmd.Flags().GetBool("fix-excludes")
+	fmt.Println()
+	checkSubmoduleExcludes(fixExcludes)
+
 	fmt.Println()
 	if allPassed {
 		fmt.Println("All checks passed.")
@@ -90,6 +103,89 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s: %s\n", f.Name, f.InstallURL)
 	}
 	return fmt.Errorf("doctor checks failed")
+}
+
+// checkSubmoduleExcludes verifies that all project submodules have .pylon/
+// in their .git/info/exclude for local-scope ignore.
+// When fix is true, missing entries are automatically added.
+func checkSubmoduleExcludes(fix bool) {
+	startDir := flagWorkspace
+	if startDir == "" {
+		startDir = "."
+	}
+	root, err := config.FindWorkspaceRoot(startDir)
+	if err != nil {
+		return // not in a workspace, skip
+	}
+
+	projects, err := config.DiscoverProjects(root)
+	if err != nil || len(projects) == 0 {
+		return
+	}
+
+	var missing []config.ProjectInfo
+	for _, p := range projects {
+		if !hasExcludeEntry(p.Path) {
+			missing = append(missing, p)
+		}
+	}
+
+	if len(missing) == 0 {
+		fmt.Printf("✓ 모든 서브모듈에 .pylon/ exclude 설정됨 (%d개 프로젝트)\n", len(projects))
+		return
+	}
+
+	if fix {
+		fixed := 0
+		for _, p := range missing {
+			if err := excludePylonFromSubmodule(p.Path); err != nil {
+				fmt.Printf("⚠ %s: exclude 설정 실패: %v\n", p.Name, err)
+			} else {
+				fmt.Printf("✓ %s: .pylon/ exclude 추가됨\n", p.Name)
+				fixed++
+			}
+		}
+		if fixed == len(missing) {
+			fmt.Printf("✓ %d개 서브모듈 exclude 수정 완료\n", fixed)
+		} else {
+			fmt.Printf("⚠ %d/%d 서브모듈 exclude 수정 완료, %d개 실패\n", fixed, len(missing), len(missing)-fixed)
+		}
+		return
+	}
+
+	fmt.Printf("⚠ .pylon/ exclude 미설정 서브모듈 %d개:\n", len(missing))
+	for _, p := range missing {
+		fmt.Printf("  - %s\n", p.Name)
+	}
+	fmt.Println("  수정: pylon doctor --fix-excludes 또는 각 프로젝트의 .git/info/exclude에 '.pylon/' 추가")
+}
+
+// hasExcludeEntry checks if a project's .git/info/exclude contains .pylon/.
+func hasExcludeEntry(projectDir string) bool {
+	gitDirCmd := exec.Command("git", "rev-parse", "--git-dir")
+	gitDirCmd.Dir = projectDir
+	out, err := gitDirCmd.Output()
+	if err != nil {
+		return false
+	}
+
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(projectDir, gitDir)
+	}
+
+	excludePath := filepath.Join(gitDir, "info", "exclude")
+	data, err := os.ReadFile(excludePath)
+	if err != nil {
+		return false
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == ".pylon/" {
+			return true
+		}
+	}
+	return false
 }
 
 // RunDoctorChecks runs doctor checks with detailed output and returns whether all passed.

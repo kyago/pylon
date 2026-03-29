@@ -215,6 +215,10 @@ ontology:
 		}); err != nil {
 			fmt.Printf("⚠ %s 등록 실패: %v\n", p.Name, err)
 		}
+		// Ensure .pylon/ is excluded from submodule git tracking
+		if err := excludePylonFromSubmodule(p.Path); err != nil {
+			fmt.Printf("⚠ %s: .pylon/ exclude 설정 실패: %v\n", p.Name, err)
+		}
 	}
 	if len(projects) > 0 {
 		fmt.Printf("✓ %d project(s) registered in DB\n", len(projects))
