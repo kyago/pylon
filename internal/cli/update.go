@@ -197,8 +197,9 @@ func fetchRelease(target string) (*githubRelease, error) {
 		return nil, fmt.Errorf("GitHub API 응답 오류: %s", resp.Status)
 	}
 
+	const maxAPIResponse = 1 * 1024 * 1024 // 1 MB
 	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAPIResponse)).Decode(&release); err != nil {
 		return nil, fmt.Errorf("응답 파싱 실패: %w", err)
 	}
 
@@ -226,15 +227,24 @@ func downloadFile(url string) (string, error) {
 		return "", fmt.Errorf("다운로드 응답 오류: %s", resp.Status)
 	}
 
+	if resp.ContentLength > 0 && resp.ContentLength > maxBinarySize {
+		return "", fmt.Errorf("다운로드 크기 제한 초과: 최대 %d바이트, 응답 크기 %d바이트", maxBinarySize, resp.ContentLength)
+	}
+
 	tmp, err := os.CreateTemp("", "pylon-update-*")
 	if err != nil {
 		return "", err
 	}
 	defer tmp.Close()
 
-	if _, err := io.Copy(tmp, io.LimitReader(resp.Body, maxBinarySize)); err != nil {
+	n, err := io.Copy(tmp, io.LimitReader(resp.Body, maxBinarySize+1))
+	if err != nil {
 		os.Remove(tmp.Name())
 		return "", err
+	}
+	if n > maxBinarySize {
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("다운로드 크기 제한 초과: 최대 %d바이트", maxBinarySize)
 	}
 
 	return tmp.Name(), nil
@@ -273,14 +283,23 @@ func extractFromTarGz(archivePath string) (string, error) {
 		}
 
 		if filepath.Base(hdr.Name) == "pylon" && hdr.Typeflag == tar.TypeReg {
+			if hdr.Size > maxBinarySize {
+				return "", fmt.Errorf("pylon 바이너리 크기(%d바이트)가 최대 허용 크기(%d바이트)를 초과합니다", hdr.Size, maxBinarySize)
+			}
 			tmp, err := os.CreateTemp("", "pylon-bin-*")
 			if err != nil {
 				return "", err
 			}
-			if _, err := io.Copy(tmp, io.LimitReader(tr, maxBinarySize)); err != nil {
+			n, err := io.Copy(tmp, io.LimitReader(tr, maxBinarySize+1))
+			if err != nil {
 				tmp.Close()
 				os.Remove(tmp.Name())
 				return "", err
+			}
+			if n > maxBinarySize {
+				tmp.Close()
+				os.Remove(tmp.Name())
+				return "", fmt.Errorf("pylon 바이너리 크기가 최대 허용 크기(%d바이트)를 초과합니다", maxBinarySize)
 			}
 			tmp.Close()
 			if err := os.Chmod(tmp.Name(), 0o755); err != nil {
@@ -305,20 +324,30 @@ func extractFromZip(archivePath string) (string, error) {
 	for _, f := range r.File {
 		name := filepath.Base(f.Name)
 		if name == "pylon" || name == "pylon.exe" {
+			if f.UncompressedSize64 > maxBinarySize {
+				return "", fmt.Errorf("pylon 바이너리 크기(%d바이트)가 최대 허용 크기(%d바이트)를 초과합니다", f.UncompressedSize64, maxBinarySize)
+			}
 			rc, err := f.Open()
 			if err != nil {
 				return "", err
 			}
-			defer rc.Close()
 
 			tmp, err := os.CreateTemp("", "pylon-bin-*")
 			if err != nil {
+				rc.Close()
 				return "", err
 			}
-			if _, err := io.Copy(tmp, io.LimitReader(rc, maxBinarySize)); err != nil {
+			n, err := io.Copy(tmp, io.LimitReader(rc, maxBinarySize+1))
+			rc.Close()
+			if err != nil {
 				tmp.Close()
 				os.Remove(tmp.Name())
 				return "", err
+			}
+			if n > maxBinarySize {
+				tmp.Close()
+				os.Remove(tmp.Name())
+				return "", fmt.Errorf("pylon 바이너리 크기가 최대 허용 크기(%d바이트)를 초과합니다", maxBinarySize)
 			}
 			tmp.Close()
 			if err := os.Chmod(tmp.Name(), 0o755); err != nil {
@@ -332,45 +361,56 @@ func extractFromZip(archivePath string) (string, error) {
 	return "", fmt.Errorf("아카이브에서 pylon 바이너리를 찾을 수 없습니다")
 }
 
-// replaceBinary atomically replaces the current binary with the new one.
+// replaceBinary replaces the current binary with the new one.
+// On Unix, it uses atomic rename. On Windows, self-update is not supported.
 func replaceBinary(dst, src string) error {
-	// Copy permissions from current binary
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("Windows에서는 실행 중인 바이너리를 자동 교체할 수 없습니다. " +
+			"GitHub Releases에서 바이너리를 수동으로 다운로드하세요: " +
+			"https://github.com/" + githubRepo + "/releases")
+	}
+
+	// Read permissions from current binary
 	info, err := os.Stat(dst)
 	if err != nil {
 		return err
 	}
 
-	// Rename old binary as backup
-	backup := dst + ".bak"
-	if err := os.Rename(dst, backup); err != nil {
-		return fmt.Errorf("백업 생성 실패: %w", err)
+	// Write new binary to a temp file in the same directory (same filesystem for atomic rename)
+	dstDir := filepath.Dir(dst)
+	tmp, err := os.CreateTemp(dstDir, ".pylon-update-*")
+	if err != nil {
+		return fmt.Errorf("임시 파일 생성 실패: %w", err)
 	}
+	tmpPath := tmp.Name()
 
-	// Copy new binary to destination
 	srcFile, err := os.Open(src)
 	if err != nil {
-		// Restore backup on failure
-		os.Rename(backup, dst) //nolint:errcheck
-		return err
-	}
-	defer srcFile.Close()
-
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
-	if err != nil {
-		os.Rename(backup, dst) //nolint:errcheck
+		tmp.Close()
+		os.Remove(tmpPath)
 		return err
 	}
 
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		dstFile.Close()
-		os.Remove(dst)
-		os.Rename(backup, dst) //nolint:errcheck
+	if _, err := io.Copy(tmp, srcFile); err != nil {
+		srcFile.Close()
+		tmp.Close()
+		os.Remove(tmpPath)
 		return err
 	}
-	dstFile.Close()
+	srcFile.Close()
+	tmp.Close()
 
-	// Remove backup
-	os.Remove(backup) //nolint:errcheck
+	// Set permissions to match original binary
+	if err := os.Chmod(tmpPath, info.Mode()); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	// Atomic rename (same filesystem guarantees atomicity on Unix)
+	if err := os.Rename(tmpPath, dst); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("바이너리 교체 실패: %w", err)
+	}
 
 	return nil
 }
