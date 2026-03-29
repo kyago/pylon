@@ -23,6 +23,14 @@ type Config struct {
 	Conversation ConversationConfig       `yaml:"conversation"`
 	Workflow     WorkflowConfig           `yaml:"workflow"`
 	Ontology     OntologyConfig           `yaml:"ontology"`
+	Skills       SkillsConfig             `yaml:"skills"`
+}
+
+// SkillsConfig defines agent skill management settings.
+type SkillsConfig struct {
+	Enabled               bool `yaml:"enabled"`
+	PreloadToAgents       bool `yaml:"preload_to_agents"`
+	ProgressiveDisclosure bool `yaml:"progressive_disclosure"`
 }
 
 // OntologyConfig defines pylon-ontology MCP server integration settings.
@@ -265,6 +273,11 @@ func ParseConfig(data []byte) (*Config, error) {
 		Ontology: OntologyConfig{
 			AutoExtract: true,
 			AutoVerify:  true,
+		},
+		Skills: SkillsConfig{
+			Enabled:               true,
+			PreloadToAgents:       true,
+			ProgressiveDisclosure: true,
 		},
 	}
 

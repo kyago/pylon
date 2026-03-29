@@ -305,10 +305,10 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	var b strings.Builder
 
 	// Identity
-	b.WriteString("# Pylon — AI 개발팀 오케스트레이터\n\n")
+	b.WriteString("# Pylon — AI 멀티도메인 오케스트레이터\n\n")
 	b.WriteString("당신은 Pylon의 루트 에이전트(PO)입니다.\n")
-	b.WriteString("사용자의 요구사항을 분석하고, AI 에이전트 팀을 오케스트레이션하여\n")
-	b.WriteString("분석 → 설계 → 구현 → 검증 → PR 생성까지 자동 수행합니다.\n\n")
+	b.WriteString("사용자의 요구사항을 분석하여 적절한 도메인과 워크플로우를 자동 선택하고,\n")
+	b.WriteString("해당 도메인의 전문 에이전트 팀을 오케스트레이션합니다.\n\n")
 
 	// Workspace info
 	b.WriteString("## 워크스페이스\n\n")
@@ -332,17 +332,28 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	}
 	b.WriteString("\n")
 
-	// Pipeline stages
-	b.WriteString("## 파이프라인 단계\n\n")
-	b.WriteString("요구사항 처리 시 다음 단계를 순서대로 수행합니다:\n\n")
-	b.WriteString("1. **PO 대화** — 요구사항 분석, 역질문, 수용 기준 확정\n")
-	b.WriteString("2. **Architect 분석** — 기술 방향성, 의존성, 아키텍처 결정\n")
-	b.WriteString("3. **PM 태스크 분해** — 작업 분해, 에이전트 할당, 실행 순서\n")
-	b.WriteString("4. **에이전트 실행** — 프로젝트별 에이전트가 병렬 구현\n")
-	b.WriteString("5. **교차 검증** — 빌드/테스트/린트 자동 검증\n")
-	b.WriteString("6. **PR 생성** — 변경사항 PR 생성\n")
-	b.WriteString("7. **PO 검증** — 수용 기준 충족 확인\n")
-	b.WriteString("8. **위키 갱신** — 도메인 지식 자동 업데이트\n\n")
+	// Domain auto-detection
+	b.WriteString("## 도메인 자동 감지\n\n")
+	b.WriteString("사용자의 요구사항을 분석하여 다음 도메인 중 하나를 자동 선택합니다:\n\n")
+	b.WriteString("| 도메인 | 키워드/신호 | 워크플로우 | 핵심 에이전트 |\n")
+	b.WriteString("|--------|-----------|-----------|-------------|\n")
+	b.WriteString("| **소프트웨어 개발** | 구현, 코드, API, 버그, PR, 테스트 | feature/bugfix/hotfix | architect, backend-dev, frontend-dev, test-engineer |\n")
+	b.WriteString("| **리서치/조사** | 조사, 분석, 비교, 보고서, 논문, 트렌드 | research | lead-researcher, web-searcher, academic-analyst, fact-checker |\n")
+	b.WriteString("| **콘텐츠 제작** | 글, 블로그, 문서, 번역, 편집, 작성 | content | writer, editor, seo-specialist |\n")
+	b.WriteString("| **마케팅** | 캠페인, 광고, SEO, 타겟, 퍼널, 시장 | marketing | market-researcher, copywriter, data-analyst |\n\n")
+	b.WriteString("도메인이 모호하면 가장 적합한 도메인을 선택하되, 확신이 없으면 사용자에게 확인합니다.\n")
+	b.WriteString("혼합 작업(예: '리서치 후 구현')은 단계별로 도메인을 전환합니다.\n\n")
+
+	// Domain-specific pipelines
+	b.WriteString("## 도메인별 파이프라인\n\n")
+	b.WriteString("### 소프트웨어 개발 (기본)\n")
+	b.WriteString("PO 대화 → Architect 분석 → PM 분해 → Agent 실행 → 검증 → PR → PO 검증 → 위키 갱신\n\n")
+	b.WriteString("### 리서치/조사\n")
+	b.WriteString("PO 대화 → 병렬 조사 (web/academic/community) → 교차 검증 → 보고서 작성 → 팩트 체크\n\n")
+	b.WriteString("### 콘텐츠 제작\n")
+	b.WriteString("PO 대화 → 초안 작성 → 편집/리뷰 → (피드백 시 재작성 루프) → 최종본\n\n")
+	b.WriteString("### 마케팅\n")
+	b.WriteString("PO 대화 → 시장 조사 → 전략 수립 → 콘텐츠 생성 → 검증\n\n")
 
 	// State management
 	b.WriteString("## 상태 관리\n\n")
@@ -373,12 +384,45 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	b.WriteString("- `/pl:index` — 프로젝트 코드베이스 인덱싱\n")
 	b.WriteString("- `/pl:cancel` — 파이프라인 취소\n\n")
 
-	// Sub-agent orchestration
+	// Sub-agent orchestration with domain grouping
 	b.WriteString("## 서브 에이전트 오케스트레이션\n\n")
 	b.WriteString("Claude Code의 Agent 도구를 사용하여 서브 에이전트를 병렬 실행합니다.\n")
-	b.WriteString("각 에이전트 정의는 `.pylon/agents/`에 있습니다.\n")
 	b.WriteString("독립 태스크는 단일 메시지에서 여러 Agent 호출로 병렬 실행합니다.\n")
 	b.WriteString("`isolation: \"worktree\"` 옵션으로 git worktree 격리를 사용합니다.\n\n")
+
+	// Discover agents by domain and list them
+	pylonDir := filepath.Join(root, ".pylon")
+	agentsByDomain := discoverAgentsByDomain(pylonDir)
+	domainOrder := []string{"software", "research", "content", "marketing"}
+	domainLabels := map[string]string{
+		"software":  "소프트웨어 개발",
+		"research":  "리서치/조사",
+		"content":   "콘텐츠 제작",
+		"marketing": "마케팅",
+	}
+	for _, domain := range domainOrder {
+		agents, ok := agentsByDomain[domain]
+		if !ok || len(agents) == 0 {
+			continue
+		}
+		label := domainLabels[domain]
+		if label == "" {
+			label = domain
+		}
+		b.WriteString(fmt.Sprintf("### %s 에이전트\n", label))
+		for _, a := range agents {
+			b.WriteString(fmt.Sprintf("- `%s` — %s\n", a.Name, a.Role))
+		}
+		b.WriteString("\n")
+	}
+	// List agents with unknown/empty domain
+	if others, ok := agentsByDomain[""]; ok && len(others) > 0 {
+		b.WriteString("### 기타 에이전트\n")
+		for _, a := range others {
+			b.WriteString(fmt.Sprintf("- `%s` — %s\n", a.Name, a.Role))
+		}
+		b.WriteString("\n")
+	}
 
 	// Domain knowledge
 	b.WriteString("## 도메인 지식\n\n")
@@ -431,6 +475,32 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	b.WriteString("- 추측이 아닌 코드에서 확인된 사실만 기록합니다\n")
 
 	return b.String()
+}
+
+// discoverAgentsByDomain reads .pylon/agents/ and groups agents by domain field.
+// Agents without a domain field are grouped under "software" (default).
+func discoverAgentsByDomain(pylonDir string) map[string][]config.AgentConfig {
+	result := make(map[string][]config.AgentConfig)
+	agentsDir := filepath.Join(pylonDir, "agents")
+	entries, err := os.ReadDir(agentsDir)
+	if err != nil {
+		return result
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		agent, err := config.ParseAgentFile(filepath.Join(agentsDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		domain := agent.Domain
+		if domain == "" {
+			domain = "software"
+		}
+		result[domain] = append(result[domain], *agent)
+	}
+	return result
 }
 
 // buildSlashCommands generates .claude/commands/pl/ markdown files.

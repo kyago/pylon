@@ -1,0 +1,10 @@
+name: marketing
+description: Marketing campaign workflow with parallel research and validation
+stages:
+  - init
+  - po_conversation
+  - fan_out
+  - fan_in
+  - generate
+  - validate
+  - completed

@@ -19,6 +19,14 @@ const (
 	StageWikiUpdate        Stage = "wiki_update"
 	StageCompleted         Stage = "completed"
 	StageFailed            Stage = "failed"
+
+	// Generic stages for non-software domains (Harness architecture patterns)
+	StageFanOut         Stage = "fan_out"          // Parallel branch (fan-out/fan-in pattern)
+	StageFanIn          Stage = "fan_in"           // Parallel merge
+	StageExpertSelect   Stage = "expert_select"    // Expert pool selection
+	StageGenerate       Stage = "generate"         // Content/report generation
+	StageValidate       Stage = "validate"         // Validation (generate-verify pattern)
+	StageSupervisorCheck Stage = "supervisor_check" // Supervisor checkpoint
 )
 
 // PipelineStatus represents the operational status of a pipeline (orthogonal to Stage).
@@ -46,6 +54,13 @@ func AllStages() []Stage {
 		StageWikiUpdate,
 		StageCompleted,
 		StageFailed,
+		// Generic stages for non-software domains
+		StageFanOut,
+		StageFanIn,
+		StageExpertSelect,
+		StageGenerate,
+		StageValidate,
+		StageSupervisorCheck,
 	}
 }
 
@@ -59,6 +74,34 @@ var ArtifactToStage = map[string]Stage{
 	"execution-log.json":      StageAgentExecuting,
 	"verification.json":       StageVerification,
 	"pr.json":                 StagePRCreation,
+}
+
+// StageFromArtifactsWithMap determines the current stage based on which artifacts exist,
+// using a custom artifact-to-stage mapping. If artifactMap is nil, falls back to the
+// default ArtifactToStage map (backward compatible).
+func StageFromArtifactsWithMap(existingFiles []string, artifactMap map[string]Stage) Stage {
+	m := artifactMap
+	if m == nil {
+		m = ArtifactToStage
+	}
+
+	fileSet := make(map[string]bool, len(existingFiles))
+	for _, f := range existingFiles {
+		fileSet[f] = true
+	}
+
+	// Build ordered list from the map (reverse order by pipeline position)
+	var lastStage Stage
+	for file, stage := range m {
+		if fileSet[file] {
+			lastStage = stage
+		}
+	}
+
+	if lastStage == "" {
+		return StageInit
+	}
+	return lastStage
 }
 
 // StageFromArtifacts determines the current stage based on which artifacts exist.
