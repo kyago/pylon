@@ -183,6 +183,7 @@ func fetchRelease(target string) (*githubRelease, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -192,6 +193,9 @@ func fetchRelease(target string) (*githubRelease, error) {
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("버전 %q을(를) 찾을 수 없습니다", target)
+	}
+	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		return nil, fmt.Errorf("GitHub API rate limit 초과. 잠시 후 다시 시도하세요. (리셋: %s)", resp.Header.Get("X-RateLimit-Reset"))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API 응답 오류: %s", resp.Status)
@@ -398,6 +402,13 @@ func replaceBinary(dst, src string) error {
 		return err
 	}
 	srcFile.Close()
+
+	// Flush to disk before rename for crash safety
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
 	tmp.Close()
 
 	// Set permissions to match original binary
