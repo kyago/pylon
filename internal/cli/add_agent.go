@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"unicode"
+
 	"github.com/kyago/pylon/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -61,7 +63,7 @@ func runAddAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	// Capitalize for display (avoid deprecated strings.Title)
-	displayName := strings.ReplaceAll(name, "-", " ")
+	displayName := toTitleCase(strings.ReplaceAll(name, "-", " "))
 
 	// Generate agent template
 	content := fmt.Sprintf(`---
@@ -98,4 +100,17 @@ domain: %s
 	fmt.Println("에이전트 정의를 편집하여 역할과 워크플로우를 구체화하세요.")
 
 	return nil
+}
+
+// toTitleCase capitalizes the first letter of each word.
+func toTitleCase(s string) string {
+	prev := ' '
+	return strings.Map(func(r rune) rune {
+		if prev == ' ' || prev == '\t' {
+			prev = r
+			return unicode.ToUpper(r)
+		}
+		prev = r
+		return r
+	}, s)
 }

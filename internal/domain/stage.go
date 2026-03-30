@@ -76,32 +76,35 @@ var ArtifactToStage = map[string]Stage{
 	"pr.json":                 StagePRCreation,
 }
 
-// StageFromArtifactsWithMap determines the current stage based on which artifacts exist,
-// using a custom artifact-to-stage mapping. If artifactMap is nil, falls back to the
-// default ArtifactToStage map (backward compatible).
-func StageFromArtifactsWithMap(existingFiles []string, artifactMap map[string]Stage) Stage {
-	m := artifactMap
-	if m == nil {
-		m = ArtifactToStage
-	}
+// ArtifactStageEntry is an ordered artifact-to-stage mapping entry.
+// Entries should be ordered from latest pipeline stage to earliest (reverse pipeline order).
+type ArtifactStageEntry struct {
+	File  string
+	Stage Stage
+}
 
+// StageFromArtifactsWithMap determines the current stage based on which artifacts exist,
+// using a custom ordered artifact-to-stage mapping. Entries must be ordered from latest
+// to earliest pipeline stage (same as the orderedArtifacts pattern in StageFromArtifacts).
+// If entries is nil, falls back to the default ArtifactToStage map (backward compatible).
+func StageFromArtifactsWithMap(existingFiles []string, entries []ArtifactStageEntry) Stage {
 	fileSet := make(map[string]bool, len(existingFiles))
 	for _, f := range existingFiles {
 		fileSet[f] = true
 	}
 
-	// Build ordered list from the map (reverse order by pipeline position)
-	var lastStage Stage
-	for file, stage := range m {
-		if fileSet[file] {
-			lastStage = stage
-		}
+	if entries == nil {
+		// Fallback to default map via StageFromArtifacts behavior
+		return StageFromArtifacts(existingFiles)
 	}
 
-	if lastStage == "" {
-		return StageInit
+	// Entries are ordered latest-first; first match = highest completed stage
+	for _, e := range entries {
+		if fileSet[e.File] {
+			return e.Stage
+		}
 	}
-	return lastStage
+	return StageInit
 }
 
 // StageFromArtifacts determines the current stage based on which artifacts exist.
