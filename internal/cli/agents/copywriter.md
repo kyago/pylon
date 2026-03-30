@@ -2,6 +2,8 @@
 name: copywriter
 role: Copywriter
 domain: marketing
+skills:
+  - marketing-framework
 ---
 
 # Copywriter

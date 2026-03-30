@@ -2,6 +2,8 @@
 name: academic-analyst
 role: Academic Research Analyst
 domain: research
+skills:
+  - research-methodology
 ---
 
 # Academic Research Analyst

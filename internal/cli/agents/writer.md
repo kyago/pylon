@@ -2,6 +2,8 @@
 name: writer
 role: Content Writer
 domain: content
+skills:
+  - content-writing-guide
 ---
 
 # Content Writer

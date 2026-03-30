@@ -2,6 +2,8 @@
 name: report-writer
 role: Research Report Writer
 domain: research
+skills:
+  - research-methodology
 ---
 
 # Research Report Writer

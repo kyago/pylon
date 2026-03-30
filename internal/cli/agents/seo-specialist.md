@@ -2,6 +2,8 @@
 name: seo-specialist
 role: SEO Specialist
 domain: content
+skills:
+  - content-writing-guide
 ---
 
 # SEO Specialist

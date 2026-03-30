@@ -2,6 +2,8 @@
 name: data-analyst
 role: Marketing Data Analyst
 domain: marketing
+skills:
+  - marketing-framework
 ---
 
 # Marketing Data Analyst

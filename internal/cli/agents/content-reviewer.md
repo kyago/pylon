@@ -2,6 +2,8 @@
 name: content-reviewer
 role: Content QA Reviewer
 domain: content
+skills:
+  - content-writing-guide
 ---
 
 # Content QA Reviewer

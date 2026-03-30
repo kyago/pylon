@@ -2,6 +2,8 @@
 name: web-searcher
 role: Web Search Specialist
 domain: research
+skills:
+  - research-methodology
 ---
 
 # Web Search Specialist

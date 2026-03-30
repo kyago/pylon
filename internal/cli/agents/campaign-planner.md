@@ -2,6 +2,8 @@
 name: campaign-planner
 role: Campaign Planner
 domain: marketing
+skills:
+  - marketing-framework
 ---
 
 # Campaign Planner

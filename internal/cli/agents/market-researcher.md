@@ -2,6 +2,8 @@
 name: market-researcher
 role: Market Research Analyst
 domain: marketing
+skills:
+  - marketing-framework
 ---
 
 # Market Research Analyst

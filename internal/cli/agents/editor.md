@@ -2,6 +2,8 @@
 name: editor
 role: Content Editor
 domain: content
+skills:
+  - content-writing-guide
 ---
 
 # Content Editor

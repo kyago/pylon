@@ -229,7 +229,8 @@ ontology:
 	fmt.Println("Created:")
 	fmt.Println("  .pylon/config.yml          - workspace configuration")
 	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
-	fmt.Println("  .pylon/agents/             - agent definitions (23 agents)")
+	agentCount := countEmbeddedAgents()
+	fmt.Printf("  .pylon/agents/             - agent definitions (%d agents)\n", agentCount)
 	fmt.Println("  .pylon/skills/             - agent skills")
 	fmt.Println("  .pylon/scripts/bash/       - pipeline shell scripts")
 	fmt.Println("  .pylon/commands/           - pipeline slash commands")
@@ -289,6 +290,20 @@ func writeScriptTemplates(pylonDir string) error {
 		}
 	}
 	return nil
+}
+
+func countEmbeddedAgents() int {
+	entries, err := embeddedAgents.ReadDir("agents")
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			count++
+		}
+	}
+	return count
 }
 
 func writeSkillTemplates(pylonDir string) error {

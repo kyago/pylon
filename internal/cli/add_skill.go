@@ -51,9 +51,8 @@ func runAddSkill(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("스킬 '%s'가 이미 존재합니다: %s", name, skillPath)
 	}
 
-	// Generate skill template
+	// Generate skill template (avoid deprecated strings.Title)
 	displayName := strings.ReplaceAll(name, "-", " ")
-	displayName = strings.Title(displayName)
 
 	content := fmt.Sprintf(`---
 name: %s

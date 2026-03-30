@@ -2,6 +2,8 @@
 name: fact-checker
 role: Fact Checker & Cross-Validator
 domain: research
+skills:
+  - research-methodology
 ---
 
 # Fact Checker & Cross-Validator

@@ -2,6 +2,8 @@
 name: lead-researcher
 role: Lead Researcher
 domain: research
+skills:
+  - research-methodology
 ---
 
 # Lead Researcher

@@ -2,6 +2,8 @@
 name: content-strategist
 role: Content Strategist
 domain: content
+skills:
+  - content-writing-guide
 ---
 
 # Content Strategist

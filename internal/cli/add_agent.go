@@ -60,9 +60,8 @@ func runAddAgent(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("에이전트 '%s'가 이미 존재합니다: %s", name, agentPath)
 	}
 
-	// Capitalize role for display
+	// Capitalize for display (avoid deprecated strings.Title)
 	displayName := strings.ReplaceAll(name, "-", " ")
-	displayName = strings.Title(displayName)
 
 	// Generate agent template
 	content := fmt.Sprintf(`---

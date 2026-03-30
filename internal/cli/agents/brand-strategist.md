@@ -2,6 +2,8 @@
 name: brand-strategist
 role: Brand Strategist
 domain: marketing
+skills:
+  - marketing-framework
 ---
 
 # Brand Strategist
