@@ -19,6 +19,14 @@ const (
 	StageWikiUpdate        Stage = "wiki_update"
 	StageCompleted         Stage = "completed"
 	StageFailed            Stage = "failed"
+
+	// Generic stages for non-software domains (Harness architecture patterns)
+	StageFanOut         Stage = "fan_out"          // Parallel branch (fan-out/fan-in pattern)
+	StageFanIn          Stage = "fan_in"           // Parallel merge
+	StageExpertSelect   Stage = "expert_select"    // Expert pool selection
+	StageGenerate       Stage = "generate"         // Content/report generation
+	StageValidate       Stage = "validate"         // Validation (generate-verify pattern)
+	StageSupervisorCheck Stage = "supervisor_check" // Supervisor checkpoint
 )
 
 // PipelineStatus represents the operational status of a pipeline (orthogonal to Stage).
@@ -46,6 +54,13 @@ func AllStages() []Stage {
 		StageWikiUpdate,
 		StageCompleted,
 		StageFailed,
+		// Generic stages for non-software domains
+		StageFanOut,
+		StageFanIn,
+		StageExpertSelect,
+		StageGenerate,
+		StageValidate,
+		StageSupervisorCheck,
 	}
 }
 
@@ -59,6 +74,37 @@ var ArtifactToStage = map[string]Stage{
 	"execution-log.json":      StageAgentExecuting,
 	"verification.json":       StageVerification,
 	"pr.json":                 StagePRCreation,
+}
+
+// ArtifactStageEntry is an ordered artifact-to-stage mapping entry.
+// Entries should be ordered from latest pipeline stage to earliest (reverse pipeline order).
+type ArtifactStageEntry struct {
+	File  string
+	Stage Stage
+}
+
+// StageFromArtifactsWithMap determines the current stage based on which artifacts exist,
+// using a custom ordered artifact-to-stage mapping. Entries must be ordered from latest
+// to earliest pipeline stage (same as the orderedArtifacts pattern in StageFromArtifacts).
+// If entries is nil, falls back to the default ArtifactToStage map (backward compatible).
+func StageFromArtifactsWithMap(existingFiles []string, entries []ArtifactStageEntry) Stage {
+	fileSet := make(map[string]bool, len(existingFiles))
+	for _, f := range existingFiles {
+		fileSet[f] = true
+	}
+
+	if entries == nil {
+		// Fallback to default map via StageFromArtifacts behavior
+		return StageFromArtifacts(existingFiles)
+	}
+
+	// Entries are ordered latest-first; first match = highest completed stage
+	for _, e := range entries {
+		if fileSet[e.File] {
+			return e.Stage
+		}
+	}
+	return StageInit
 }
 
 // StageFromArtifacts determines the current stage based on which artifacts exist.

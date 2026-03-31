@@ -25,6 +25,8 @@ type AgentConfig struct {
 	Model          string            `yaml:"model"`
 	Timeout        string            `yaml:"timeout"`
 	Env            map[string]string `yaml:"env"`
+	Domain         string            `yaml:"domain"`
+	Skills         []string          `yaml:"skills"`
 
 	// Markdown body (everything after the second ---)
 	Body string `yaml:"-"`

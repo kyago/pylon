@@ -21,6 +21,9 @@ var embeddedAgents embed.FS
 //go:embed scripts/bash/*.sh
 var embeddedScripts embed.FS
 
+//go:embed skills/*.md
+var embeddedSkills embed.FS
+
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
@@ -155,9 +158,9 @@ ontology:
 		return err
 	}
 
-	// Create .gitkeep in skills/
-	if err := os.WriteFile(filepath.Join(pylonDir, "skills", ".gitkeep"), []byte(""), 0644); err != nil {
-		return fmt.Errorf("failed to create skills/.gitkeep: %w", err)
+	// Create skill templates
+	if err := writeSkillTemplates(pylonDir); err != nil {
+		return err
 	}
 
 	// Step 5: Update .gitignore
@@ -232,7 +235,8 @@ ontology:
 	fmt.Println("Created:")
 	fmt.Println("  .pylon/config.yml          - workspace configuration")
 	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
-	fmt.Println("  .pylon/agents/             - agent definitions (23 agents)")
+	agentCount := countEmbeddedAgents()
+	fmt.Printf("  .pylon/agents/             - agent definitions (%d agents)\n", agentCount)
 	fmt.Println("  .pylon/skills/             - agent skills")
 	fmt.Println("  .pylon/scripts/bash/       - pipeline shell scripts")
 	fmt.Println("  .pylon/commands/           - pipeline slash commands")
@@ -289,6 +293,42 @@ func writeScriptTemplates(pylonDir string) error {
 		path := filepath.Join(pylonDir, "scripts", "bash", entry.Name())
 		if err := os.WriteFile(path, content, 0755); err != nil {
 			return fmt.Errorf("failed to create script %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
+}
+
+func countEmbeddedAgents() int {
+	entries, err := embeddedAgents.ReadDir("agents")
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			count++
+		}
+	}
+	return count
+}
+
+func writeSkillTemplates(pylonDir string) error {
+	entries, err := embeddedSkills.ReadDir("skills")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded skills: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		content, err := embeddedSkills.ReadFile("skills/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("failed to read skill %s: %w", entry.Name(), err)
+		}
+		path := filepath.Join(pylonDir, "skills", entry.Name())
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			return fmt.Errorf("failed to create skill %s: %w", entry.Name(), err)
 		}
 	}
 	return nil

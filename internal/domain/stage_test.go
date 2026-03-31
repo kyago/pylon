@@ -17,6 +17,13 @@ func TestAllStages_ContainsAllConstants(t *testing.T) {
 		StageWikiUpdate,
 		StageCompleted,
 		StageFailed,
+		// Generic stages for non-software domains
+		StageFanOut,
+		StageFanIn,
+		StageExpertSelect,
+		StageGenerate,
+		StageValidate,
+		StageSupervisorCheck,
 	}
 
 	all := AllStages()

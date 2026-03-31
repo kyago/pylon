@@ -1,0 +1,11 @@
+name: content
+description: Content creation pipeline with review loops
+stages:
+  - init
+  - po_conversation
+  - generate
+  - validate
+  - completed
+loops:
+  - from: validate
+    to: generate
