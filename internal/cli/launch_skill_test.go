@@ -229,6 +229,102 @@ Skill body content here`
 	}
 }
 
+func TestGenerateClaudeAgentsWithSkills_UserFileProtected(t *testing.T) {
+	root := t.TempDir()
+	pylonDir := filepath.Join(root, ".pylon")
+	agentsDir := filepath.Join(pylonDir, "agents")
+	claudeAgentsDir := filepath.Join(root, ".claude", "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.MkdirAll(claudeAgentsDir, 0755)
+
+	// Write a test agent with skills
+	agentContent := `---
+name: test-agent
+role: Test Agent
+skills:
+  - some-skill
+---
+# Test Agent`
+	os.WriteFile(filepath.Join(agentsDir, "test-agent.md"), []byte(agentContent), 0644)
+
+	// Write a test skill
+	skillsDir := filepath.Join(pylonDir, "skills")
+	os.MkdirAll(skillsDir, 0755)
+	skillContent := `---
+name: some-skill
+description: A test skill
+---
+Skill body`
+	os.WriteFile(filepath.Join(skillsDir, "some-skill.md"), []byte(skillContent), 0644)
+
+	// Pre-create a regular file (user-created) in .claude/agents/
+	userContent := "user custom agent content"
+	os.WriteFile(filepath.Join(claudeAgentsDir, "test-agent.md"), []byte(userContent), 0644)
+
+	cfg := &config.Config{
+		Skills: config.SkillsConfig{
+			Enabled:               true,
+			PreloadToAgents:       true,
+			ProgressiveDisclosure: false,
+		},
+	}
+
+	err := generateClaudeAgentsWithSkills(root, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// User file should be preserved, not overwritten
+	content, _ := os.ReadFile(filepath.Join(claudeAgentsDir, "test-agent.md"))
+	if string(content) != userContent {
+		t.Errorf("user file should be preserved, got %q", string(content))
+	}
+}
+
+func TestGenerateClaudeAgentsWithSkills_StaleCleanup(t *testing.T) {
+	root := t.TempDir()
+	pylonDir := filepath.Join(root, ".pylon")
+	agentsDir := filepath.Join(pylonDir, "agents")
+	claudeAgentsDir := filepath.Join(root, ".claude", "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.MkdirAll(claudeAgentsDir, 0755)
+
+	// Write one agent in .pylon/agents/
+	agentContent := `---
+name: active-agent
+role: Active Agent
+---
+# Active Agent`
+	os.WriteFile(filepath.Join(agentsDir, "active-agent.md"), []byte(agentContent), 0644)
+
+	// Create a stale symlink in .claude/agents/ (agent was deleted from .pylon/agents/)
+	staleLink := filepath.Join(claudeAgentsDir, "deleted-agent.md")
+	os.Symlink(filepath.Join("..", "..", ".pylon", "agents", "deleted-agent.md"), staleLink)
+
+	cfg := &config.Config{
+		Skills: config.SkillsConfig{
+			Enabled:               true,
+			PreloadToAgents:       true,
+			ProgressiveDisclosure: false,
+		},
+	}
+
+	err := generateClaudeAgentsWithSkills(root, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Stale symlink should be removed
+	if _, err := os.Lstat(staleLink); !os.IsNotExist(err) {
+		t.Error("stale symlink should be removed")
+	}
+
+	// Active agent should still exist
+	if _, err := os.Lstat(filepath.Join(claudeAgentsDir, "active-agent.md")); err != nil {
+		t.Error("active agent should still exist")
+	}
+}
+
 func TestGenerateClaudeAgentsWithSkills_PreloadDisabled(t *testing.T) {
 	root := t.TempDir()
 	pylonDir := filepath.Join(root, ".pylon")

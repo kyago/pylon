@@ -647,17 +647,24 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 	// Preload skill map for efficient lookup
 	skillMap := make(map[string]*config.SkillConfig)
 	if cfg.Skills.Enabled && cfg.Skills.PreloadToAgents {
-		skills, _ := config.DiscoverSkills(skillsDir)
+		skills, err := config.DiscoverSkills(skillsDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "경고: 스킬 로드 실패: %v\n", err)
+		}
 		for _, s := range skills {
 			skillMap[s.Name] = s
 		}
 	}
+
+	// Track which agent files are expected so we can clean up stale entries
+	expectedAgents := make(map[string]bool)
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 
+		expectedAgents[entry.Name()] = true
 		agentPath := filepath.Join(pylonAgentsDir, entry.Name())
 		linkPath := filepath.Join(claudeAgentsDir, entry.Name())
 
@@ -691,10 +698,37 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 		// Append skill section to agent content
 		combined := string(content) + "\n\n" + injected
 
-		// Remove existing symlink or file, then write generated file
-		os.Remove(linkPath)
+		// Remove existing symlink only; preserve user-created regular files
+		if info, err := os.Lstat(linkPath); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				os.Remove(linkPath)
+			} else {
+				// Regular file exists — don't overwrite user files
+				continue
+			}
+		}
 		if err := os.WriteFile(linkPath, []byte(combined), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "경고: %s 에이전트 파일 생성 실패: %v\n", entry.Name(), err)
+		}
+	}
+
+	// Clean up stale entries in .claude/agents/ that no longer exist in .pylon/agents/
+	claudeEntries, _ := os.ReadDir(claudeAgentsDir)
+	for _, ce := range claudeEntries {
+		if ce.IsDir() || !strings.HasSuffix(ce.Name(), ".md") {
+			continue
+		}
+		if expectedAgents[ce.Name()] {
+			continue
+		}
+		stale := filepath.Join(claudeAgentsDir, ce.Name())
+		info, err := os.Lstat(stale)
+		if err != nil {
+			continue
+		}
+		// Only remove symlinks and pylon-generated files (not user files)
+		if info.Mode()&os.ModeSymlink != 0 {
+			os.Remove(stale)
 		}
 	}
 
