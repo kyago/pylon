@@ -285,6 +285,11 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		}
 	}
 
+	// Generate .claude/agents/ with skill injection
+	if err := generateClaudeAgentsWithSkills(root, cfg); err != nil {
+		return fmt.Errorf(".claude/agents/ 생성 실패: %w", err)
+	}
+
 	// Generate hooks in .claude/settings.json for Claude Code session lifecycle
 	if err := generateSettingsHooks(claudeDir); err != nil {
 		return fmt.Errorf("settings.json hooks 생성 실패: %w", err)
@@ -618,6 +623,139 @@ func addClaudeDirToGitignore(root string) error {
 	}
 	_, err = f.WriteString(b.String())
 	return err
+}
+
+// generateClaudeAgentsWithSkills generates .claude/agents/ files with skill injection.
+// For agents with skills: generates a file with skill content appended to the body.
+// For agents without skills: creates a symlink to .pylon/agents/ (default behavior).
+// Respects SkillsConfig flags: Enabled, PreloadToAgents, ProgressiveDisclosure.
+func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
+	pylonDir := filepath.Join(root, ".pylon")
+	pylonAgentsDir := filepath.Join(pylonDir, "agents")
+	claudeAgentsDir := filepath.Join(root, ".claude", "agents")
+	skillsDir := filepath.Join(pylonDir, "skills")
+
+	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(pylonAgentsDir)
+	if err != nil {
+		return nil // no agents directory, nothing to do
+	}
+
+	// Preload skill map for efficient lookup
+	skillMap := make(map[string]*config.SkillConfig)
+	if cfg.Skills.Enabled && cfg.Skills.PreloadToAgents {
+		skills, _ := config.DiscoverSkills(skillsDir)
+		for _, s := range skills {
+			skillMap[s.Name] = s
+		}
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		agentPath := filepath.Join(pylonAgentsDir, entry.Name())
+		linkPath := filepath.Join(claudeAgentsDir, entry.Name())
+
+		// Parse agent to check for skills
+		agent, err := config.ParseAgentFile(agentPath)
+		if err != nil {
+			// Unparseable agent — fall back to symlink
+			ensureSymlink(linkPath, filepath.Join("..", "..", ".pylon", "agents", entry.Name()))
+			continue
+		}
+
+		// If skills disabled or agent has no skills, use symlink
+		if !cfg.Skills.Enabled || !cfg.Skills.PreloadToAgents || len(agent.Skills) == 0 {
+			ensureSymlink(linkPath, filepath.Join("..", "..", ".pylon", "agents", entry.Name()))
+			continue
+		}
+
+		// Agent has skills — generate file with skill content injected
+		content, err := os.ReadFile(agentPath)
+		if err != nil {
+			continue
+		}
+
+		injected := buildSkillInjection(agent.Skills, skillMap, cfg.Skills.ProgressiveDisclosure)
+		if injected == "" {
+			// No matching skills found, use symlink
+			ensureSymlink(linkPath, filepath.Join("..", "..", ".pylon", "agents", entry.Name()))
+			continue
+		}
+
+		// Append skill section to agent content
+		combined := string(content) + "\n\n" + injected
+
+		// Remove existing symlink or file, then write generated file
+		os.Remove(linkPath)
+		if err := os.WriteFile(linkPath, []byte(combined), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "경고: %s 에이전트 파일 생성 실패: %v\n", entry.Name(), err)
+		}
+	}
+
+	return nil
+}
+
+// buildSkillInjection generates the skill content to inject into an agent file.
+// If progressiveDisclosure is true, only metadata (name + description) is injected.
+// If false, the full skill body is injected.
+func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillConfig, progressiveDisclosure bool) string {
+	var b strings.Builder
+	injected := false
+
+	for _, name := range skillNames {
+		skill, ok := skillMap[name]
+		if !ok {
+			continue
+		}
+
+		if !injected {
+			b.WriteString("## 주입된 스킬\n\n")
+			injected = true
+		}
+
+		if progressiveDisclosure {
+			// Metadata only: name + description
+			b.WriteString(fmt.Sprintf("### %s\n", skill.Name))
+			if skill.Description != "" {
+				b.WriteString(fmt.Sprintf("%s\n", skill.Description))
+			}
+			b.WriteString(fmt.Sprintf("\n> 전체 내용은 `.pylon/skills/%s.md`를 참조하세요.\n\n", skill.Name))
+		} else {
+			// Full body injection
+			b.WriteString(fmt.Sprintf("### %s\n", skill.Name))
+			if skill.Description != "" {
+				b.WriteString(fmt.Sprintf("_%s_\n\n", skill.Description))
+			}
+			if skill.Body != "" {
+				b.WriteString(skill.Body)
+				b.WriteString("\n\n")
+			}
+		}
+	}
+
+	return b.String()
+}
+
+// ensureSymlink creates a symlink at linkPath pointing to target.
+// If a symlink already exists, it is removed and recreated.
+// Regular files are left untouched.
+func ensureSymlink(linkPath, target string) {
+	if info, err := os.Lstat(linkPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			os.Remove(linkPath)
+		} else {
+			return // regular file, don't touch
+		}
+	}
+	if err := os.Symlink(target, linkPath); err != nil && !os.IsExist(err) {
+		fmt.Fprintf(os.Stderr, "경고: 심링크 생성 실패 %s: %v\n", filepath.Base(linkPath), err)
+	}
 }
 
 // ensureGitignore is called on first launch to add .claude/ to .gitignore.

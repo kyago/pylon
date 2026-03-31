@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"embed"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -78,6 +80,9 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// Sync config defaults if in a workspace
 	fmt.Println()
 	syncConfigIfWorkspace()
+
+	// Sync embedded resources (agents, skills, commands, scripts) if in a workspace
+	syncResourcesIfWorkspace()
 
 	fmt.Println()
 	if allPassed {
@@ -164,6 +169,99 @@ func syncConfigIfWorkspace() {
 	} else {
 		fmt.Println("✓ config.yml 최신 상태")
 	}
+}
+
+// syncResourcesIfWorkspace syncs embedded agents, skills, commands, and scripts
+// to the workspace if running inside a pylon workspace.
+// New files are installed; existing files are skipped to preserve user customizations.
+func syncResourcesIfWorkspace() {
+	startDir := flagWorkspace
+	if startDir == "" {
+		startDir = "."
+	}
+	root, err := config.FindWorkspaceRoot(startDir)
+	if err != nil {
+		return // not in a workspace, skip
+	}
+
+	pylonDir := filepath.Join(root, ".pylon")
+	var totalInstalled int
+
+	// Sync agents
+	installed := syncEmbeddedDir(embeddedAgents, "agents", filepath.Join(pylonDir, "agents"), ".md")
+	totalInstalled += installed
+
+	// Sync skills
+	installed = syncEmbeddedDir(embeddedSkills, "skills", filepath.Join(pylonDir, "skills"), ".md")
+	totalInstalled += installed
+
+	// Sync commands
+	installed = syncEmbeddedDir(embeddedCommands, "commands", filepath.Join(pylonDir, "commands"), ".md")
+	totalInstalled += installed
+
+	// Sync scripts
+	installed = syncEmbeddedDir(embeddedScripts, "scripts/bash", filepath.Join(pylonDir, "scripts", "bash"), ".sh")
+	totalInstalled += installed
+
+	// Update .claude/agents/ with skill injection (consistent with pylon launch)
+	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
+	if err != nil {
+		// Fall back to plain symlinks if config can't be loaded
+		if linkErr := syncClaudeAgentLinks(root, pylonDir); linkErr != nil {
+			fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", linkErr)
+		}
+	} else {
+		if genErr := generateClaudeAgentsWithSkills(root, cfg); genErr != nil {
+			fmt.Printf("⚠ .claude/agents/ 생성 실패: %v\n", genErr)
+		}
+	}
+
+	if totalInstalled > 0 {
+		fmt.Printf("✓ 내장 리소스 %d개 신규 설치\n", totalInstalled)
+	} else {
+		fmt.Println("✓ 내장 리소스 최신 상태")
+	}
+}
+
+// syncEmbeddedDir copies files from an embed.FS subdirectory to a target directory.
+// Only new files are installed; existing files are skipped.
+// Returns the number of newly installed files.
+func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		fmt.Printf("⚠ %s 디렉토리 생성 실패: %v\n", targetDir, err)
+		return 0
+	}
+
+	entries, err := fs.ReadDir(embedDir)
+	if err != nil {
+		return 0
+	}
+
+	installed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), suffix) {
+			continue
+		}
+		destPath := filepath.Join(targetDir, entry.Name())
+		if _, err := os.Stat(destPath); err == nil {
+			continue // already exists, skip
+		}
+		content, err := fs.ReadFile(embedDir + "/" + entry.Name())
+		if err != nil {
+			fmt.Printf("⚠ %s 읽기 실패: %v\n", entry.Name(), err)
+			continue
+		}
+		perm := os.FileMode(0644)
+		if suffix == ".sh" {
+			perm = 0755
+		}
+		if err := os.WriteFile(destPath, content, perm); err != nil {
+			fmt.Printf("⚠ %s 쓰기 실패: %v\n", entry.Name(), err)
+			continue
+		}
+		installed++
+	}
+	return installed
 }
 
 func verifyClaude() (string, error) {
