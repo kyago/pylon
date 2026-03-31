@@ -131,9 +131,9 @@ ontology:
 
 	// Create domain knowledge templates (domain-neutral for multi-domain support)
 	domainFiles := map[string]string{
-		"practices.md": "# 작업 관행\n\n> This file is managed by AI agents. To modify, request changes through a root agent.\n\n## 핵심 원칙\n\n## 품질 기준\n\n## 커뮤니케이션 규칙\n",
-		"overview.md":  "# 프로젝트 개요\n\n> This file is managed by AI agents. To modify, request changes through a root agent.\n\n## 목표\n\n## 구조\n\n## 주요 결정 사항\n",
-		"glossary.md":  "# 용어 사전\n\n> This file is managed by AI agents. To modify, request changes through a root agent.\n\n| 용어 | 정의 |\n|------|------|\n",
+		"practices.md": "# 작업 관행\n\n> 이 파일은 AI 에이전트가 관리합니다. 수정이 필요하면 루트 에이전트에게 요청하세요.\n\n## 핵심 원칙\n\n## 품질 기준\n\n## 커뮤니케이션 규칙\n",
+		"overview.md":  "# 프로젝트 개요\n\n> 이 파일은 AI 에이전트가 관리합니다. 수정이 필요하면 루트 에이전트에게 요청하세요.\n\n## 목표\n\n## 구조\n\n## 주요 결정 사항\n",
+		"glossary.md":  "# 용어 사전\n\n> 이 파일은 AI 에이전트가 관리합니다. 수정이 필요하면 루트 에이전트에게 요청하세요.\n\n| 용어 | 정의 |\n|------|------|\n",
 	}
 
 	for name, content := range domainFiles {
