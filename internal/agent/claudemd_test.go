@@ -115,12 +115,12 @@ func TestBuildDomainSection_EmptyPaths(t *testing.T) {
 }
 
 func TestBuildDomainSection_SinglePath(t *testing.T) {
-	result := buildDomainSection([]string{".pylon/domain/architecture.md"})
+	result := buildDomainSection([]string{".pylon/domain/overview.md"})
 
 	if !strings.Contains(result, "참조할 도메인 지식 문서:") {
 		t.Error("헤더가 포함되어야 함")
 	}
-	if !strings.Contains(result, "- .pylon/domain/architecture.md") {
+	if !strings.Contains(result, "- .pylon/domain/overview.md") {
 		t.Error("경로가 리스트 아이템으로 포함되어야 함")
 	}
 	if !strings.Contains(result, "필요한 경우 위 파일을 직접 읽어 참고하세요.") {
@@ -130,9 +130,9 @@ func TestBuildDomainSection_SinglePath(t *testing.T) {
 
 func TestBuildDomainSection_MultiplePaths(t *testing.T) {
 	paths := []string{
-		".pylon/domain/architecture.md",
-		".pylon/domain/conventions.md",
-		".pylon/domain/api-spec.md",
+		".pylon/domain/overview.md",
+		".pylon/domain/practices.md",
+		".pylon/domain/glossary.md",
 	}
 	result := buildDomainSection(paths)
 
@@ -163,7 +163,7 @@ func TestClaudeMDBuilder_BuildWithCommunicationRules(t *testing.T) {
 		CommunicationRules: commRules,
 		TaskContext:        "백엔드 API 개발\n수용 기준: POST /api/users",
 		CompactionRules:    DefaultCompactionRules(),
-		DomainPaths:        []string{".pylon/domain/architecture.md"},
+		DomainPaths:        []string{".pylon/domain/overview.md"},
 	})
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)

@@ -43,9 +43,9 @@ workspace/                              ← git repo (루트)
 ├── .pylon/
 │   ├── config.yml                      ← 도구 설정 (에이전트 백엔드, 동시 실행 수 등)
 │   ├── domain/                         ← 팀 도메인 지식 (위키, AI 생성/갱신)
-│   │   ├── conventions.md              ← 코딩 컨벤션, 네이밍 규칙
-│   │   ├── architecture.md             ← 전체 아키텍처 문서
-│   │   └── glossary.md                 ← 비즈니스 용어 사전
+│   │   ├── practices.md                ← 작업 관행
+│   │   ├── overview.md                 ← 프로젝트 구조 개요
+│   │   └── glossary.md                 ← 용어 사전
 │   ├── agents/                         ← 루트 에이전트 설정
 │   │   ├── po.md                       ← PO 에이전트 (요구사항 분석, 수용 기준)
 │   │   ├── pm.md                       ← PM 에이전트 (태스크 분해, 실행 조율)
@@ -607,7 +607,7 @@ MessageEnvelope
     "project_id": "project-api",
     "summary": "PO 확정: 이메일+카카오 로그인, JWT 세션. Architect: Echo 미들웨어 기반 인증 레이어 권장",
     "decisions": ["JWT 기반 인증", "카카오 OAuth 2.0", "Echo 미들웨어 구조"],
-    "references": [".pylon/domain/architecture.md", ".pylon/domain/conventions.md"]
+    "references": [".pylon/domain/overview.md", ".pylon/domain/practices.md"]
   },
   "ttl": "30m",
   "timestamp": "2026-03-05T14:35:00Z"
