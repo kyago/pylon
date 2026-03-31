@@ -349,13 +349,14 @@ func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
 
 	entries, err := fs.ReadDir(embedDir)
 	if err != nil {
+		fmt.Printf("⚠ %s 읽기 실패: %v\n", embedDir, err)
 		return 0
 	}
 
 	installed := 0
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), suffix) {
-			continue
+			continue // 비재귀: 서브디렉토리 스킵 (현재 리소스 구조에서는 불필요)
 		}
 		destPath := filepath.Join(targetDir, entry.Name())
 		if _, err := os.Stat(destPath); err == nil {

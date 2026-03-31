@@ -712,8 +712,14 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 		}
 	}
 
-	// Clean up stale entries in .claude/agents/ that no longer exist in .pylon/agents/
-	claudeEntries, _ := os.ReadDir(claudeAgentsDir)
+	// Clean up stale entries in .claude/agents/ that no longer exist in .pylon/agents/.
+	// Only symlinks are removed — pylon-generated regular files (from skill injection) are
+	// left in place because they cannot be reliably distinguished from user-created files
+	// without a manifest. This is a known limitation; a manifest-based approach can be added later.
+	claudeEntries, err := os.ReadDir(claudeAgentsDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "경고: .claude/agents/ 읽기 실패: %v\n", err)
+	}
 	for _, ce := range claudeEntries {
 		if ce.IsDir() || !strings.HasSuffix(ce.Name(), ".md") {
 			continue
@@ -726,9 +732,10 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 		if err != nil {
 			continue
 		}
-		// Only remove symlinks and pylon-generated files (not user files)
 		if info.Mode()&os.ModeSymlink != 0 {
-			os.Remove(stale)
+			if err := os.Remove(stale); err != nil {
+				fmt.Fprintf(os.Stderr, "경고: 스테일 심링크 제거 실패 %s: %v\n", ce.Name(), err)
+			}
 		}
 	}
 
@@ -754,14 +761,14 @@ func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillC
 		}
 
 		if progressiveDisclosure {
-			// Metadata only: name + description
+			// Metadata only: name + description (plain text — full body is deferred to file reference)
 			b.WriteString(fmt.Sprintf("### %s\n", skill.Name))
 			if skill.Description != "" {
 				b.WriteString(fmt.Sprintf("%s\n", skill.Description))
 			}
 			b.WriteString(fmt.Sprintf("\n> 전체 내용은 `.pylon/skills/%s.md`를 참조하세요.\n\n", skill.Name))
 		} else {
-			// Full body injection
+			// Full body injection (italic description to visually separate from body content)
 			b.WriteString(fmt.Sprintf("### %s\n", skill.Name))
 			if skill.Description != "" {
 				b.WriteString(fmt.Sprintf("_%s_\n\n", skill.Description))
