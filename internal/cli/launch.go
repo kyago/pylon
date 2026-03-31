@@ -432,9 +432,9 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	// Domain knowledge
 	b.WriteString("## 도메인 지식\n\n")
 	b.WriteString("다음 파일들을 참조하여 프로젝트 컨텍스트를 파악하세요:\n\n")
-	b.WriteString("- `.pylon/domain/architecture.md` — 시스템 아키텍처\n")
-	b.WriteString("- `.pylon/domain/conventions.md` — 코딩 컨벤션\n")
-	b.WriteString("- `.pylon/domain/glossary.md` — 비즈니스 용어 사전\n")
+	b.WriteString("- `.pylon/domain/overview.md` — 프로젝트 구조 개요\n")
+	b.WriteString("- `.pylon/domain/practices.md` — 작업 관행\n")
+	b.WriteString("- `.pylon/domain/glossary.md` — 용어 사전\n")
 	if len(projects) > 0 {
 		for _, p := range projects {
 			b.WriteString(fmt.Sprintf("- `%s/.pylon/context.md` — %s 프로젝트 컨텍스트\n", p.Name, p.Name))
@@ -572,9 +572,9 @@ func buildSlashCommands(root string) map[string]string {
 1. 대상 프로젝트를 사용자에게 확인합니다
 2. 각 프로젝트 디렉토리의 구조, 주요 파일, 의존성을 분석합니다
 3. ` + "`" + `.pylon/domain/` + "`" + ` 하위에 도메인 지식 문서를 생성/갱신합니다:
-   - architecture.md — 아키텍처 개요
-   - conventions.md — 코딩 컨벤션
-   - glossary.md — 비즈니스 용어 사전
+   - overview.md — 프로젝트 구조 개요
+   - practices.md — 작업 관행
+   - glossary.md — 용어 사전
 4. 각 프로젝트의 ` + "`" + `{프로젝트}/.pylon/context.md` + "`" + `를 실제 코드에 맞게 갱신합니다
 5. 발견한 기술 스택 정보를 메모리에 저장합니다:
    ` + "```" + `bash

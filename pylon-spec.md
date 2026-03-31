@@ -607,7 +607,7 @@ MessageEnvelope
     "project_id": "project-api",
     "summary": "PO 확정: 이메일+카카오 로그인, JWT 세션. Architect: Echo 미들웨어 기반 인증 레이어 권장",
     "decisions": ["JWT 기반 인증", "카카오 OAuth 2.0", "Echo 미들웨어 구조"],
-    "references": [".pylon/domain/architecture.md", ".pylon/domain/conventions.md"]
+    "references": [".pylon/domain/overview.md", ".pylon/domain/practices.md"]
   },
   "ttl": "30m",
   "timestamp": "2026-03-05T14:35:00Z"
