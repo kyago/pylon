@@ -20,7 +20,7 @@ handoffs:
 ## 워크플로우 선택
 
 요구사항을 분석하여 도메인에 맞는 워크플로우를 자동 선택합니다.
-명시적 지정도 가능합니다: `/pl:pipeline --workflow=research "AI 트렌드 조사해줘"`
+워크플로우를 지정하지 않으면 PO가 요구사항에서 자동 추론합니다.
 
 | 도메인 | 워크플로우 | 파이프라인 |
 |--------|-----------|-----------|
@@ -166,6 +166,9 @@ Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T003 내용]", isolation="
 
 ## 리서치 파이프라인 (detected_domain: research)
 
+> 에이전트 정의는 `.pylon/agents/{agent-name}.md`에서 읽어 프롬프트에 주입합니다.
+> 각 단계 실행 전, 이전 단계의 산출물이 `$PIPELINE_DIR/`에 존재하는지 확인합니다.
+
 ### Step R1: 병렬 조사 (fan_out)
 
 Agent 도구로 조사 에이전트를 **병렬** 실행합니다.
@@ -173,7 +176,7 @@ Agent 도구로 조사 에이전트를 **병렬** 실행합니다.
 ```
 Agent(prompt="[lead-researcher 에이전트 정의]\n\n## 조사 요구사항\n[requirement-analysis.md 내용]\n\n조사 계획을 수립하고 핵심 질문을 도출하세요.\n결과를 $PIPELINE_DIR/research-plan.md에 저장하세요.")
 
-// 아래 3개를 단일 메시지에서 병렬 실행
+// 아래 2개를 단일 메시지에서 병렬 실행
 Agent(prompt="[web-searcher 에이전트 정의]\n\n## 조사 요구사항\n[research-plan.md 내용]\n\n웹 소스를 조사하세요.\n결과를 $PIPELINE_DIR/web-research.md에 저장하세요.")
 Agent(prompt="[academic-analyst 에이전트 정의]\n\n## 조사 요구사항\n[research-plan.md 내용]\n\n학술 자료를 조사하세요.\n결과를 $PIPELINE_DIR/academic-research.md에 저장하세요.")
 ```
@@ -203,6 +206,9 @@ PO가 직접 보고서를 검토합니다:
 ---
 
 ## 콘텐츠 파이프라인 (detected_domain: content)
+
+> 에이전트 정의는 `.pylon/agents/{agent-name}.md`에서 읽어 프롬프트에 주입합니다.
+> 각 단계 실행 전, 이전 단계의 산출물이 `$PIPELINE_DIR/`에 존재하는지 확인합니다.
 
 ### Step C1: 콘텐츠 전략 수립
 
@@ -241,6 +247,9 @@ Agent(prompt="[seo-specialist 에이전트 정의]\n\n## 최종 콘텐츠\n[draf
 ---
 
 ## 마케팅 파이프라인 (detected_domain: marketing)
+
+> 에이전트 정의는 `.pylon/agents/{agent-name}.md`에서 읽어 프롬프트에 주입합니다.
+> 각 단계 실행 전, 이전 단계의 산출물이 `$PIPELINE_DIR/`에 존재하는지 확인합니다.
 
 ### Step M1: 시장 조사 (fan_out)
 
