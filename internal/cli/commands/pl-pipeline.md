@@ -46,17 +46,34 @@ BRANCH=$(echo "$INIT_RESULT" | jq -r '.branch')
 
 `$INIT_RESULT`에서 `pipeline_id`, `branch`, `pipeline_dir`을 추출합니다.
 
-### Step 2: PO 요구사항 분석
+### Step 2: PO 요구사항 분석 + 도메인 라우팅
 
 Claude Code가 직접 PO 역할을 수행합니다.
 
 1. `$PIPELINE_DIR/requirement.md`를 읽습니다
-2. 요구사항을 분석하여 다음을 포함하는 `requirement-analysis.md`를 작성합니다:
+2. 위의 **워크플로우 선택** 테이블을 참조하여 도메인을 판단하고, `$PIPELINE_DIR/routing-decision.json`을 작성합니다:
+   ```json
+   {
+     "detected_domain": "software|research|content|marketing",
+     "selected_workflow": "feature|bugfix|hotfix|research|content|marketing",
+     "reasoning": "도메인 선택 근거를 자연어로 기술",
+     "agents": ["사용할 에이전트 목록"]
+   }
+   ```
+3. 요구사항을 분석하여 `$PIPELINE_DIR/requirement-analysis.md`를 작성합니다:
    - 사용자 스토리 (As a... I want... So that...)
    - 수용 기준 (Acceptance Criteria)
    - 기능적/비기능적 요구사항 구분
    - 범위 밖 (Out of Scope) 항목
-3. `$PIPELINE_DIR/requirement-analysis.md`에 저장합니다
+4. `detected_domain`에 따라 **도메인별 실행 절차**를 따릅니다:
+   - `software` → **소프트웨어 파이프라인** (Steps 3-9)
+   - `research` → **리서치 파이프라인** (Steps R1-R4)
+   - `content` → **콘텐츠 파이프라인** (Steps C1-C4)
+   - `marketing` → **마케팅 파이프라인** (Steps M1-M4)
+
+---
+
+## 소프트웨어 파이프라인 (detected_domain: software)
 
 ### Step 3: 아키텍처 분석
 
@@ -144,6 +161,120 @@ Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T003 내용]", isolation="
 - 테스트 결과
 - PR URL (auto_pr 활성화 시)
 - 총 소요 시간
+
+---
+
+## 리서치 파이프라인 (detected_domain: research)
+
+### Step R1: 병렬 조사 (fan_out)
+
+Agent 도구로 조사 에이전트를 **병렬** 실행합니다.
+
+```
+Agent(prompt="[lead-researcher 에이전트 정의]\n\n## 조사 요구사항\n[requirement-analysis.md 내용]\n\n조사 계획을 수립하고 핵심 질문을 도출하세요.\n결과를 $PIPELINE_DIR/research-plan.md에 저장하세요.")
+
+// 아래 3개를 단일 메시지에서 병렬 실행
+Agent(prompt="[web-searcher 에이전트 정의]\n\n## 조사 요구사항\n[research-plan.md 내용]\n\n웹 소스를 조사하세요.\n결과를 $PIPELINE_DIR/web-research.md에 저장하세요.")
+Agent(prompt="[academic-analyst 에이전트 정의]\n\n## 조사 요구사항\n[research-plan.md 내용]\n\n학술 자료를 조사하세요.\n결과를 $PIPELINE_DIR/academic-research.md에 저장하세요.")
+```
+
+### Step R2: 교차 검증 (fan_in)
+
+```
+Agent(prompt="[fact-checker 에이전트 정의]\n\n## 검증 대상\n[web-research.md + academic-research.md 내용]\n\n출처 간 교차 검증을 수행하세요:\n- 상충하는 정보 식별\n- 출처 신뢰도 평가\n- 검증된 사실과 미확인 주장 구분\n결과를 $PIPELINE_DIR/fact-check.md에 저장하세요.")
+```
+
+### Step R3: 보고서 작성 (generate)
+
+```
+Agent(prompt="[report-writer 에이전트 정의]\n\n## 참조 자료\n[research-plan.md + web-research.md + academic-research.md + fact-check.md 내용]\n\n종합 보고서를 작성하세요:\n- 핵심 발견 사항 요약\n- 근거 자료 인용\n- 결론 및 권고사항\n결과를 $PIPELINE_DIR/report.md에 저장하세요.")
+```
+
+### Step R4: 최종 검증 (validate) + 완료
+
+PO가 직접 보고서를 검토합니다:
+1. `$PIPELINE_DIR/report.md`를 읽고 품질을 검증합니다:
+   - 요구사항의 질문에 답변되었는가?
+   - 근거가 충분한가?
+   - 논리적 비약이 없는가?
+2. 부족하면 Step R3로 돌아가 보완을 지시합니다 (최대 3회)
+3. 완료 시 실행 결과를 요약합니다
+
+---
+
+## 콘텐츠 파이프라인 (detected_domain: content)
+
+### Step C1: 콘텐츠 전략 수립
+
+```
+Agent(prompt="[content-strategist 에이전트 정의]\n\n## 요구사항\n[requirement-analysis.md 내용]\n\n콘텐츠 전략을 수립하세요:\n- 타겟 독자 정의\n- 톤/스타일 가이드\n- 구성 개요 (아웃라인)\n- SEO 키워드 (해당 시)\n결과를 $PIPELINE_DIR/content-strategy.md에 저장하세요.")
+```
+
+### Step C2: 초안 작성 (generate)
+
+```
+Agent(prompt="[writer 에이전트 정의]\n\n## 전략\n[content-strategy.md 내용]\n\n전략에 따라 콘텐츠 초안을 작성하세요.\n결과를 $PIPELINE_DIR/draft.md에 저장하세요.")
+```
+
+### Step C3: 편집 및 리뷰 (validate → generate 루프)
+
+아래를 **최대 3회** 반복합니다. PO가 승인하면 루프를 종료합니다.
+
+```
+// 편집자와 QA 리뷰어를 병렬 실행
+Agent(prompt="[editor 에이전트 정의]\n\n## 초안\n[draft.md 내용]\n\n문법, 스타일, 가독성을 편집하세요.\n편집 피드백을 $PIPELINE_DIR/edit-feedback.md에 저장하세요.")
+Agent(prompt="[content-reviewer 에이전트 정의]\n\n## 초안\n[draft.md 내용]\n\n품질 기준 충족 여부를 검토하세요:\n- 정확성, 완전성, 일관성\n검토 결과를 $PIPELINE_DIR/review-feedback.md에 저장하세요.")
+```
+
+PO가 피드백을 종합하여:
+- 수정이 필요하면 → writer에게 피드백과 함께 재작성 지시 (Step C2로 복귀)
+- 승인이면 → Step C4로 진행
+
+### Step C4: SEO 최적화 + 완료
+
+```
+Agent(prompt="[seo-specialist 에이전트 정의]\n\n## 최종 콘텐츠\n[draft.md 내용]\n[content-strategy.md의 SEO 키워드]\n\nSEO 최적화를 적용하세요:\n- 메타 설명, 제목 태그 제안\n- 키워드 밀도 검토\n- 내부/외부 링크 제안\n결과를 $PIPELINE_DIR/final-content.md에 저장하세요.")
+```
+
+완료 시 실행 결과를 요약합니다.
+
+---
+
+## 마케팅 파이프라인 (detected_domain: marketing)
+
+### Step M1: 시장 조사 (fan_out)
+
+Agent 도구로 조사 에이전트를 **병렬** 실행합니다.
+
+```
+// 병렬 실행
+Agent(prompt="[market-researcher 에이전트 정의]\n\n## 요구사항\n[requirement-analysis.md 내용]\n\n시장 조사를 수행하세요:\n- 타겟 시장 분석\n- 경쟁사 분석\n- 시장 트렌드\n결과를 $PIPELINE_DIR/market-research.md에 저장하세요.")
+Agent(prompt="[data-analyst 에이전트 정의]\n\n## 요구사항\n[requirement-analysis.md 내용]\n\n데이터 기반 분석을 수행하세요:\n- 기존 마케팅 성과 데이터 분석\n- 타겟 고객 세그먼트 정의\n- KPI 벤치마크\n결과를 $PIPELINE_DIR/data-analysis.md에 저장하세요.")
+```
+
+### Step M2: 전략 수립 (fan_in)
+
+```
+Agent(prompt="[brand-strategist 에이전트 정의]\n\n## 참조 자료\n[market-research.md + data-analysis.md 내용]\n\n마케팅 전략을 수립하세요:\n- 포지셔닝 전략\n- 메시지 프레임워크\n- 채널 전략\n- 예산 배분 제안\n결과를 $PIPELINE_DIR/marketing-strategy.md에 저장하세요.")
+```
+
+### Step M3: 콘텐츠 생성 (generate)
+
+```
+// 병렬 실행
+Agent(prompt="[copywriter 에이전트 정의]\n\n## 전략\n[marketing-strategy.md 내용]\n\n마케팅 카피를 작성하세요:\n- 헤드라인, 서브헤드\n- 본문 카피\n- CTA (Call to Action)\n결과를 $PIPELINE_DIR/marketing-copy.md에 저장하세요.")
+Agent(prompt="[campaign-planner 에이전트 정의]\n\n## 전략\n[marketing-strategy.md 내용]\n\n캠페인 실행 계획을 수립하세요:\n- 타임라인\n- 채널별 실행 계획\n- 성과 측정 기준\n결과를 $PIPELINE_DIR/campaign-plan.md에 저장하세요.")
+```
+
+### Step M4: 검증 + 완료
+
+PO가 마케팅 산출물을 종합 검증합니다:
+1. `marketing-strategy.md`, `marketing-copy.md`, `campaign-plan.md`를 검토합니다
+2. 전략과 실행 계획의 일관성을 확인합니다
+3. 부족하면 해당 에이전트에 수정을 지시합니다 (최대 3회)
+4. 완료 시 실행 결과를 요약합니다
+
+---
 
 ## 메모리 활용
 
