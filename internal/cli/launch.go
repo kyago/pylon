@@ -388,6 +388,9 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	b.WriteString("- `/pl:project-list` — 프로젝트 목록 및 인덱싱 정보 조회\n")
 	b.WriteString("- `/pl:index` — 프로젝트 코드베이스 인덱싱\n")
 	b.WriteString("- `/pl:cancel` — 파이프라인 취소\n\n")
+	b.WriteString("> **도메인 라우팅**: `/pl:pipeline`은 모든 도메인(소프트웨어/리서치/콘텐츠/마케팅)의 **범용 진입점**입니다.\n")
+	b.WriteString("> PO가 요구사항 분석 시 도메인을 자동 판단하여 적절한 워크플로우를 선택합니다.\n")
+	b.WriteString("> 워크플로우를 지정하지 않으면 PO가 요구사항에서 자동 추론합니다.\n\n")
 
 	// Sub-agent orchestration with domain grouping
 	b.WriteString("## 서브 에이전트 오케스트레이션\n\n")
