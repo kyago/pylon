@@ -181,7 +181,7 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 			continue
 		}
 
-		// Section exists — check sub-keys
+		// Section exists — recursively check sub-keys at all depths
 		defaultSub, ok := defaultVal.(map[string]any)
 		if !ok {
 			continue
@@ -191,25 +191,11 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 			rawSub = make(map[string]any)
 		}
 
-		// Sort sub-keys for deterministic output
-		sortedSubKeys := make([]string, 0, len(defaultSub))
-		for k := range defaultSub {
-			sortedSubKeys = append(sortedSubKeys, k)
-		}
-		sort.Strings(sortedSubKeys)
-
-		keyHasMerge := false
-		for _, subKey := range sortedSubKeys {
-			if _, subExists := rawSub[subKey]; !subExists {
-				added = append(added, key+"."+subKey)
-				keyHasMerge = true
-				hasSubKeyMerge = true
-				rawSub[subKey] = defaultSub[subKey]
-			}
-		}
-
-		if keyHasMerge {
+		subAdded := findMissingFields(rawSub, defaultSub, key)
+		if len(subAdded) > 0 {
 			rawMap[key] = rawSub
+			added = append(added, subAdded...)
+			hasSubKeyMerge = true
 		}
 	}
 
@@ -239,6 +225,48 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 	}
 
 	return cfg, added, nil
+}
+
+// findMissingFields recursively compares dst against defaults and merges
+// missing fields into dst. Returns a list of dotted field paths that were added.
+func findMissingFields(dst, defaults map[string]any, prefix string) []string {
+	var added []string
+
+	sortedKeys := make([]string, 0, len(defaults))
+	for k := range defaults {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
+	for _, key := range sortedKeys {
+		defaultVal := defaults[key]
+		path := prefix + "." + key
+
+		dstVal, exists := dst[key]
+		if !exists {
+			dst[key] = defaultVal
+			added = append(added, path)
+			continue
+		}
+
+		// If both are maps, recurse deeper
+		defaultSub, defaultIsMap := defaultVal.(map[string]any)
+		if !defaultIsMap {
+			continue
+		}
+		dstSub, dstIsMap := dstVal.(map[string]any)
+		if !dstIsMap {
+			dstSub = make(map[string]any)
+		}
+
+		subAdded := findMissingFields(dstSub, defaultSub, path)
+		if len(subAdded) > 0 {
+			dst[key] = dstSub
+			added = append(added, subAdded...)
+		}
+	}
+
+	return added
 }
 
 // LoadConfig reads and parses a config.yml file, applying defaults for missing fields.

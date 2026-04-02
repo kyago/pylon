@@ -330,3 +330,236 @@ conversation:
 		})
 	}
 }
+
+func TestSyncConfigDefaults_DeepNestedMissing(t *testing.T) {
+	// Config with git.worktree section but missing auto_cleanup,
+	// and git.pr section but missing draft.
+	// These are depth-2 fields that the old code could not detect.
+	content := []byte(`version: "0.1"
+git:
+  branch_prefix: custom
+  default_base: develop
+  worktree:
+    enabled: true
+  pr:
+    auto_pr: true
+    reviewers:
+      - alice
+`)
+
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yml")
+	if err := os.WriteFile(cfgPath, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, added, err := SyncConfigDefaults(cfgPath)
+	if err != nil {
+		t.Fatalf("SyncConfigDefaults failed: %v", err)
+	}
+
+	// Should detect git.worktree.auto_cleanup and git.pr.draft as missing
+	addedSet := make(map[string]bool)
+	for _, a := range added {
+		addedSet[a] = true
+	}
+
+	mustExist := []string{"git.worktree.auto_cleanup", "git.pr.draft"}
+	for _, field := range mustExist {
+		if !addedSet[field] {
+			t.Errorf("expected %q in added list, got: %v", field, added)
+		}
+	}
+
+	// Existing values must be preserved
+	if cfg.Git.BranchPrefix != "custom" {
+		t.Errorf("expected branch_prefix=custom, got %q", cfg.Git.BranchPrefix)
+	}
+	if cfg.Git.DefaultBase != "develop" {
+		t.Errorf("expected default_base=develop, got %q", cfg.Git.DefaultBase)
+	}
+	if !cfg.Git.Worktree.Enabled {
+		t.Error("expected worktree.enabled=true to be preserved")
+	}
+	if !cfg.Git.PR.AutoPR {
+		t.Error("expected pr.auto_pr=true to be preserved")
+	}
+
+	// Verify the file was rewritten with missing fields
+	reloaded, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig after sync failed: %v", err)
+	}
+	if !reloaded.Git.Worktree.AutoCleanup {
+		t.Error("expected worktree.auto_cleanup=true in rewritten file")
+	}
+}
+
+func TestSyncConfigDefaults_EntireSectionMissing(t *testing.T) {
+	// Config with only version and runtime — skills section entirely missing.
+	// Should be appended (not rewrite) and detected.
+	content := []byte(`version: "0.1"
+runtime:
+  backend: claude-code
+  max_concurrent: 5
+  task_timeout: 30m
+  max_attempts: 2
+  max_turns: 50
+  permission_mode: acceptEdits
+  env:
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
+    CLAUDE_CODE_EFFORT_LEVEL: high
+git:
+  branch_prefix: task
+  default_base: main
+  auto_push: true
+  worktree:
+    enabled: true
+    auto_cleanup: true
+  pr:
+    auto_pr: false
+    draft: false
+wiki:
+  auto_update: true
+  update_on:
+    - task_complete
+    - pr_merged
+memory:
+  compaction_threshold: 0.7
+  proactive_injection: true
+  proactive_max_tokens: 2000
+  session_archive: true
+conversation:
+  retention_days: 90
+workflow:
+  default_workflow: feature
+ontology:
+  package_name: pylon-ontology
+  auto_extract: true
+  auto_verify: true
+`)
+
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yml")
+	if err := os.WriteFile(cfgPath, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, added, err := SyncConfigDefaults(cfgPath)
+	if err != nil {
+		t.Fatalf("SyncConfigDefaults failed: %v", err)
+	}
+
+	// skills section is entirely missing — should be detected
+	addedSet := make(map[string]bool)
+	for _, a := range added {
+		addedSet[a] = true
+	}
+
+	if !addedSet["skills"] {
+		t.Errorf("expected 'skills' in added list, got: %v", added)
+	}
+}
+
+func TestSyncConfigDefaults_NoChangesOnSecondSync(t *testing.T) {
+	// Minimal config → first sync adds defaults → second sync should find no changes.
+	content := []byte(`version: "0.1"`)
+
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yml")
+	if err := os.WriteFile(cfgPath, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// First sync: adds all missing defaults
+	_, firstAdded, err := SyncConfigDefaults(cfgPath)
+	if err != nil {
+		t.Fatalf("first SyncConfigDefaults failed: %v", err)
+	}
+	if len(firstAdded) == 0 {
+		t.Fatal("expected first sync to add fields for minimal config")
+	}
+
+	// Second sync: should find nothing missing
+	_, secondAdded, err := SyncConfigDefaults(cfgPath)
+	if err != nil {
+		t.Fatalf("second SyncConfigDefaults failed: %v", err)
+	}
+	if len(secondAdded) != 0 {
+		t.Errorf("expected no changes on second sync, got added: %v", secondAdded)
+	}
+}
+
+func TestFindMissingFields_Recursive(t *testing.T) {
+	defaults := map[string]any{
+		"a": "val_a",
+		"b": map[string]any{
+			"b1": "val_b1",
+			"b2": map[string]any{
+				"b2a": "val_b2a",
+				"b2b": "val_b2b",
+			},
+		},
+	}
+
+	dst := map[string]any{
+		"a": "custom_a",
+		"b": map[string]any{
+			"b1": "custom_b1",
+			"b2": map[string]any{
+				"b2a": "custom_b2a",
+				// b2b is missing
+			},
+		},
+	}
+
+	added := findMissingFields(dst, defaults, "root")
+
+	if len(added) != 1 {
+		t.Fatalf("expected 1 added field, got %d: %v", len(added), added)
+	}
+	if added[0] != "root.b.b2.b2b" {
+		t.Errorf("expected root.b.b2.b2b, got %q", added[0])
+	}
+
+	// Verify the value was merged
+	b := dst["b"].(map[string]any)
+	b2 := b["b2"].(map[string]any)
+	if b2["b2b"] != "val_b2b" {
+		t.Errorf("expected b2b=val_b2b, got %v", b2["b2b"])
+	}
+	// Existing value must be preserved
+	if b2["b2a"] != "custom_b2a" {
+		t.Errorf("expected b2a=custom_b2a preserved, got %v", b2["b2a"])
+	}
+}
+
+func TestFindMissingFields_TypeMismatchGuard(t *testing.T) {
+	// When user writes a scalar where a map is expected (e.g., worktree: true),
+	// findMissingFields should still fill in default sub-keys.
+	defaults := map[string]any{
+		"nested": map[string]any{
+			"child_a": "val_a",
+			"child_b": "val_b",
+		},
+	}
+
+	dst := map[string]any{
+		"nested": "scalar_value", // wrong type: scalar instead of map
+	}
+
+	added := findMissingFields(dst, defaults, "root")
+
+	if len(added) != 2 {
+		t.Fatalf("expected 2 added fields, got %d: %v", len(added), added)
+	}
+
+	// dst["nested"] should now be a map with defaults
+	nested, ok := dst["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected dst[nested] to be map, got %T", dst["nested"])
+	}
+	if nested["child_a"] != "val_a" || nested["child_b"] != "val_b" {
+		t.Errorf("expected default sub-keys, got %v", nested)
+	}
+}
