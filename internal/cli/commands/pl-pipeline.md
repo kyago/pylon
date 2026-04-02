@@ -29,8 +29,6 @@ handoffs:
 | 콘텐츠 제작 | content | PO → 초안작성 → 편집/리뷰 → (루프) → 최종본 |
 | 마케팅 | marketing | PO → 시장조사 → 전략수립 → 콘텐츠생성 → 검증 |
 
-워크플로우를 지정하지 않으면 PO가 요구사항에서 자동 추론합니다.
-
 ## 실행 단계
 
 ### Step 1: 파이프라인 초기화
@@ -280,7 +278,7 @@ Agent(prompt="[campaign-planner 에이전트 정의]\n\n## 전략\n[marketing-st
 PO가 마케팅 산출물을 종합 검증합니다:
 1. `marketing-strategy.md`, `marketing-copy.md`, `campaign-plan.md`를 검토합니다
 2. 전략과 실행 계획의 일관성을 확인합니다
-3. 부족하면 해당 에이전트에 수정을 지시합니다 (최대 3회)
+3. 부족한 산출물에 따라 Step M2 또는 M3의 해당 에이전트에 수정을 지시합니다 (최대 3회)
 4. 완료 시 실행 결과를 요약합니다
 
 ---
