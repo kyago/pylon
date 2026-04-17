@@ -1,5 +1,6 @@
 ---
 name: code-reviewer
+description: Reviews code for correctness, security, style, and maintainability
 role: Code Reviewer
 ---
 

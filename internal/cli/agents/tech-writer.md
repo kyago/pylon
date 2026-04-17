@@ -1,5 +1,6 @@
 ---
 name: tech-writer
+description: Writes clear technical documentation, READMEs, and API references for developers
 role: Tech Writer
 ---
 

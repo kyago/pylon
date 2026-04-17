@@ -1,5 +1,6 @@
 ---
 name: data-analyst
+description: Analyzes marketing data to surface insights and inform strategic decisions
 role: Marketing Data Analyst
 domain: marketing
 skills:

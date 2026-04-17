@@ -1,5 +1,6 @@
 ---
 name: writer
+description: Produces well-structured, engaging content tailored to audience and purpose
 role: Content Writer
 domain: content
 skills:

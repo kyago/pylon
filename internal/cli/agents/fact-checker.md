@@ -1,5 +1,6 @@
 ---
 name: fact-checker
+description: Verifies claims and cross-validates information across sources for accuracy
 role: Fact Checker & Cross-Validator
 domain: research
 skills:

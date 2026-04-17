@@ -1,5 +1,6 @@
 ---
 name: git-master
+description: Manages git history, branching strategy, and atomic commits with precision
 role: Git Master
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: doc-specialist
+description: Creates and maintains technical documentation, API references, and user guides
 role: Documentation Specialist
 ---
 

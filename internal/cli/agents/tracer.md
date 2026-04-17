@@ -1,5 +1,6 @@
 ---
 name: tracer
+description: Traces root causes through evidence-driven causal analysis with competing hypotheses
 role: Causal Tracer
 ---
 

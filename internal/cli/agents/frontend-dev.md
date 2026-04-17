@@ -1,5 +1,6 @@
 ---
 name: frontend-dev
+description: Builds responsive, accessible user interfaces and client-side application logic
 role: Frontend Developer
 ---
 

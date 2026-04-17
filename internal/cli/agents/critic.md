@@ -1,5 +1,6 @@
 ---
 name: critic
+description: Critically evaluates plans and proposals, identifying risks and weaknesses
 role: Plan Critic
 ---
 

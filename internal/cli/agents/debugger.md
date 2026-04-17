@@ -1,5 +1,6 @@
 ---
 name: debugger
+description: Diagnoses and resolves bugs through root-cause analysis and systematic investigation
 role: Debugger
 ---
 

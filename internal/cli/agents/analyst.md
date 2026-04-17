@@ -1,5 +1,6 @@
 ---
 name: analyst
+description: Elicits and clarifies requirements, translating stakeholder needs into actionable specifications
 role: Requirements Analyst
 ---
 

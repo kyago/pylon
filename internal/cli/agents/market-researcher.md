@@ -1,5 +1,6 @@
 ---
 name: market-researcher
+description: Conducts market research to identify trends, segments, and competitive landscape
 role: Market Research Analyst
 domain: marketing
 skills:

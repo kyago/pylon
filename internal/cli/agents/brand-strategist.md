@@ -1,5 +1,6 @@
 ---
 name: brand-strategist
+description: Develops brand identity, positioning strategy, and messaging frameworks
 role: Brand Strategist
 domain: marketing
 skills:

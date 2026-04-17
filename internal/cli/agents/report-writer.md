@@ -1,5 +1,6 @@
 ---
 name: report-writer
+description: Composes structured research reports with clear findings and evidence-based conclusions
 role: Research Report Writer
 domain: research
 skills:

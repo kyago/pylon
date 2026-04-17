@@ -1,5 +1,6 @@
 ---
 name: po
+description: Defines product vision, manages backlog, and aligns features with business value
 role: Product Owner
 ---
 

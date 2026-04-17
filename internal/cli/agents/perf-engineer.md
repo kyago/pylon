@@ -1,5 +1,6 @@
 ---
 name: perf-engineer
+description: Profiles and optimizes system performance, identifying bottlenecks and regressions
 role: Performance Engineer
 ---
 

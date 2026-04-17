@@ -1,5 +1,6 @@
 ---
 name: seo-specialist
+description: Optimizes content and site structure for search engine visibility and ranking
 role: SEO Specialist
 domain: content
 skills:

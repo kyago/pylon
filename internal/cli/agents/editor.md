@@ -1,5 +1,6 @@
 ---
 name: editor
+description: Edits and refines content for clarity, consistency, and editorial quality
 role: Content Editor
 domain: content
 skills:

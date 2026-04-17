@@ -1,5 +1,6 @@
 ---
 name: test-engineer
+description: Designs and implements test strategies, integration tests, and QA workflows
 role: Test Engineer
 ---
 
