@@ -1,5 +1,6 @@
 ---
 name: explorer
+description: Explores and maps codebases to answer structural and navigational questions
 role: Codebase Explorer
 ---
 

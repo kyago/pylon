@@ -1,5 +1,6 @@
 ---
 name: refactorer
+description: Restructures existing code to improve design and maintainability without changing behavior
 role: Refactoring Expert
 ---
 

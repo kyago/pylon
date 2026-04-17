@@ -1,5 +1,6 @@
 ---
 name: academic-analyst
+description: Academic research analyst specializing in literature review, citation analysis, and scholarly synthesis
 role: Academic Research Analyst
 domain: research
 skills:

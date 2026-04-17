@@ -1,5 +1,6 @@
 ---
 name: backend-dev
+description: Implements server-side logic, APIs, and data layers with production-quality code
 role: Backend Developer
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: web-searcher
+description: Performs targeted web searches and extracts information from online sources
 role: Web Search Specialist
 domain: research
 skills:

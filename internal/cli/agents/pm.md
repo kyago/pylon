@@ -1,5 +1,6 @@
 ---
 name: pm
+description: Manages project scope, priorities, and delivery coordination across teams
 role: Project Manager
 ---
 

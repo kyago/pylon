@@ -1,5 +1,6 @@
 ---
 name: content-strategist
+description: Develops content strategy, editorial planning, and audience targeting
 role: Content Strategist
 domain: content
 skills:

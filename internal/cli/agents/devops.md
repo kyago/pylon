@@ -1,5 +1,6 @@
 ---
 name: devops
+description: Designs and manages CI/CD pipelines, infrastructure, and deployment workflows
 role: DevOps Architect
 ---
 

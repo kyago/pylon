@@ -1,5 +1,6 @@
 ---
 name: verifier
+description: Verifies task completion through evidence-based checks and test adequacy assessment
 role: Verifier
 ---
 

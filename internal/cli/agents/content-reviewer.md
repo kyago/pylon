@@ -1,5 +1,6 @@
 ---
 name: content-reviewer
+description: Performs QA review of content for accuracy, tone, and quality standards
 role: Content QA Reviewer
 domain: content
 skills:

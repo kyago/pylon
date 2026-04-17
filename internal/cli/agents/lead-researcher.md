@@ -1,5 +1,6 @@
 ---
 name: lead-researcher
+description: Orchestrates multi-source research investigations and synthesizes findings
 role: Lead Researcher
 domain: research
 skills:

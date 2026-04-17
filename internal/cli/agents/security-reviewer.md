@@ -1,5 +1,6 @@
 ---
 name: security-reviewer
+description: Identifies security vulnerabilities, threat vectors, and unsafe patterns in code
 role: Security Reviewer
 ---
 

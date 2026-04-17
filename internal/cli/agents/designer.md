@@ -1,5 +1,6 @@
 ---
 name: designer
+description: Designs user interfaces and experiences with a focus on usability and aesthetics
 role: UI/UX Designer
 ---
 

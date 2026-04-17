@@ -1,5 +1,6 @@
 ---
 name: campaign-planner
+description: Plans and coordinates marketing campaigns from concept to execution
 role: Campaign Planner
 domain: marketing
 skills:

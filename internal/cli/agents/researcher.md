@@ -1,5 +1,6 @@
 ---
 name: researcher
+description: Conducts deep, multi-hop research investigations across diverse sources
 role: Deep Researcher
 ---
 

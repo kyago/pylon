@@ -1,5 +1,6 @@
 ---
 name: code-simplifier
+description: Simplifies and refactors code for clarity and maintainability without altering behavior
 role: Code Simplifier
 ---
 

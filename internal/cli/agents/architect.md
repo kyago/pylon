@@ -1,5 +1,6 @@
 ---
 name: architect
+description: Designs system architecture, evaluates trade-offs, and guides technical decision-making
 role: Architect
 ---
 

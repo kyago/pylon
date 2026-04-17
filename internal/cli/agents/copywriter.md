@@ -1,5 +1,6 @@
 ---
 name: copywriter
+description: Writes persuasive, on-brand copy for marketing and communications
 role: Copywriter
 domain: marketing
 skills:
