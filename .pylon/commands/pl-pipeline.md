@@ -46,14 +46,17 @@ Claude Code가 직접 PO 역할을 수행합니다.
 
 ### Step 3: 아키텍처 분석
 
-Agent 도구로 아키텍트 서브에이전트를 실행합니다.
+`.pylon/agents/architect.md`를 읽어 에이전트 정의를 가져온 뒤 Agent 도구로 실행합니다.
 
 ```
-Agent(subagent_type="oh-my-claudecode:architect",
-      prompt="다음 요구사항을 분석하고 아키텍처 설계를 작성하세요: [requirement-analysis.md 내용]
-              코드베이스 구조를 파악하고 영향 받는 파일, 변경 사항, 새로 생성할 파일을 명시하세요.
-              결과를 $PIPELINE_DIR/architecture.md에 저장하세요.")
+// 1. 에이전트 정의 로드
+ARCHITECT_DEF=$(cat .pylon/agents/architect.md)
+
+// 2. 아키텍트 에이전트 실행
+Agent(prompt="$ARCHITECT_DEF\n\n## 태스크\n다음 요구사항을 분석하고 아키텍처 설계를 작성하세요: [requirement-analysis.md 내용]\n코드베이스 구조를 파악하고 영향 받는 파일, 변경 사항, 새로 생성할 파일을 명시하세요.\n결과를 $PIPELINE_DIR/architecture.md에 저장하세요.")
 ```
+
+에이전트 정의는 `.pylon/agents/architect.md`에서 읽어 프롬프트에 주입합니다.
 
 ### Step 4: 사전조건 검증
 
@@ -117,10 +120,14 @@ Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T003 내용]", isolation="
 > `config.yml`의 `git.pr.auto_pr: true` 설정 시에만 자동 실행됩니다.
 > 수동으로 PR을 생성하려면 `/pl:pr` 커맨드를 사용하세요.
 
-`config.yml`에서 `git.pr.auto_pr`이 `true`인 경우에만 실행합니다:
+`config.yml`에서 `git.pr.auto_pr` 값을 읽어 `true`인 경우에만 실행합니다:
 
 ```bash
-.pylon/scripts/bash/create-pr.sh "$PIPELINE_DIR" --title "feat: [요구사항 요약]"
+source .pylon/scripts/bash/common.sh
+AUTO_PR=$(config_get "git.pr.auto_pr" "false")
+if [[ "$AUTO_PR" == "true" ]]; then
+  .pylon/scripts/bash/create-pr.sh "$PIPELINE_DIR" --branch "$BRANCH" --title "feat: [요구사항 요약]"
+fi
 ```
 
 ### Step 9: 완료 보고
