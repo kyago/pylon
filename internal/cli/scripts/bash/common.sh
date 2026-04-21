@@ -37,6 +37,16 @@ require_cmd() {
   done
 }
 
+# Returns 0 if the given branch name is a protected branch
+PROTECTED_BRANCHES=("main" "master" "develop" "dev")
+is_protected_branch() {
+  local branch="$1"
+  for protected in "${PROTECTED_BRANCHES[@]}"; do
+    [[ "$branch" == "$protected" ]] && return 0
+  done
+  return 1
+}
+
 REPO_ROOT="$(find_repo_root)"
 PYLON_DIR="$REPO_ROOT/.pylon"
 RUNTIME_DIR="$PYLON_DIR/runtime"

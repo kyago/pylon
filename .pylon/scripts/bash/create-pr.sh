@@ -2,23 +2,47 @@
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
-require_cmd gh jq
+require_cmd git gh jq
 
-PIPELINE_DIR="${1:?Usage: create-pr.sh <pipeline-dir> [--title <title>] [--body <body>] [--draft]}"
+PIPELINE_DIR="${1:?Usage: create-pr.sh <pipeline-dir> [--branch <branch>] [--title <title>] [--body <body>] [--draft]}"
 shift
 
+BRANCH=""
 TITLE=""
 BODY=""
 DRAFT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --title) TITLE="$2"; shift 2 ;;
-    --body) BODY="$2"; shift 2 ;;
-    --draft) DRAFT="--draft"; shift ;;
+    --branch) BRANCH="$2"; shift 2 ;;
+    --title)  TITLE="$2";  shift 2 ;;
+    --body)   BODY="$2";   shift 2 ;;
+    --draft)  DRAFT="--draft"; shift ;;
     *) shift ;;
   esac
 done
+
+# Switch to the specified branch if provided and not already on it
+CURRENT_BRANCH=$(git branch --show-current)
+
+if [[ -n "$BRANCH" && "$CURRENT_BRANCH" != "$BRANCH" ]]; then
+  if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+    git checkout "$BRANCH" || die "브랜치 전환 실패: $BRANCH"
+  else
+    git checkout -b "$BRANCH" || die "브랜치 생성 실패: $BRANCH"
+  fi
+  CURRENT_BRANCH="$BRANCH"
+fi
+
+# Guard: cannot create PR from a protected branch
+if is_protected_branch "$CURRENT_BRANCH"; then
+  die "protected branch '$CURRENT_BRANCH'에서 PR을 생성할 수 없습니다. --branch <브랜치명>을 지정하세요."
+fi
+
+# Push branch to remote if not already pushed
+if ! git ls-remote --exit-code --heads origin "$CURRENT_BRANCH" &>/dev/null; then
+  git push -u origin "$CURRENT_BRANCH" || die "브랜치 push 실패: $CURRENT_BRANCH"
+fi
 
 # Read requirement for default title
 if [[ -z "$TITLE" && -f "$PIPELINE_DIR/requirement.md" ]]; then
