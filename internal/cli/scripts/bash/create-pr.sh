@@ -29,7 +29,7 @@ if [[ -n "$BRANCH" && "$CURRENT_BRANCH" != "$BRANCH" ]]; then
   if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git checkout "$BRANCH" || die "브랜치 전환 실패: $BRANCH"
   else
-    git checkout -b "$BRANCH" || die "브랜치 생성 실패: $BRANCH"
+    die "브랜치 '$BRANCH'가 존재하지 않습니다. init-pipeline.sh를 먼저 실행하세요."
   fi
   CURRENT_BRANCH="$BRANCH"
 fi
@@ -58,8 +58,8 @@ if [[ -z "$BODY" ]]; then
 fi
 
 # Create PR
-PR_URL=$(gh pr create --title "$TITLE" --body "$(printf '%b' "$BODY")" $DRAFT)
-PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$' || echo "")
+PR_URL=$(gh pr create --title "$TITLE" --body "$(printf '%b' "$BODY")" ${DRAFT:+"$DRAFT"})
+PR_NUMBER=$(basename "$PR_URL")
 
 OUTPUT=$(jq -cn \
   --arg url "$PR_URL" \

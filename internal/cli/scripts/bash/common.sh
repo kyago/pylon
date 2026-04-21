@@ -38,7 +38,7 @@ require_cmd() {
 }
 
 # Returns 0 if the given branch name is a protected branch
-PROTECTED_BRANCHES=("main" "master" "develop" "dev")
+readonly PROTECTED_BRANCHES=("main" "master" "develop" "dev")
 is_protected_branch() {
   local branch="$1"
   for protected in "${PROTECTED_BRANCHES[@]}"; do

@@ -24,7 +24,12 @@ if is_protected_branch "$CURRENT_BRANCH"; then
     git checkout -b "$BRANCH" || die "브랜치 생성 실패: $BRANCH"
   fi
 elif [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
-  git checkout -b "$BRANCH" || die "브랜치 생성 실패: $BRANCH (이미 존재하면 'git checkout $BRANCH'로 수동 전환 후 재실행하세요)"
+  echo "INFO: '$CURRENT_BRANCH'에서 파이프라인 브랜치 '$BRANCH'로 전환합니다." >&2
+  if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+    git checkout "$BRANCH" || die "브랜치 전환 실패: $BRANCH"
+  else
+    git checkout -b "$BRANCH" || die "브랜치 생성 실패: $BRANCH"
+  fi
 fi
 
 # Create pipeline runtime directory
