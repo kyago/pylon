@@ -149,10 +149,14 @@ Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T003 내용]", isolation="
 > `config.yml`의 `git.pr.auto_pr: true` 설정 시에만 자동 실행됩니다.
 > 수동으로 PR을 생성하려면 `/pl:pr` 커맨드를 사용하세요.
 
-`config.yml`에서 `git.pr.auto_pr`이 `true`인 경우에만 실행합니다:
+`config.yml`에서 `git.pr.auto_pr` 값을 읽어 `true`인 경우에만 실행합니다:
 
 ```bash
-.pylon/scripts/bash/create-pr.sh "$PIPELINE_DIR" --branch "$BRANCH" --title "feat: [요구사항 요약]"
+source .pylon/scripts/bash/common.sh
+AUTO_PR=$(config_get "git.pr.auto_pr" "false")
+if [[ "$AUTO_PR" == "true" ]]; then
+  .pylon/scripts/bash/create-pr.sh "$PIPELINE_DIR" --branch "$BRANCH" --title "feat: [요구사항 요약]"
+fi
 ```
 
 ### Step 9: 완료 보고

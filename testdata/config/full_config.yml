@@ -19,6 +19,7 @@ git:
     enabled: true
     auto_cleanup: true
   pr:
+    auto_pr: false
     reviewers:
       - keiyjay
     draft: false
