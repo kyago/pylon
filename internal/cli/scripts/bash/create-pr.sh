@@ -1,12 +1,34 @@
 #!/bin/bash
 set -euo pipefail
+
+# Pre-parse --git-root before sourcing common.sh
+GIT_ROOT_ARG=""
+_args=()
+_next=""
+for arg in "$@"; do
+  if [[ "$_next" == "git-root" ]]; then
+    GIT_ROOT_ARG="$arg"
+    _next=""
+  elif [[ "$arg" == "--git-root" ]]; then
+    _next="git-root"
+  else
+    _args+=("$arg")
+  fi
+done
+set -- "${_args[@]+"${_args[@]}"}"
+
 source "$(dirname "$0")/common.sh"
+
+# Override GIT_ROOT if --git-root was specified (priority 1)
+if [[ -n "$GIT_ROOT_ARG" ]]; then
+  GIT_ROOT="$(realpath "$REPO_ROOT/$GIT_ROOT_ARG")"
+fi
 
 cd "$GIT_ROOT" || die "GIT_ROOT로 이동 실패: $GIT_ROOT"
 
 require_cmd git gh jq
 
-PIPELINE_DIR="${1:?Usage: create-pr.sh <pipeline-dir> [--branch <branch>] [--title <title>] [--body <body>] [--draft]}"
+PIPELINE_DIR="${1:?Usage: create-pr.sh <pipeline-dir> [--git-root <repo-rel-path>] --branch <branch> [--title <title>] [--body <body>] [--draft]}"
 shift
 
 BRANCH=""
