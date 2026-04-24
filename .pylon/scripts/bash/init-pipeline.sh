@@ -2,6 +2,8 @@
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
+cd "$GIT_ROOT" || die "GIT_ROOT로 이동 실패: $GIT_ROOT"
+
 require_cmd git jq
 
 REQUIREMENT="${1:?Usage: init-pipeline.sh <requirement>}"

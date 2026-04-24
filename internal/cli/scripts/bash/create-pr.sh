@@ -2,6 +2,8 @@
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
+cd "$GIT_ROOT" || die "GIT_ROOT로 이동 실패: $GIT_ROOT"
+
 require_cmd git gh jq
 
 PIPELINE_DIR="${1:?Usage: create-pr.sh <pipeline-dir> [--branch <branch>] [--title <title>] [--body <body>] [--draft]}"
