@@ -52,19 +52,6 @@ PYLON_DIR="$REPO_ROOT/.pylon"
 RUNTIME_DIR="$PYLON_DIR/runtime"
 CONFIG_FILE="$PYLON_DIR/config.yml"
 
-# Find git repository root (walks up from REPO_ROOT to find .git/)
-find_git_root() {
-  local dir="$REPO_ROOT"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -d "$dir/.git" ]]; then
-      echo "$dir"
-      return 0
-    fi
-    dir="$(dirname "$dir")"
-  done
-  echo "$REPO_ROOT"
-}
-
 # config_get <dot.notation.key> [default]
 # Reads a scalar value from .pylon/config.yml using dot-notation key path.
 # Prints the value; prints default (or empty string) if key is absent or config is missing.
@@ -103,10 +90,11 @@ except Exception:
   echo "${value:-$default}"
 }
 
-# Resolve target git repo root: config git.repo overrides auto-detect
+# Resolve target git repo root: --git-root arg (priority 1) > config git.repo (priority 2) > git rev-parse (priority 3)
+# Note: --git-root arg is pre-parsed by each script before sourcing this file; GIT_ROOT override happens after source.
 _GIT_REPO_CFG=$(config_get "git.repo" "")
 if [[ -n "$_GIT_REPO_CFG" ]]; then
   GIT_ROOT="$(realpath "$REPO_ROOT/$_GIT_REPO_CFG")"
 else
-  GIT_ROOT="$(find_git_root)"
+  GIT_ROOT="$(git -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$REPO_ROOT")"
 fi
