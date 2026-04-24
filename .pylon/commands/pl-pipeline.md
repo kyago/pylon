@@ -177,7 +177,14 @@ Agent(
 repo-Agent는 PR 생성을 수행하지 않습니다.
 
 ```bash
-# 각 성공 repo에 대해 실행
+# 실패한 repo는 status를 "failed"로 업데이트
+for REPO in "${FAILED_REPOS[@]}"; do
+  jq --arg repo "$REPO" '.sub_pipelines |= map(if .repo == $repo then .status = "failed" else . end)' \
+    "$PIPELINE_DIR/status.json" > "$PIPELINE_DIR/status.json.tmp" \
+    && mv "$PIPELINE_DIR/status.json.tmp" "$PIPELINE_DIR/status.json"
+done
+
+# 각 성공 repo에 대해 PR 생성
 for REPO in "${SUCCESSFUL_REPOS[@]}"; do
   REPO_BASENAME=$(basename "$REPO")
   SUB_PIPELINE_DIR="$PIPELINE_DIR/$REPO_BASENAME"
