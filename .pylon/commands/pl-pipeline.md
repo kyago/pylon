@@ -184,21 +184,26 @@ for REPO in "${FAILED_REPOS[@]}"; do
     && mv "$PIPELINE_DIR/status.json.tmp" "$PIPELINE_DIR/status.json"
 done
 
-# 각 성공 repo에 대해 PR 생성
-for REPO in "${SUCCESSFUL_REPOS[@]}"; do
-  REPO_BASENAME=$(basename "$REPO")
-  SUB_PIPELINE_DIR="$PIPELINE_DIR/$REPO_BASENAME"
+# auto_pr 설정 확인 후 성공 repo에 대해서만 PR 생성
+source .pylon/scripts/bash/common.sh
+AUTO_PR=$(config_get "git.pr.auto_pr" "false")
+if [[ "$AUTO_PR" == "true" ]]; then
+  for REPO in "${SUCCESSFUL_REPOS[@]}"; do
+    REPO_BASENAME=$(basename "$REPO")
+    SUB_PIPELINE_DIR="$PIPELINE_DIR/$REPO_BASENAME"
+    BRANCH=$(jq -r '.branch' "$SUB_PIPELINE_DIR/status.json")
 
-  .pylon/scripts/bash/create-pr.sh "$SUB_PIPELINE_DIR" \
-    --git-root "$REPO" \
-    --branch "$BRANCH" \
-    --title "feat: [요구사항 요약] ($REPO_BASENAME)"
+    .pylon/scripts/bash/create-pr.sh "$SUB_PIPELINE_DIR" \
+      --git-root "$REPO" \
+      --branch "$BRANCH" \
+      --title "feat: [요구사항 요약] ($REPO_BASENAME)"
 
-  # 루트 status.json의 해당 sub_pipeline 항목 status 업데이트
-  jq --arg repo "$REPO" '.sub_pipelines |= map(if .repo == $repo then .status = "success" else . end)' \
-    "$PIPELINE_DIR/status.json" > "$PIPELINE_DIR/status.json.tmp" \
-    && mv "$PIPELINE_DIR/status.json.tmp" "$PIPELINE_DIR/status.json"
-done
+    # 루트 status.json의 해당 sub_pipeline 항목 status 업데이트
+    jq --arg repo "$REPO" '.sub_pipelines |= map(if .repo == $repo then .status = "success" else . end)' \
+      "$PIPELINE_DIR/status.json" > "$PIPELINE_DIR/status.json.tmp" \
+      && mv "$PIPELINE_DIR/status.json.tmp" "$PIPELINE_DIR/status.json"
+  done
+fi
 ```
 
 > `config.yml`의 `git.pr.auto_pr: true` 설정 시에만 자동 실행됩니다.

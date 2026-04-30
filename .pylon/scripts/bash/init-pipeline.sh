@@ -53,7 +53,9 @@ if [[ -n "$GIT_ROOT_ARG" && -n "$PIPELINE_DIR_ARG" ]]; then
   mkdir -p "$SUB_PIPELINE_DIR"
 
   # Create or checkout branch in target repo
-  CURRENT_BRANCH=$(git -C "$GIT_ROOT" branch --show-current)
+  if ! git -C "$GIT_ROOT" diff --quiet || ! git -C "$GIT_ROOT" diff --cached --quiet; then
+    die "$GIT_ROOT_ARG 에 uncommitted changes가 있습니다. commit 또는 stash 후 다시 실행하세요."
+  fi
   if git -C "$GIT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git -C "$GIT_ROOT" checkout "$BRANCH" || die "브랜치 전환 실패: $BRANCH"
   else
