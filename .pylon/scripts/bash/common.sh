@@ -90,11 +90,31 @@ except Exception:
   echo "${value:-$default}"
 }
 
-# Resolve target git repo root: --git-root arg (priority 1) > config git.repo (priority 2) > git rev-parse (priority 3)
-# Note: --git-root arg is pre-parsed by each script before sourcing this file; GIT_ROOT override happens after source.
-_GIT_REPO_CFG=$(config_get "git.repo" "")
-if [[ -n "$_GIT_REPO_CFG" ]]; then
-  GIT_ROOT="$(realpath "$REPO_ROOT/$_GIT_REPO_CFG")"
-else
-  GIT_ROOT="$(git -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$REPO_ROOT")"
-fi
+# extract_arg <arg-name> [args...] — prints value of --<arg-name>, empty if not found
+extract_arg() {
+  local name="$1"; shift
+  local prev=""
+  for arg in "$@"; do
+    [[ "$prev" == "--$name" ]] && { echo "$arg"; return 0; }
+    prev="$arg"
+  done
+}
+
+# resolve_git_root [path] — sets GIT_ROOT. Priority: arg > config git.repo > git rev-parse
+resolve_git_root() {
+  local override="${1:-}"
+  if [[ -n "$override" ]]; then
+    [[ "$override" == --* ]] && die "--git-root 값이 잘못 지정됨: '$override'. 사용법: --git-root <repo-rel-path>"
+    GIT_ROOT="$(realpath "$REPO_ROOT/$override")"
+  else
+    local cfg
+    cfg=$(config_get "git.repo" "")
+    if [[ -n "$cfg" ]]; then
+      GIT_ROOT="$(realpath "$REPO_ROOT/$cfg")"
+    else
+      GIT_ROOT="$(git -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$REPO_ROOT")"
+    fi
+  fi
+}
+
+resolve_git_root

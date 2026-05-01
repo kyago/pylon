@@ -1,28 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Pre-parse --git-root before sourcing common.sh
-GIT_ROOT_ARG=""
-_args=()
-_next=""
-for arg in "$@"; do
-  if [[ "$_next" == "git-root" ]]; then
-    GIT_ROOT_ARG="$arg"
-    _next=""
-  elif [[ "$arg" == "--git-root" ]]; then
-    _next="git-root"
-  else
-    _args+=("$arg")
-  fi
-done
-set -- "${_args[@]+"${_args[@]}"}"
-
 source "$(dirname "$0")/common.sh"
 
-# Override GIT_ROOT if --git-root was specified (priority 1)
-if [[ -n "$GIT_ROOT_ARG" ]]; then
-  GIT_ROOT="$(realpath "$REPO_ROOT/$GIT_ROOT_ARG")"
-fi
+GIT_ROOT_ARG=$(extract_arg "git-root" "$@")
+resolve_git_root "$GIT_ROOT_ARG"
 
 cd "$GIT_ROOT" || die "GIT_ROOT로 이동 실패: $GIT_ROOT"
 
