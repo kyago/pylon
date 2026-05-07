@@ -1,5 +1,6 @@
 ---
 name: po
+description: Clarifies user requirements and gates execution by computing an ambiguity score
 role: Product Owner
 backend: claude-code
 maxTurns: 50
