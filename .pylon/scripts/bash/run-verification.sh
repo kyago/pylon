@@ -1,12 +1,36 @@
 #!/bin/bash
 set -euo pipefail
+
 source "$(dirname "$0")/common.sh"
 
-require_cmd go jq
+GIT_ROOT_ARG=$(extract_arg "git-root" "$@")
+resolve_git_root "$GIT_ROOT_ARG"
 
-PIPELINE_DIR="${1:?Usage: run-verification.sh <pipeline-dir>}"
+require_cmd jq
 
-cd "$REPO_ROOT"
+PIPELINE_DIR="${1:?Usage: run-verification.sh <pipeline-dir> [--git-root <repo-rel-path>]}"
+
+# If --git-root specified, run verification in that repo
+if [[ -n "$GIT_ROOT_ARG" ]]; then
+  cd "$GIT_ROOT" || die "--git-root 경로로 이동 실패: $GIT_ROOT"
+
+  # Skip verification if no go.mod (non-Go repo)
+  if [[ ! -f "go.mod" ]]; then
+    echo "INFO: go.mod not found in $GIT_ROOT, skipping Go verification" >&2
+    OUTPUT=$(jq -cn \
+      --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{ok: true, checks: [], skipped: true, timestamp: $timestamp}')
+    if [[ -d "$PIPELINE_DIR" ]]; then
+      echo "$OUTPUT" > "$PIPELINE_DIR/verification.json"
+    fi
+    echo "$OUTPUT" | jq .
+    exit 0
+  fi
+else
+  cd "$REPO_ROOT"
+fi
+
+require_cmd go
 
 RESULTS=()
 OVERALL_OK=true

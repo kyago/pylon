@@ -1,10 +1,16 @@
 #!/bin/bash
 set -euo pipefail
+
 source "$(dirname "$0")/common.sh"
+
+GIT_ROOT_ARG=$(extract_arg "git-root" "$@")
+resolve_git_root "$GIT_ROOT_ARG"
+
+cd "$GIT_ROOT" || die "GIT_ROOT로 이동 실패: $GIT_ROOT"
 
 require_cmd git gh jq
 
-PIPELINE_DIR="${1:?Usage: create-pr.sh <pipeline-dir> [--branch <branch>] [--title <title>] [--body <body>] [--draft]}"
+PIPELINE_DIR="${1:?Usage: create-pr.sh <pipeline-dir> [--git-root <repo-rel-path>] --branch <branch> [--title <title>] [--body <body>] [--draft]}"
 shift
 
 BRANCH=""
