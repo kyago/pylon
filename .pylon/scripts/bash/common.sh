@@ -105,11 +105,13 @@ resolve_git_root() {
   local override="${1:-}"
   if [[ -n "$override" ]]; then
     [[ "$override" == --* ]] && die "--git-root 값이 잘못 지정됨: '$override'. 사용법: --git-root <repo-rel-path>"
+    [[ -d "$REPO_ROOT/$override" ]] || die "--git-root '$override' 경로가 존재하지 않습니다: $REPO_ROOT/$override"
     GIT_ROOT="$(realpath "$REPO_ROOT/$override")"
   else
     local cfg
     cfg=$(config_get "git.repo" "")
     if [[ -n "$cfg" ]]; then
+      [[ -d "$REPO_ROOT/$cfg" ]] || die "config git.repo '$cfg' 경로가 존재하지 않습니다: $REPO_ROOT/$cfg"
       GIT_ROOT="$(realpath "$REPO_ROOT/$cfg")"
     else
       GIT_ROOT="$(git -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$REPO_ROOT")"
