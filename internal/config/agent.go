@@ -13,6 +13,7 @@ import (
 type AgentConfig struct {
 	// YAML frontmatter fields (between --- delimiters)
 	Name           string            `yaml:"name"`
+	Description    string            `yaml:"description"`
 	Role           string            `yaml:"role"`
 	Type           string            `yaml:"type"`
 	Backend        string            `yaml:"backend"`

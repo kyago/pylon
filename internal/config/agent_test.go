@@ -18,6 +18,7 @@ func TestParseAgentFile_FullAgent(t *testing.T) {
 		expected interface{}
 	}{
 		{"name", agent.Name, "backend-dev"},
+		{"description", agent.Description, "Implements project-api backend features following Go standard project layout"},
 		{"role", agent.Role, "Backend Developer"},
 		{"backend", agent.Backend, "claude-code"},
 		{"maxTurns", agent.MaxTurns, 30},
@@ -77,6 +78,9 @@ func TestParseAgentFile_ArchitectAgent(t *testing.T) {
 
 	if agent.Name != "architect" {
 		t.Errorf("name: got %q, expected %q", agent.Name, "architect")
+	}
+	if agent.Description != "Read-only solution architect that produces design documents and ADRs" {
+		t.Errorf("description: got %q", agent.Description)
 	}
 	if agent.Role != "Solution Architect" {
 		t.Errorf("role: got %q, expected %q", agent.Role, "Solution Architect")
@@ -148,6 +152,9 @@ func TestParseAgentFile_MinimalAgent(t *testing.T) {
 	}
 
 	// Optional fields should be zero-valued
+	if agent.Description != "" {
+		t.Errorf("description should be empty, got %q", agent.Description)
+	}
 	if agent.Backend != "" {
 		t.Errorf("backend should be empty, got %q", agent.Backend)
 	}
