@@ -375,7 +375,6 @@ All checks passed.
 └── tasks/
 
 5. .gitignore에 runtime/, conversations/ 추가
-6. git init (이미 있으면 스킵)
 ```
 
 **에이전트 템플릿 기본 구조** (4종 각각 역할에 맞게):
