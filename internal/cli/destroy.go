@@ -16,7 +16,7 @@ func newDestroyCmd() *cobra.Command {
 		Use:        "destroy",
 		Short:      "Remove pylon workspace (deprecated: use 'pylon uninstall')",
 		Long: `Remove the .pylon/ directory and clean up all pylon-related resources.
-Git submodules are preserved.
+Project repositories are preserved.
 
 DEPRECATED: Use 'pylon uninstall' for comprehensive cleanup including
 runtime artifacts, project-level configs, and optional binary removal.
