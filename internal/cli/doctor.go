@@ -91,7 +91,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// Sync embedded resources (agents, skills, commands, scripts) if in a workspace
 	syncResourcesIfWorkspace()
 
-	// Check submodule .pylon/ exclude settings (skip if git is missing)
+	// Check project repo .pylon/ exclude settings (skip if git is missing)
 	fixExcludes, _ := cmd.Flags().GetBool("fix-excludes")
 	hasGit := true
 	for _, f := range failures {
