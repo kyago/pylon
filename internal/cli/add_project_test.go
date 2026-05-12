@@ -371,3 +371,92 @@ func TestRunAddProject_PathTraversal(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func withStdin(t *testing.T, input string, fn func()) {
+	t.Helper()
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	if _, err := w.WriteString(input); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	os.Stdin = r
+	defer func() {
+		os.Stdin = oldStdin
+		_ = r.Close()
+	}()
+	fn()
+}
+
+func TestRunAddProject_UsesPlainClone(t *testing.T) {
+	requireGit(t)
+
+	// 워크스페이스(.pylon/만 있음, git 없음)
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 더미 origin repo
+	origin := t.TempDir()
+	if out, err := exec.Command("git", "init", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init origin: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(origin, "README.md"), []byte("hi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, origin, "add", ".")
+	runGit(t, origin, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init")
+
+	addCmd := newAddProjectCmd()
+	addCmd.SetArgs([]string{"file://" + origin, "--name", "myproj"})
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = workspace
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	withStdin(t, "n\n", func() {
+		if err := addCmd.Execute(); err != nil {
+			t.Fatalf("add-project failed: %v", err)
+		}
+	})
+
+	// 1) workspace에 .gitmodules가 생기지 않아야 함
+	if _, err := os.Stat(filepath.Join(workspace, ".gitmodules")); err == nil {
+		t.Errorf(".gitmodules should not be created in workspace")
+	}
+	// 2) workspace에 .git/이 자동 생성되지 않아야 함
+	if _, err := os.Stat(filepath.Join(workspace, ".git")); err == nil {
+		t.Errorf("workspace .git/ should not be created")
+	}
+	// 3) 하위 디렉토리는 일반 git clone 결과
+	subGit := filepath.Join(workspace, "myproj", ".git")
+	info, err := os.Stat(subGit)
+	if err != nil {
+		t.Fatalf("sub project .git missing: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("sub project .git should be a directory (clone), got gitlink file")
+	}
+	// 4) .pylon/이 sub 디렉토리에 생성됨
+	if _, err := os.Stat(filepath.Join(workspace, "myproj", ".pylon", "context.md")); err != nil {
+		t.Errorf("expected sub .pylon/context.md, got %v", err)
+	}
+}

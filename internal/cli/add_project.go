@@ -17,8 +17,8 @@ import (
 func newAddProjectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-project [git-url]",
-		Short: "Add a project as git submodule",
-		Long: `Add a project to the workspace as a git submodule.
+		Short: "Add a project as a standalone git clone in the workspace",
+		Long: `Add a project to the workspace as a standalone git clone.
 
 Analyzes the codebase and creates project-level .pylon/ configuration
 including context.md and default agent definitions.
@@ -26,14 +26,18 @@ including context.md and default agent definitions.
 If the project directory already exists, use --force to re-clone or
 --skip-clone to keep the existing directory and only generate .pylon/ config.
 
-Spec Reference: Section 7 "pylon add-project", Section 12`,
+If the project directory exists as a legacy git submodule, --force is blocked
+to prevent accidental data loss. Use 'pylon migrate-project <name>' first,
+or pass --migrate together with --force to convert and re-clone.
+
+Spec Reference: spec 003.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runAddProject,
 	}
 
 	cmd.Flags().String("name", "", "project directory name (default: inferred from URL)")
 	cmd.Flags().Bool("force", false, "remove existing directory and re-clone")
-	cmd.Flags().Bool("skip-clone", false, "skip git submodule add; use existing directory for .pylon/ setup only")
+	cmd.Flags().Bool("skip-clone", false, "skip git clone; use existing directory for .pylon/ setup only")
 
 	return cmd
 }
@@ -114,15 +118,15 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 1: Add git submodule (skipped when --skip-clone)
+	// Step 1: Clone the project (skipped when --skip-clone)
 	if !skipClone {
-		fmt.Printf("Adding git submodule: %s\n", repoURL)
-		gitCmd := exec.Command("git", "submodule", "add", repoURL, projectName)
+		fmt.Printf("Cloning: %s\n", repoURL)
+		gitCmd := exec.Command("git", "clone", repoURL, projectName)
 		gitCmd.Dir = root
 		if output, err := gitCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to add submodule: %w\n%s", err, output)
+			return fmt.Errorf("failed to clone: %w\n%s", err, output)
 		}
-		fmt.Printf("✓ Submodule added: %s\n", projectName)
+		fmt.Printf("✓ Cloned: %s\n", projectName)
 	}
 
 	// Step 2: Create project .pylon/ structure
