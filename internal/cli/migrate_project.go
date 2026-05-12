@@ -127,7 +127,9 @@ func performMigration(workspaceRoot, projectName string) error {
 	fmt.Println("✓ Submodule deregistered.")
 	fmt.Printf("  Note: workspace .gitmodules was modified. Run 'git -C %s add .gitmodules && git commit' to record this change if you track the workspace in git.\n", workspaceRoot)
 
-	// §5.2-6: re-clone at the same location
+	// §5.2-6: re-clone at the same location.
+	// -c protocol.file.allow=always: required when origin URL is a file:// path
+	// (test fixtures); no-op for https/ssh remotes used in production.
 	cloneCmd := exec.Command("git", "-c", "protocol.file.allow=always", "clone", url, projectName)
 	cloneCmd.Dir = workspaceRoot
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
