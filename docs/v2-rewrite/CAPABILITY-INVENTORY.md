@@ -116,7 +116,8 @@
 | `pylon index` | `index.go` | **이전** | `/pl:index` |
 | `pylon doctor` | `doctor.go` | **유지** | |
 | `pylon mem *` | `mem.go` | **유지** | |
-| `pylon add-project` | `add_project.go` | **유지** | |
+| `pylon add-project` | `add_project.go` | **유지** | git clone 기반으로 변경 (submodule 미사용) |
+| `pylon migrate-project` | `migrate_project.go` | **신규** | 기존 submodule 프로젝트를 clone으로 전환 |
 | `pylon sync-*` | `sync_*.go` | **유지** | |
 | `pylon uninstall` | `uninstall.go` | **유지** | |
 

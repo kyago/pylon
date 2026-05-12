@@ -42,7 +42,8 @@ pylon init         # 워크스페이스 초기화
 pylon doctor       # 진단
 pylon version      # 버전 확인
 pylon status       # 파이프라인 상태 조회
-pylon add-project  # 프로젝트 추가
+pylon add-project  # 프로젝트를 워크스페이스에 clone하여 추가
+pylon migrate-project # 기존 submodule 프로젝트를 clone으로 전환
 pylon mem search   # 메모리 검색
 pylon mem store    # 메모리 저장
 pylon mem list     # 메모리 목록
@@ -180,6 +181,20 @@ model: sonnet  # optional
 ```bash
 pylon sync-agents
 ```
+
+### Step 8: 기존 submodule 프로젝트 전환 (선택사항)
+
+`pylon add-project`는 이제 git submodule 대신 standalone clone 방식을 사용합니다. 기존 submodule 방식으로 등록된 프로젝트는 그대로 동작하지만, `pylon migrate-project`로 clone 방식으로 전환할 수 있습니다.
+
+```bash
+# 전환 전 확인 (상태 변경 없음)
+pylon migrate-project <name> --dry-run
+
+# 전환 실행
+pylon migrate-project <name>
+```
+
+전환 전 dirty tree, unpushed commits, local-only 브랜치가 있으면 안전 검사에서 차단됩니다. `--force`로 우회할 수 있지만 데이터 손실 가능성이 있습니다.
 
 ## 새로운 기능
 
