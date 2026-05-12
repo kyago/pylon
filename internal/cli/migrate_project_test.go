@@ -118,6 +118,73 @@ func TestSafetyCheck_SHAMatchesOrigin(t *testing.T) {
 	}
 }
 
+func TestPerformMigration_HappyPath(t *testing.T) {
+	ws, name, sub := setupSubmoduleFixture(t)
+	// Populate .pylon/ inside the submodule
+	if err := os.MkdirAll(filepath.Join(sub, ".pylon", "agents"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, ".pylon", "context.md"), []byte("ctx\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := performMigration(ws, name); err != nil {
+		t.Fatalf("performMigration failed: %v", err)
+	}
+
+	// .gitmodules entry removed
+	data, _ := os.ReadFile(filepath.Join(ws, ".gitmodules"))
+	if strings.Contains(string(data), "submodule \""+name+"\"") {
+		t.Errorf(".gitmodules still contains [submodule %q] entry", name)
+	}
+	// coupling now Clone
+	if got := detectProjectCoupling(ws, name); got != CouplingClone {
+		t.Errorf("after migration coupling = %v, want CouplingClone", got)
+	}
+	// Sub .git is directory (clone), not gitlink file
+	info, err := os.Stat(filepath.Join(sub, ".git"))
+	if err != nil {
+		t.Fatalf(".git missing: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf(".git should be directory after re-clone, got gitlink file")
+	}
+	// .pylon/ restored
+	if _, err := os.Stat(filepath.Join(sub, ".pylon", "context.md")); err != nil {
+		t.Errorf(".pylon/context.md missing after migration: %v", err)
+	}
+	// .pylon/ excluded in new repo
+	excl, err := os.ReadFile(filepath.Join(sub, ".git", "info", "exclude"))
+	if err != nil || !strings.Contains(string(excl), ".pylon/") {
+		t.Errorf(".pylon/ not in .git/info/exclude (err=%v)", err)
+	}
+}
+
+func TestRunMigrateProject_DryRunNoChanges(t *testing.T) {
+	ws, name, sub := setupSubmoduleFixture(t)
+	_ = sub
+
+	cmd := newMigrateProjectCmd()
+	cmd.SetArgs([]string{name, "--dry-run"})
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = ws
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	// .gitmodules untouched
+	data, _ := os.ReadFile(filepath.Join(ws, ".gitmodules"))
+	if !strings.Contains(string(data), "submodule \""+name+"\"") {
+		t.Errorf("dry-run should not modify .gitmodules")
+	}
+	// coupling still Submodule
+	if got := detectProjectCoupling(ws, name); got != CouplingSubmodule {
+		t.Errorf("after dry-run coupling = %v, want CouplingSubmodule", got)
+	}
+}
+
 func TestRunMigrateProject_RejectsCloneProject(t *testing.T) {
 	requireGit(t)
 	workspace := t.TempDir()

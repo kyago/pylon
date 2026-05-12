@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,11 +70,121 @@ func runMigrateProject(cmd *cobra.Command, args []string) error {
 	return performMigration(root, projectName)
 }
 
-// performMigration is implemented in Task 10.
+// performMigration converts a submodule project into a standalone clone
+// per spec 003 §5.2. Caller must have already run runSubmoduleSafetyChecks.
 func performMigration(workspaceRoot, projectName string) error {
-	_ = workspaceRoot
-	_ = projectName
-	return fmt.Errorf("not implemented (Task 10)")
+	subDir := filepath.Join(workspaceRoot, projectName)
+
+	// §5.2-2: collect metadata
+	originURL, err := exec.Command("git", "-C", subDir, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		return fmt.Errorf("cannot read origin URL: %w", err)
+	}
+	url := strings.TrimSpace(string(originURL))
+
+	branchOut, _ := exec.Command("git", "-C", subDir, "symbolic-ref", "--short", "HEAD").Output()
+	checkoutTarget := strings.TrimSpace(string(branchOut))
+	if checkoutTarget == "" {
+		// detached HEAD: resolve origin/HEAD, falling back to main/master
+		if out, err := exec.Command("git", "-C", subDir, "symbolic-ref", "refs/remotes/origin/HEAD").Output(); err == nil {
+			checkoutTarget = strings.TrimPrefix(strings.TrimSpace(string(out)), "refs/remotes/origin/")
+		}
+		if checkoutTarget == "" {
+			for _, ref := range []string{"origin/main", "origin/master"} {
+				if _, err := exec.Command("git", "-C", subDir, "rev-parse", ref).Output(); err == nil {
+					checkoutTarget = strings.TrimPrefix(ref, "origin/")
+					break
+				}
+			}
+		}
+	}
+
+	// §5.2-3: preserve .pylon/ in a tmp location under workspace
+	tmpHome := filepath.Join(workspaceRoot, ".pylon", "migrate-tmp", projectName)
+	if err := os.MkdirAll(filepath.Dir(tmpHome), 0755); err != nil {
+		return fmt.Errorf("create tmp parent: %w", err)
+	}
+	pylonSrc := filepath.Join(subDir, ".pylon")
+	pylonPreserved := false
+	if _, err := os.Stat(pylonSrc); err == nil {
+		_ = os.RemoveAll(tmpHome)
+		if err := os.Rename(pylonSrc, tmpHome); err != nil {
+			// rename across filesystems fails; fall back to copy
+			if err := copyDir(pylonSrc, tmpHome); err != nil {
+				return fmt.Errorf("preserve .pylon/: %w", err)
+			}
+			_ = os.RemoveAll(pylonSrc)
+		}
+		pylonPreserved = true
+	}
+
+	// §5.2-4: deregister submodule
+	if err := teardownSubmodule(workspaceRoot, projectName); err != nil {
+		return fmt.Errorf("submodule teardown: %w (manual cleanup may be required)", err)
+	}
+
+	// §5.2-5: user-facing commit guidance (no auto-commit)
+	fmt.Println("✓ Submodule deregistered.")
+	fmt.Printf("  Note: workspace .gitmodules was modified. Run 'git -C %s add .gitmodules && git commit' to record this change if you track the workspace in git.\n", workspaceRoot)
+
+	// §5.2-6: re-clone at the same location
+	cloneCmd := exec.Command("git", "-c", "protocol.file.allow=always", "clone", url, projectName)
+	cloneCmd.Dir = workspaceRoot
+	if out, err := cloneCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("re-clone failed: %w\n%s\n.pylon/ preserved at %s — rerun 'git clone %s %s' and move the directory back", err, out, tmpHome, url, projectName)
+	}
+	if checkoutTarget != "" {
+		if out, err := exec.Command("git", "-C", subDir, "checkout", checkoutTarget).CombinedOutput(); err != nil {
+			fmt.Printf("⚠ checkout %s failed; staying on default branch: %s\n", checkoutTarget, out)
+		}
+	}
+
+	// §5.2-7: restore .pylon/
+	if pylonPreserved {
+		if err := os.Rename(tmpHome, pylonSrc); err != nil {
+			if err := copyDir(tmpHome, pylonSrc); err != nil {
+				return fmt.Errorf("restore .pylon/: %w (preserved at %s)", err, tmpHome)
+			}
+			_ = os.RemoveAll(tmpHome)
+		}
+		// clean migrate-tmp parent if empty
+		_ = os.Remove(filepath.Join(workspaceRoot, ".pylon", "migrate-tmp"))
+	}
+
+	// §5.2-8: re-exclude .pylon/ in new repo
+	if err := excludePylonFromRepo(subDir); err != nil {
+		fmt.Printf("⚠ Could not exclude .pylon/ from new repo: %v\n", err)
+	}
+
+	fmt.Printf("✓ Migrated '%s' to standalone clone.\n", projectName)
+	return nil
+}
+
+// copyDir recursively copies src to dst. Used as a fallback when os.Rename
+// fails across filesystems.
+func copyDir(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		_, err = io.Copy(out, in)
+		return err
+	})
 }
 
 // runSubmoduleSafetyChecks performs spec 003 §5.1 safety checks against a
