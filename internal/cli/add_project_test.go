@@ -36,7 +36,7 @@ func TestInferProjectName(t *testing.T) {
 	}
 }
 
-func TestExcludePylonFromSubmodule(t *testing.T) {
+func TestExcludePylonFromRepo(t *testing.T) {
 	requireGit(t)
 	// Create a temporary git repo to act as the "submodule"
 	tmpDir := t.TempDir()
@@ -45,9 +45,9 @@ func TestExcludePylonFromSubmodule(t *testing.T) {
 		t.Fatalf("git init failed: %v\n%s", err, out)
 	}
 
-	// Run excludePylonFromSubmodule
-	if err := excludePylonFromSubmodule(tmpDir); err != nil {
-		t.Fatalf("excludePylonFromSubmodule failed: %v", err)
+	// Run excludePylonFromRepo
+	if err := excludePylonFromRepo(tmpDir); err != nil {
+		t.Fatalf("excludePylonFromRepo failed: %v", err)
 	}
 
 	// Verify .git/info/exclude contains .pylon/
@@ -61,7 +61,7 @@ func TestExcludePylonFromSubmodule(t *testing.T) {
 	}
 }
 
-func TestExcludePylonFromSubmodule_Idempotent(t *testing.T) {
+func TestExcludePylonFromRepo_Idempotent(t *testing.T) {
 	requireGit(t)
 	tmpDir := t.TempDir()
 	cmd := exec.Command("git", "init", tmpDir)
@@ -70,10 +70,10 @@ func TestExcludePylonFromSubmodule_Idempotent(t *testing.T) {
 	}
 
 	// Call twice
-	if err := excludePylonFromSubmodule(tmpDir); err != nil {
+	if err := excludePylonFromRepo(tmpDir); err != nil {
 		t.Fatalf("first call failed: %v", err)
 	}
-	if err := excludePylonFromSubmodule(tmpDir); err != nil {
+	if err := excludePylonFromRepo(tmpDir); err != nil {
 		t.Fatalf("second call failed: %v", err)
 	}
 
@@ -89,10 +89,10 @@ func TestExcludePylonFromSubmodule_Idempotent(t *testing.T) {
 	}
 }
 
-func TestExcludePylonFromSubmodule_NotGitRepo(t *testing.T) {
+func TestExcludePylonFromRepo_NotGitRepo(t *testing.T) {
 	requireGit(t)
 	tmpDir := t.TempDir()
-	err := excludePylonFromSubmodule(tmpDir)
+	err := excludePylonFromRepo(tmpDir)
 	if err == nil {
 		t.Fatal("expected error for non-git directory, got nil")
 	}

@@ -185,12 +185,12 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Printf("Project %s added successfully.\n", projectName)
 
-	// Exclude .pylon/ from submodule git tracking via .git/info/exclude
-	if err := excludePylonFromSubmodule(projectDir); err != nil {
+	// Exclude .pylon/ from project git tracking via .git/info/exclude
+	if err := excludePylonFromRepo(projectDir); err != nil {
 		fmt.Printf("⚠ Could not auto-exclude .pylon/ from git tracking: %v\n", err)
-		fmt.Println("  Manually add '.pylon/' to the submodule's .git/info/exclude")
+		fmt.Println("  Manually add '.pylon/' to the project's .git/info/exclude")
 	} else {
-		fmt.Println("✓ .pylon/ excluded from submodule git tracking")
+		fmt.Println("✓ .pylon/ excluded from project git tracking")
 	}
 
 	fmt.Println()
@@ -252,9 +252,8 @@ func resolveGitExcludePath(projectDir string) (string, error) {
 	return filepath.Join(gitDir, "info", "exclude"), nil
 }
 
-// excludePylonFromSubmodule adds ".pylon/" to the submodule's git exclude file
-// so that generated .pylon/ files do not show up as untracked changes.
-func excludePylonFromSubmodule(projectDir string) error {
+// excludePylonFromRepo adds ".pylon/" to the repo's .git/info/exclude. Works for both submodules and standalone clones.
+func excludePylonFromRepo(projectDir string) error {
 	excludePath, err := resolveGitExcludePath(projectDir)
 	if err != nil {
 		return err

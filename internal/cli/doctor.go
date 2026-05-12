@@ -168,7 +168,7 @@ func checkSubmoduleExcludes(fix bool) bool {
 	if fix {
 		fixed := 0
 		for _, p := range missing {
-			if err := excludePylonFromSubmodule(p.Path); err != nil {
+			if err := excludePylonFromRepo(p.Path); err != nil {
 				fmt.Printf("⚠ %s: exclude 설정 실패: %v\n", p.Name, err)
 			} else {
 				fmt.Printf("✓ %s: .pylon/ exclude 추가됨\n", p.Name)

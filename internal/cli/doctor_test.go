@@ -28,8 +28,8 @@ func TestCheckExcludeStatus(t *testing.T) {
 	}
 
 	// Add .pylon/ to exclude
-	if err := excludePylonFromSubmodule(tmpDir); err != nil {
-		t.Fatalf("excludePylonFromSubmodule failed: %v", err)
+	if err := excludePylonFromRepo(tmpDir); err != nil {
+		t.Fatalf("excludePylonFromRepo failed: %v", err)
 	}
 
 	// After adding entry: git repo, has entry
@@ -103,7 +103,7 @@ func TestCheckExcludeStatus_WithOtherEntries(t *testing.T) {
 	}
 
 	// Now add .pylon/ and verify
-	if err := excludePylonFromSubmodule(tmpDir); err != nil {
+	if err := excludePylonFromRepo(tmpDir); err != nil {
 		t.Fatal(err)
 	}
 	isGit, hasEntry = checkExcludeStatus(tmpDir)
@@ -230,7 +230,7 @@ func TestCheckSubmoduleExcludes_AllOK(t *testing.T) {
 	}
 
 	// Pre-seed the exclude entry
-	if err := excludePylonFromSubmodule(projectDir); err != nil {
+	if err := excludePylonFromRepo(projectDir); err != nil {
 		t.Fatal(err)
 	}
 
