@@ -48,12 +48,12 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Check required tool installations and versions",
 		Long: `Verify that all required tools (git, gh, claude) are installed and configured.
 
-Use --fix-excludes to automatically add .pylon/ to submodule .git/info/exclude
+Use --fix-excludes to automatically add .pylon/ to project .git/info/exclude
 for any projects that are missing the local-scope ignore entry.`,
 		RunE: runDoctor,
 	}
 
-	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in submodules")
+	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in project repos")
 
 	return cmd
 }
@@ -101,12 +101,12 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if hasGit {
-		if !checkSubmoduleExcludes(fixExcludes) {
+		if !checkRepoExcludes(fixExcludes) {
 			allPassed = false
 		}
 	} else {
 		fmt.Println()
-		fmt.Println("⚠ git 미설치로 서브모듈 exclude 검사 건너뜀")
+		fmt.Println("⚠ git 미설치로 프로젝트 exclude 검사 건너뜀")
 	}
 
 	fmt.Println()
@@ -122,11 +122,11 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("doctor checks failed")
 }
 
-// checkSubmoduleExcludes verifies that all project submodules have .pylon/
+// checkRepoExcludes verifies that all projects have .pylon/
 // in their .git/info/exclude for local-scope ignore.
 // When fix is true, missing entries are automatically added.
 // Returns true if all projects are OK, false if any are missing.
-func checkSubmoduleExcludes(fix bool) bool {
+func checkRepoExcludes(fix bool) bool {
 	startDir := flagWorkspace
 	if startDir == "" {
 		startDir = "."
@@ -161,7 +161,7 @@ func checkSubmoduleExcludes(fix bool) bool {
 
 	fmt.Println()
 	if len(missing) == 0 {
-		fmt.Printf("✓ 모든 서브모듈에 .pylon/ exclude 설정됨 (%d개 프로젝트)\n", len(gitProjects))
+		fmt.Printf("✓ 모든 프로젝트에 .pylon/ exclude 설정됨 (%d개 프로젝트)\n", len(gitProjects))
 		return true
 	}
 
@@ -176,14 +176,14 @@ func checkSubmoduleExcludes(fix bool) bool {
 			}
 		}
 		if fixed == len(missing) {
-			fmt.Printf("✓ %d개 서브모듈 exclude 수정 완료\n", fixed)
+			fmt.Printf("✓ %d개 프로젝트 exclude 수정 완료\n", fixed)
 			return true
 		}
-		fmt.Printf("⚠ %d/%d 서브모듈 exclude 수정 완료, %d개 실패\n", fixed, len(missing), len(missing)-fixed)
+		fmt.Printf("⚠ %d/%d 프로젝트 exclude 수정 완료, %d개 실패\n", fixed, len(missing), len(missing)-fixed)
 		return false
 	}
 
-	fmt.Printf("⚠ .pylon/ exclude 미설정 서브모듈 %d개:\n", len(missing))
+	fmt.Printf("⚠ .pylon/ exclude 미설정 프로젝트 %d개:\n", len(missing))
 	for _, p := range missing {
 		fmt.Printf("  - %s\n", p.Name)
 	}

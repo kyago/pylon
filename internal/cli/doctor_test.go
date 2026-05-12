@@ -112,7 +112,7 @@ func TestCheckExcludeStatus_WithOtherEntries(t *testing.T) {
 	}
 }
 
-func TestCheckSubmoduleExcludes_Fix(t *testing.T) {
+func TestCheckRepoExcludes_Fix(t *testing.T) {
 	requireGit(t)
 
 	// Set up a workspace with a project that has .pylon/ but no exclude entry
@@ -152,14 +152,14 @@ func TestCheckSubmoduleExcludes_Fix(t *testing.T) {
 		t.Fatal("precondition failed: .pylon/ should not be in exclude yet")
 	}
 
-	// Run checkSubmoduleExcludes with fix=true
+	// Run checkRepoExcludes with fix=true
 	oldWorkspace := flagWorkspace
 	flagWorkspace = tmpDir
 	defer func() { flagWorkspace = oldWorkspace }()
 
-	ok := checkSubmoduleExcludes(true)
+	ok := checkRepoExcludes(true)
 	if !ok {
-		t.Error("expected checkSubmoduleExcludes to return true after successful fix")
+		t.Error("expected checkRepoExcludes to return true after successful fix")
 	}
 
 	// Verify .pylon/ is now excluded
@@ -169,7 +169,7 @@ func TestCheckSubmoduleExcludes_Fix(t *testing.T) {
 	}
 }
 
-func TestCheckSubmoduleExcludes_DetectMissing(t *testing.T) {
+func TestCheckRepoExcludes_DetectMissing(t *testing.T) {
 	requireGit(t)
 
 	tmpDir := t.TempDir()
@@ -197,9 +197,9 @@ func TestCheckSubmoduleExcludes_DetectMissing(t *testing.T) {
 	defer func() { flagWorkspace = oldWorkspace }()
 
 	// fix=false should report missing and return false
-	ok := checkSubmoduleExcludes(false)
+	ok := checkRepoExcludes(false)
 	if ok {
-		t.Error("expected checkSubmoduleExcludes to return false when excludes are missing")
+		t.Error("expected checkRepoExcludes to return false when excludes are missing")
 	}
 
 	// Should still NOT be excluded (fix=false)
@@ -209,7 +209,7 @@ func TestCheckSubmoduleExcludes_DetectMissing(t *testing.T) {
 	}
 }
 
-func TestCheckSubmoduleExcludes_AllOK(t *testing.T) {
+func TestCheckRepoExcludes_AllOK(t *testing.T) {
 	requireGit(t)
 
 	tmpDir := t.TempDir()
@@ -238,9 +238,9 @@ func TestCheckSubmoduleExcludes_AllOK(t *testing.T) {
 	flagWorkspace = tmpDir
 	defer func() { flagWorkspace = oldWorkspace }()
 
-	ok := checkSubmoduleExcludes(false)
+	ok := checkRepoExcludes(false)
 	if !ok {
-		t.Error("expected checkSubmoduleExcludes to return true when all projects have excludes")
+		t.Error("expected checkRepoExcludes to return true when all projects have excludes")
 	}
 
 	// Verify entry still intact
@@ -250,7 +250,7 @@ func TestCheckSubmoduleExcludes_AllOK(t *testing.T) {
 	}
 }
 
-func TestCheckSubmoduleExcludes_SkipsNonGitProjects(t *testing.T) {
+func TestCheckRepoExcludes_SkipsNonGitProjects(t *testing.T) {
 	requireGit(t)
 
 	tmpDir := t.TempDir()
@@ -272,9 +272,9 @@ func TestCheckSubmoduleExcludes_SkipsNonGitProjects(t *testing.T) {
 	defer func() { flagWorkspace = oldWorkspace }()
 
 	// Should return true (non-git projects are skipped, not flagged as missing)
-	ok := checkSubmoduleExcludes(false)
+	ok := checkRepoExcludes(false)
 	if !ok {
-		t.Error("expected checkSubmoduleExcludes to return true when only non-git projects exist")
+		t.Error("expected checkRepoExcludes to return true when only non-git projects exist")
 	}
 }
 
