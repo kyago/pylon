@@ -5,7 +5,6 @@ import (
 	"embed"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -186,16 +185,7 @@ ontology:
 		return fmt.Errorf("failed to write .gitignore: %w", err)
 	}
 
-	// Step 6: git init (skip if already a git repo)
-	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
-		fmt.Println("Initializing git repository...")
-		gitInit := exec.Command("git", "init", workDir)
-		if out, err := gitInit.CombinedOutput(); err != nil {
-			fmt.Printf("Warning: git init failed: %s\n", string(out))
-		}
-	}
-
-	// Step 7: Initialize DB and sync discovered projects
+	// Step 6: Initialize DB and sync discovered projects
 	dbPath := filepath.Join(pylonDir, "pylon.db")
 	s, err := store.NewStore(dbPath)
 	if err != nil {
