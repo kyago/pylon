@@ -36,7 +36,8 @@ pylon/
 │   │   ├── review.go                    # pylon review
 │   │   ├── cleanup.go                   # pylon cleanup
 │   │   ├── destroy.go                   # pylon destroy
-│   │   ├── add_project.go              # pylon add-project
+│   │   ├── add_project.go              # pylon add-project (git clone 기반)
+│   │   ├── migrate_project.go          # pylon migrate-project (submodule → clone 전환)
 │   │   └── dashboard.go                # pylon dashboard
 │   ├── config/                          # 설정 파싱/관리
 │   │   ├── config.go                    # config.yml 구조체 + 파싱
@@ -300,7 +301,7 @@ func (a *AgentConfig) ResolveDefaults(cfg *Config)
 // 현재 디렉토리부터 상위로 올라가며 .pylon/ 탐색
 func FindWorkspaceRoot(startDir string) (string, error)
 
-// .pylon/ 내부 프로젝트 목록 (git submodule 기반)
+// .pylon/ 내부 프로젝트 목록 (standalone clone 기반)
 func DiscoverProjects(root string) ([]ProjectInfo, error)
 
 // 워크스페이스 내 모든 에이전트 설정 로드
