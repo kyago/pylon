@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -76,12 +77,113 @@ func performMigration(workspaceRoot, projectName string) error {
 }
 
 // runSubmoduleSafetyChecks performs spec 003 §5.1 safety checks against a
-// legacy submodule before migrating it. Phase 5 (Task 9) replaces this stub
-// with the full check suite.
+// legacy submodule before migrating it. If force is true, all checks are bypassed.
 func runSubmoduleSafetyChecks(workspaceRoot, projectName string, force bool) error {
-	_ = workspaceRoot
-	_ = projectName
-	_ = force
+	if force {
+		return nil
+	}
+	subDir := filepath.Join(workspaceRoot, projectName)
+	if err := checkWorkingTreeClean(subDir); err != nil {
+		return err
+	}
+	if err := checkAllCommitsPushed(subDir); err != nil {
+		return err
+	}
+	if err := checkSHAMatchesOrigin(workspaceRoot, projectName, subDir); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkWorkingTreeClean returns an error if the submodule has any untracked,
+// modified, or staged files.
+func checkWorkingTreeClean(subDir string) error {
+	out, err := exec.Command("git", "-C", subDir, "status", "--porcelain").Output()
+	if err != nil {
+		return fmt.Errorf("git status failed: %w", err)
+	}
+	if len(out) > 0 {
+		return fmt.Errorf("working tree is dirty (untracked or modified files); commit or stash, or rerun with --force to discard")
+	}
+	return nil
+}
+
+// checkAllCommitsPushed verifies every local branch has an upstream and is
+// not ahead of it. Detached HEAD repositories fall back to checking HEAD
+// against origin/HEAD.
+func checkAllCommitsPushed(subDir string) error {
+	out, err := exec.Command("git", "-C", subDir, "for-each-ref", "--format=%(refname:short)", "refs/heads/").Output()
+	if err != nil {
+		return fmt.Errorf("for-each-ref failed: %w", err)
+	}
+	branches := strings.Fields(strings.TrimSpace(string(out)))
+	if len(branches) == 0 {
+		return checkHEADAgainstOrigin(subDir)
+	}
+	for _, b := range branches {
+		upstream, err := exec.Command("git", "-C", subDir, "rev-parse", "--abbrev-ref", b+"@{upstream}").Output()
+		if err != nil || strings.TrimSpace(string(upstream)) == "" {
+			return fmt.Errorf("branch %q has no upstream (potentially unpushed commits)", b)
+		}
+		ahead, err := exec.Command("git", "-C", subDir, "rev-list", "--count", b+"@{upstream}.."+b).Output()
+		if err != nil {
+			return fmt.Errorf("rev-list failed on %q: %w", b, err)
+		}
+		if strings.TrimSpace(string(ahead)) != "0" {
+			return fmt.Errorf("branch %q has unpushed commits (%s ahead of upstream)", b, strings.TrimSpace(string(ahead)))
+		}
+	}
+	return nil
+}
+
+// checkHEADAgainstOrigin compares HEAD to origin/HEAD for detached HEAD repos.
+func checkHEADAgainstOrigin(subDir string) error {
+	headSHA, err := exec.Command("git", "-C", subDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return nil // empty repo
+	}
+	originHead, err := exec.Command("git", "-C", subDir, "rev-parse", "origin/HEAD").Output()
+	if err != nil {
+		return nil // origin/HEAD not set; SHA mismatch check (§5.1 #4) will handle
+	}
+	if strings.TrimSpace(string(headSHA)) != strings.TrimSpace(string(originHead)) {
+		return fmt.Errorf("HEAD is not at origin's default branch tip (detached or diverged)")
+	}
+	return nil
+}
+
+// checkSHAMatchesOrigin verifies that the SHA the superproject has pinned
+// for this submodule matches origin's default branch tip. Returns nil if
+// they match or if either side cannot be resolved (e.g. origin/HEAD unset).
+func checkSHAMatchesOrigin(workspaceRoot, projectName, subDir string) error {
+	pinOut, err := exec.Command("git", "-C", workspaceRoot, "ls-tree", "HEAD", projectName).Output()
+	if err != nil {
+		return nil
+	}
+	parts := strings.Fields(string(pinOut))
+	if len(parts) < 3 {
+		return nil
+	}
+	pinned := parts[2]
+
+	var originSHA []byte
+	if out, err := exec.Command("git", "-C", subDir, "rev-parse", "origin/HEAD").Output(); err == nil {
+		originSHA = out
+	} else {
+		for _, ref := range []string{"origin/main", "origin/master"} {
+			if out, err := exec.Command("git", "-C", subDir, "rev-parse", ref).Output(); err == nil {
+				originSHA = out
+				break
+			}
+		}
+	}
+	if len(originSHA) == 0 {
+		return nil
+	}
+	tip := strings.TrimSpace(string(originSHA))
+	if pinned != tip {
+		return fmt.Errorf("pinned SHA %s differs from origin default branch tip %s (pin will be lost; rerun with --force to proceed)", pinned[:8], tip[:8])
+	}
 	return nil
 }
 
