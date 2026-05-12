@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,7 @@ func (c Coupling) String() string {
 	case CouplingClone:
 		return "clone"
 	default:
-		return "unknown"
+		return fmt.Sprintf("Coupling(%d)", int(c))
 	}
 }
 
@@ -47,16 +48,17 @@ func detectProjectCoupling(workspaceRoot, projectName string) Coupling {
 }
 
 // hasSubmodulePath returns true if the .gitmodules contents declare a submodule
-// whose path = projectName. Uses a simple line scanner that tolerates leading
-// whitespace and either tab or space separators.
+// whose path = projectName. Uses a simple line scanner that tolerates any
+// whitespace around the key, =, and value.
 func hasSubmodulePath(gitmodules, projectName string) bool {
 	for _, line := range strings.Split(gitmodules, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "path") {
-			continue
-		}
 		idx := strings.Index(trimmed, "=")
 		if idx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(trimmed[:idx])
+		if key != "path" {
 			continue
 		}
 		val := strings.TrimSpace(trimmed[idx+1:])
