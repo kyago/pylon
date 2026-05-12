@@ -38,6 +38,7 @@ Spec Reference: spec 003.`,
 	cmd.Flags().String("name", "", "project directory name (default: inferred from URL)")
 	cmd.Flags().Bool("force", false, "remove existing directory and re-clone")
 	cmd.Flags().Bool("skip-clone", false, "skip git clone; use existing directory for .pylon/ setup only")
+	cmd.Flags().Bool("migrate", false, "convert legacy submodule to clone (must be combined with --force)")
 
 	return cmd
 }
@@ -84,23 +85,23 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		}
 		switch {
 		case force:
+			migrate, _ := cmd.Flags().GetBool("migrate")
+			coupling := detectProjectCoupling(root, projectName)
+			if coupling == CouplingSubmodule {
+				if !migrate {
+					return fmt.Errorf("%s is registered as a git submodule. Run 'pylon migrate-project %s' first, or pass --migrate together with --force to convert and re-clone", projectName, projectName)
+				}
+				// --force --migrate: 안전성 점검 후 submodule 해제 (clone 자체는 아래 일반 흐름이 처리)
+				if err := runSubmoduleSafetyChecks(root, projectName, false); err != nil {
+					return fmt.Errorf("migration blocked: %w (use 'pylon migrate-project --force' to override)", err)
+				}
+				if err := teardownSubmodule(root, projectName); err != nil {
+					return fmt.Errorf("submodule teardown failed: %w", err)
+				}
+				fmt.Printf("✓ Submodule '%s' deregistered; ready for re-clone\n", projectName)
+				fmt.Println("  Note: workspace .gitmodules was modified. Commit manually if you track the workspace in git.")
+			}
 			fmt.Printf("Removing existing directory: %s\n", projectName)
-			// Remove submodule registration if it exists
-			deregCmd := exec.Command("git", "submodule", "deinit", "-f", projectName)
-			deregCmd.Dir = root
-			if out, err := deregCmd.CombinedOutput(); err != nil && flagVerbose {
-				fmt.Printf("  (submodule deinit skipped: %s)\n", strings.TrimSpace(string(out)))
-			}
-
-			rmCmd := exec.Command("git", "rm", "-f", projectName)
-			rmCmd.Dir = root
-			if out, err := rmCmd.CombinedOutput(); err != nil && flagVerbose {
-				fmt.Printf("  (git rm skipped: %s)\n", strings.TrimSpace(string(out)))
-			}
-
-			gitModulesDir := filepath.Join(root, ".git", "modules", projectName)
-			os.RemoveAll(gitModulesDir) // clean cached module data
-
 			if err := os.RemoveAll(projectDir); err != nil {
 				return fmt.Errorf("failed to remove existing directory: %w", err)
 			}

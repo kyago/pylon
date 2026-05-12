@@ -385,6 +385,41 @@ func withStdin(t *testing.T, input string, fn func()) {
 	fn()
 }
 
+func TestRunAddProject_ForceBlockedOnSubmoduleRemnant(t *testing.T) {
+	requireGit(t)
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// workspace를 git repo로 만들고 .gitmodules에 잔재 추가
+	runGit(t, workspace, "init")
+	gitmodules := "[submodule \"myproj\"]\n\tpath = myproj\n\turl = https://example.com/myproj.git\n"
+	if err := os.WriteFile(filepath.Join(workspace, ".gitmodules"), []byte(gitmodules), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "myproj"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newAddProjectCmd()
+	cmd.SetArgs([]string{"https://example.com/myproj.git", "--name", "myproj", "--force"})
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = workspace
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected --force on submodule to be blocked, got nil")
+	}
+	if !strings.Contains(err.Error(), "migrate-project") {
+		t.Errorf("error should suggest migrate-project: %v", err)
+	}
+}
+
 func TestRunAddProject_UsesPlainClone(t *testing.T) {
 	requireGit(t)
 
