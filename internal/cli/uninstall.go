@@ -20,20 +20,20 @@ func newUninstallCmd() *cobra.Command {
 
 This removes:
   1. Runtime artifacts (.claude/, CLAUDE.md)
-  2. Project-level .pylon/ directories in submodules
+  2. Project-level .pylon/ directories
   3. Workspace .pylon/ directory (config, domain, agents, database)
   4. Pylon entries from .gitignore
 
-Git submodules and project code are preserved by default.
+Project source code is preserved by default.
 
-Use --remove-projects to also remove git submodule registrations.
+Use --remove-projects to also remove project directories (clones) and submodule registrations.
 Use --remove-binary to also delete the pylon binary from $GOPATH/bin.`,
 		RunE: runUninstall,
 	}
 
 	cmd.Flags().BoolP("force", "f", false, "skip confirmation prompt")
 	cmd.Flags().Bool("dry-run", false, "show what would be removed without removing")
-	cmd.Flags().Bool("remove-projects", false, "also remove git submodule registrations")
+	cmd.Flags().Bool("remove-projects", false, "also remove project directories (clones) and submodule registrations")
 	cmd.Flags().Bool("remove-binary", false, "also remove the pylon binary from $GOPATH/bin")
 
 	return cmd
@@ -43,7 +43,8 @@ Use --remove-binary to also delete the pylon binary from $GOPATH/bin.`,
 type uninstallPlan struct {
 	runtimeFiles   []string // .claude/, CLAUDE.md
 	projectPylons  []string // {project}/.pylon/ directories
-	submodules     []string // git submodule names (only if --remove-projects)
+	submodules     []string // legacy submodule projects (only if --remove-projects)
+	cloneProjects  []string // standalone clone projects (only if --remove-projects)
 	workspacePylon string   // .pylon/ directory
 	gitignorePath  string   // .gitignore to clean
 	binaryPath     string   // pylon binary path (only if --remove-binary)
@@ -119,7 +120,12 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 			plan.projectPylons = append(plan.projectPylons, projectPylon)
 		}
 		if removeProjects {
-			plan.submodules = append(plan.submodules, p.Name)
+			switch detectProjectCoupling(root, p.Name) {
+			case CouplingSubmodule:
+				plan.submodules = append(plan.submodules, p.Name)
+			case CouplingClone:
+				plan.cloneProjects = append(plan.cloneProjects, p.Name)
+			}
 		}
 	}
 
@@ -171,6 +177,13 @@ func printUninstallPlan(plan *uninstallPlan) {
 		}
 	}
 
+	if len(plan.cloneProjects) > 0 {
+		fmt.Println("  [Clone project directories]")
+		for _, c := range plan.cloneProjects {
+			fmt.Printf("    - %s/\n", c)
+		}
+	}
+
 	if plan.workspacePylon != "" {
 		fmt.Println("  [Workspace]")
 		fmt.Printf("    - %s\n", plan.workspacePylon)
@@ -218,6 +231,18 @@ func executeUninstall(root string, plan *uninstallPlan) error {
 			}
 		}
 		fmt.Println("\n  Note: Submodule removal modified .gitmodules. Please commit the changes manually.")
+	}
+
+	// Step 3b: Remove clone project directories (if requested)
+	if len(plan.cloneProjects) > 0 {
+		for _, name := range plan.cloneProjects {
+			projDir := filepath.Join(root, name)
+			if err := os.RemoveAll(projDir); err != nil {
+				errors = append(errors, fmt.Sprintf("failed to remove clone project (%s): %v", name, err))
+			} else {
+				fmt.Printf("✓ Removed clone project: %s\n", name)
+			}
+		}
 	}
 
 	// Step 4: Remove workspace .pylon/

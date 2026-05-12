@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -223,6 +224,37 @@ func TestExecuteUninstall(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "node_modules/") {
 		t.Error(".gitignore should preserve non-pylon entries")
+	}
+}
+
+func TestUninstall_RemoveProjects_ClonePath(t *testing.T) {
+	requireGit(t)
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Workspace is NOT a git repo; standalone clone in subdir
+	projDir := filepath.Join(ws, "myproj")
+	if out, err := exec.Command("git", "init", projDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	// DiscoverProjects identifies a subdir as a project if it has its own .pylon/
+	if err := os.MkdirAll(filepath.Join(projDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := buildUninstallPlan(ws, true, false)
+	if err != nil {
+		t.Fatalf("buildUninstallPlan: %v", err)
+	}
+	if len(plan.submodules) > 0 {
+		t.Errorf("clone project should not be in submodules list, got %v", plan.submodules)
+	}
+	if len(plan.cloneProjects) != 1 || plan.cloneProjects[0] != "myproj" {
+		t.Errorf("expected cloneProjects=[myproj], got %v", plan.cloneProjects)
 	}
 }
 
