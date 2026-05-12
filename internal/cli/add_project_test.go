@@ -240,32 +240,15 @@ func TestRunAddProject_SkipCloneWithExistingDir(t *testing.T) {
 	addCmd := newAddProjectCmd()
 	addCmd.SetArgs([]string{"https://github.com/user/myproject.git", "--skip-clone", "--name", "myproject"})
 
-	// Redirect stdin to auto-answer "n" to agent prompt
-	oldStdin := os.Stdin
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create stdin pipe: %v", err)
-	}
-	if _, err := w.WriteString("n\n"); err != nil {
-		t.Fatalf("failed to write to stdin pipe: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("failed to close write end of stdin pipe: %v", err)
-	}
-	os.Stdin = r
-	defer func() {
-		os.Stdin = oldStdin
-		_ = r.Close()
-	}()
-
 	oldWorkspace := flagWorkspace
 	flagWorkspace = tmpDir
 	defer func() { flagWorkspace = oldWorkspace }()
 
-	execErr := addCmd.Execute()
-	if execErr != nil {
-		t.Fatalf("unexpected error: %v", execErr)
-	}
+	withStdin(t, "n\n", func() {
+		if err := addCmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 
 	// Verify .pylon/ was created inside project
 	if _, err := os.Stat(filepath.Join(projectDir, ".pylon", "context.md")); err != nil {
