@@ -304,12 +304,12 @@ func checkSHAMatchesOrigin(workspaceRoot, projectName, subDir string) error {
 // cached git data. Used by `add-project --force --migrate` and by
 // `pylon migrate-project` (Phase 5).
 func teardownSubmodule(workspaceRoot, projectName string) error {
-	deregCmd := exec.Command("git", "submodule", "deinit", "-f", projectName)
+	deregCmd := exec.Command("git", "submodule", "deinit", "-f", "--", projectName)
 	deregCmd.Dir = workspaceRoot
 	if out, err := deregCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("submodule deinit: %w\n%s", err, out)
 	}
-	rmCmd := exec.Command("git", "rm", "-f", projectName)
+	rmCmd := exec.Command("git", "rm", "-f", "--", projectName)
 	rmCmd.Dir = workspaceRoot
 	if out, err := rmCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git rm: %w\n%s", err, out)
