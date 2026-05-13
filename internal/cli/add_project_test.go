@@ -478,3 +478,73 @@ func TestRunAddProject_UsesPlainClone(t *testing.T) {
 		t.Errorf("expected sub .pylon/context.md, got %v", err)
 	}
 }
+
+// TestRunAddProject_ForceMigrate_PreservesPylon은 --force --migrate가
+// submodule 안의 기존 .pylon/ 내용을 보존하는지 확인한다.
+// performMigration 흐름이 .pylon/을 임시 보관·복원하므로 사용자의 context/agents/
+// verify 파일이 손실되지 않아야 한다.
+func TestRunAddProject_ForceMigrate_PreservesPylon(t *testing.T) {
+	requireGit(t)
+
+	ws, name, sub := setupSubmoduleFixture(t)
+
+	// 실제 add-project가 등록했을 .pylon/ exclude를 동일하게 설정 (워킹 트리 dirty 방지)
+	if err := excludePylonFromRepo(sub); err != nil {
+		t.Fatalf("exclude .pylon/: %v", err)
+	}
+
+	// submodule 안에 보존되어야 할 .pylon/ 파일 작성
+	if err := os.MkdirAll(filepath.Join(sub, ".pylon", "agents"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	const marker = "preserved-context\n"
+	if err := os.WriteFile(filepath.Join(sub, ".pylon", "context.md"), []byte(marker), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, ".pylon", "agents", "developer.md"), []byte("dev-agent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 기존 origin URL (사용자 가정: 동일 URL을 add-project 인자로 넘긴다)
+	urlOut, err := exec.Command("git", "-C", sub, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		t.Fatalf("get origin url: %v", err)
+	}
+	originURL := strings.TrimSpace(string(urlOut))
+
+	cmd := newAddProjectCmd()
+	cmd.SetArgs([]string{originURL, "--name", name, "--force", "--migrate"})
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = ws
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("add-project --force --migrate failed: %v", err)
+	}
+
+	// 1) coupling이 Clone으로 전환됨
+	if got := detectProjectCoupling(ws, name); got != CouplingClone {
+		t.Errorf("after migration coupling = %v, want CouplingClone", got)
+	}
+	// 2) 새 디렉토리는 일반 clone 결과 (gitlink 파일이 아닌 .git 디렉토리)
+	info, err := os.Stat(filepath.Join(sub, ".git"))
+	if err != nil {
+		t.Fatalf(".git missing: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf(".git should be directory after re-clone, got gitlink")
+	}
+	// 3) .pylon/context.md가 원래 내용 그대로 보존됨
+	data, err := os.ReadFile(filepath.Join(sub, ".pylon", "context.md"))
+	if err != nil {
+		t.Fatalf("read preserved context: %v", err)
+	}
+	if string(data) != marker {
+		t.Errorf("preserved context lost; got %q, want %q", string(data), marker)
+	}
+	// 4) agents 디렉토리도 보존됨
+	if _, err := os.Stat(filepath.Join(sub, ".pylon", "agents", "developer.md")); err != nil {
+		t.Errorf("agent file lost: %v", err)
+	}
+}

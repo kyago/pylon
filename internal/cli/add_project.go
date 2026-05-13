@@ -91,15 +91,18 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 				if !migrate {
 					return fmt.Errorf("%s is registered as a git submodule. Run 'pylon migrate-project %s' first, or pass --migrate together with --force to convert and re-clone", projectName, projectName)
 				}
-				// --force --migrate: 안전성 점검 후 submodule 해제 (clone 자체는 아래 일반 흐름이 처리)
+				// --force --migrate: migrate-project와 동일한 보존-기반 흐름.
+				// .pylon/을 임시 보관한 뒤 submodule을 해제하고, 기존 origin URL로 재clone한 다음
+				// .pylon/을 복원한다. URL 인자는 기존 origin과 동일하다고 가정한다.
 				if err := runSubmoduleSafetyChecks(root, projectName, false); err != nil {
 					return fmt.Errorf("migration blocked: %w (use 'pylon migrate-project --force' to override)", err)
 				}
-				if err := teardownSubmodule(root, projectName); err != nil {
-					return fmt.Errorf("submodule teardown failed: %w", err)
+				if err := performMigration(root, projectName); err != nil {
+					return err
 				}
-				fmt.Printf("✓ Submodule '%s' deregistered; ready for re-clone\n", projectName)
-				fmt.Println("  Note: workspace .gitmodules was modified. Commit manually if you track the workspace in git.")
+				// performMigration이 .pylon/ 보존·재clone·복원·exclude를 모두 처리하므로
+				// add-project의 일반 흐름(중복 clone, .pylon/ 자동 재생성)은 스킵한다.
+				return nil
 			}
 			fmt.Printf("Removing existing directory: %s\n", projectName)
 			if err := os.RemoveAll(projectDir); err != nil {
