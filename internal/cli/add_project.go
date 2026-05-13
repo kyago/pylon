@@ -17,8 +17,8 @@ import (
 func newAddProjectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-project [git-url]",
-		Short: "Add a project as git submodule",
-		Long: `Add a project to the workspace as a git submodule.
+		Short: "Add a project as a standalone git clone in the workspace",
+		Long: `Add a project to the workspace as a standalone git clone.
 
 Analyzes the codebase and creates project-level .pylon/ configuration
 including context.md and default agent definitions.
@@ -26,14 +26,19 @@ including context.md and default agent definitions.
 If the project directory already exists, use --force to re-clone or
 --skip-clone to keep the existing directory and only generate .pylon/ config.
 
-Spec Reference: Section 7 "pylon add-project", Section 12`,
+If the project directory exists as a legacy git submodule, --force is blocked
+to prevent accidental data loss. Use 'pylon migrate-project <name>' first,
+or pass --migrate together with --force to convert and re-clone.
+
+Spec Reference: spec 003.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runAddProject,
 	}
 
 	cmd.Flags().String("name", "", "project directory name (default: inferred from URL)")
 	cmd.Flags().Bool("force", false, "remove existing directory and re-clone")
-	cmd.Flags().Bool("skip-clone", false, "skip git submodule add; use existing directory for .pylon/ setup only")
+	cmd.Flags().Bool("skip-clone", false, "skip git clone; use existing directory for .pylon/ setup only")
+	cmd.Flags().Bool("migrate", false, "convert legacy submodule to clone (must be combined with --force)")
 
 	return cmd
 }
@@ -80,23 +85,26 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		}
 		switch {
 		case force:
+			migrate, _ := cmd.Flags().GetBool("migrate")
+			coupling := detectProjectCoupling(root, projectName)
+			if coupling == CouplingSubmodule {
+				if !migrate {
+					return fmt.Errorf("%s is registered as a git submodule. Run 'pylon migrate-project %s' first, or pass --migrate together with --force to convert and re-clone", projectName, projectName)
+				}
+				// --force --migrate: migrate-project와 동일한 보존-기반 흐름.
+				// .pylon/을 임시 보관한 뒤 submodule을 해제하고, 기존 origin URL로 재clone한 다음
+				// .pylon/을 복원한다. URL 인자는 기존 origin과 동일하다고 가정한다.
+				if err := runSubmoduleSafetyChecks(root, projectName, false); err != nil {
+					return fmt.Errorf("migration blocked: %w (use 'pylon migrate-project --force' to override)", err)
+				}
+				if err := performMigration(root, projectName); err != nil {
+					return err
+				}
+				// performMigration이 .pylon/ 보존·재clone·복원·exclude를 모두 처리하므로
+				// add-project의 일반 흐름(중복 clone, .pylon/ 자동 재생성)은 스킵한다.
+				return nil
+			}
 			fmt.Printf("Removing existing directory: %s\n", projectName)
-			// Remove submodule registration if it exists
-			deregCmd := exec.Command("git", "submodule", "deinit", "-f", projectName)
-			deregCmd.Dir = root
-			if out, err := deregCmd.CombinedOutput(); err != nil && flagVerbose {
-				fmt.Printf("  (submodule deinit skipped: %s)\n", strings.TrimSpace(string(out)))
-			}
-
-			rmCmd := exec.Command("git", "rm", "-f", projectName)
-			rmCmd.Dir = root
-			if out, err := rmCmd.CombinedOutput(); err != nil && flagVerbose {
-				fmt.Printf("  (git rm skipped: %s)\n", strings.TrimSpace(string(out)))
-			}
-
-			gitModulesDir := filepath.Join(root, ".git", "modules", projectName)
-			os.RemoveAll(gitModulesDir) // clean cached module data
-
 			if err := os.RemoveAll(projectDir); err != nil {
 				return fmt.Errorf("failed to remove existing directory: %w", err)
 			}
@@ -114,15 +122,15 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 1: Add git submodule (skipped when --skip-clone)
+	// Step 1: Clone the project (skipped when --skip-clone)
 	if !skipClone {
-		fmt.Printf("Adding git submodule: %s\n", repoURL)
-		gitCmd := exec.Command("git", "submodule", "add", repoURL, projectName)
+		fmt.Printf("Cloning: %s\n", repoURL)
+		gitCmd := exec.Command("git", "clone", repoURL, projectName)
 		gitCmd.Dir = root
 		if output, err := gitCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to add submodule: %w\n%s", err, output)
+			return fmt.Errorf("failed to clone: %w\n%s", err, output)
 		}
-		fmt.Printf("✓ Submodule added: %s\n", projectName)
+		fmt.Printf("✓ Cloned: %s\n", projectName)
 	}
 
 	// Step 2: Create project .pylon/ structure
@@ -185,12 +193,12 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Printf("Project %s added successfully.\n", projectName)
 
-	// Exclude .pylon/ from submodule git tracking via .git/info/exclude
-	if err := excludePylonFromSubmodule(projectDir); err != nil {
+	// Exclude .pylon/ from project git tracking via .git/info/exclude
+	if err := excludePylonFromRepo(projectDir); err != nil {
 		fmt.Printf("⚠ Could not auto-exclude .pylon/ from git tracking: %v\n", err)
-		fmt.Println("  Manually add '.pylon/' to the submodule's .git/info/exclude")
+		fmt.Println("  Manually add '.pylon/' to the project's .git/info/exclude")
 	} else {
-		fmt.Println("✓ .pylon/ excluded from submodule git tracking")
+		fmt.Println("✓ .pylon/ excluded from project git tracking")
 	}
 
 	fmt.Println()
@@ -252,9 +260,8 @@ func resolveGitExcludePath(projectDir string) (string, error) {
 	return filepath.Join(gitDir, "info", "exclude"), nil
 }
 
-// excludePylonFromSubmodule adds ".pylon/" to the submodule's git exclude file
-// so that generated .pylon/ files do not show up as untracked changes.
-func excludePylonFromSubmodule(projectDir string) error {
+// excludePylonFromRepo adds ".pylon/" to the repo's .git/info/exclude. Works for both submodules and standalone clones.
+func excludePylonFromRepo(projectDir string) error {
 	excludePath, err := resolveGitExcludePath(projectDir)
 	if err != nil {
 		return err

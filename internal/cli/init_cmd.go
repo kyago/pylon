@@ -5,7 +5,6 @@ import (
 	"embed"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -186,16 +185,7 @@ ontology:
 		return fmt.Errorf("failed to write .gitignore: %w", err)
 	}
 
-	// Step 6: git init (skip if already a git repo)
-	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
-		fmt.Println("Initializing git repository...")
-		gitInit := exec.Command("git", "init", workDir)
-		if out, err := gitInit.CombinedOutput(); err != nil {
-			fmt.Printf("Warning: git init failed: %s\n", string(out))
-		}
-	}
-
-	// Step 7: Initialize DB and sync discovered projects
+	// Step 6: Initialize DB and sync discovered projects
 	dbPath := filepath.Join(pylonDir, "pylon.db")
 	s, err := store.NewStore(dbPath)
 	if err != nil {
@@ -218,8 +208,8 @@ ontology:
 		}); err != nil {
 			fmt.Printf("⚠ %s 등록 실패: %v\n", p.Name, err)
 		}
-		// Ensure .pylon/ is excluded from submodule git tracking (skip non-git dirs)
-		if err := excludePylonFromSubmodule(p.Path); err != nil {
+		// Ensure .pylon/ is excluded from project git tracking (skip non-git dirs)
+		if err := excludePylonFromRepo(p.Path); err != nil {
 			if !strings.Contains(err.Error(), "not a git repository") {
 				fmt.Printf("⚠ %s: .pylon/ exclude 설정 실패: %v\n", p.Name, err)
 			}

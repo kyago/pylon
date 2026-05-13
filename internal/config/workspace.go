@@ -55,7 +55,7 @@ func FindWorkspaceRoot(startDir string) (string, error) {
 
 // DiscoverProjects scans the workspace root for project directories.
 // A project is identified as a subdirectory containing its own .pylon/ directory
-// or being registered as a git submodule.
+// or being added as a standalone git clone in the workspace.
 // Spec Reference: Section 4 "Workspace Structure"
 func DiscoverProjects(root string) ([]ProjectInfo, error) {
 	var projects []ProjectInfo
