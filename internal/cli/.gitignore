@@ -1,7 +1,6 @@
 
-# Pylon runtime (agent communication, state)
-.pylon/runtime/
-.pylon/conversations/
+# Pylon workspace (생성물 전체 — agents/skills/scripts는 //go:embed로 정본 관리, runtime DB/세션은 사용자별)
+.pylon/
 
 # Claude CLI agent symlinks (managed by pylon)
 .claude/agents/
