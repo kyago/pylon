@@ -1,0 +1,7 @@
+
+# Pylon runtime (agent communication, state)
+.pylon/runtime/
+.pylon/conversations/
+
+# Claude CLI agent symlinks (managed by pylon)
+.claude/agents/
