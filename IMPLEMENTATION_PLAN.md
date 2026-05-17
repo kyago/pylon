@@ -37,7 +37,6 @@ pylon/
 │   │   ├── cleanup.go                   # pylon cleanup
 │   │   ├── destroy.go                   # pylon destroy
 │   │   ├── add_project.go              # pylon add-project (git clone 기반)
-│   │   ├── migrate_project.go          # pylon migrate-project (submodule → clone 전환)
 │   │   └── dashboard.go                # pylon dashboard
 │   ├── config/                          # 설정 파싱/관리
 │   │   ├── config.go                    # config.yml 구조체 + 파싱

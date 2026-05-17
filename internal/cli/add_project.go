@@ -26,10 +26,6 @@ including context.md and default agent definitions.
 If the project directory already exists, use --force to re-clone or
 --skip-clone to keep the existing directory and only generate .pylon/ config.
 
-If the project directory exists as a legacy git submodule, --force is blocked
-to prevent accidental data loss. Use 'pylon migrate-project <name>' first,
-or pass --migrate together with --force to convert and re-clone.
-
 Spec Reference: spec 003.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runAddProject,
@@ -38,7 +34,6 @@ Spec Reference: spec 003.`,
 	cmd.Flags().String("name", "", "project directory name (default: inferred from URL)")
 	cmd.Flags().Bool("force", false, "remove existing directory and re-clone")
 	cmd.Flags().Bool("skip-clone", false, "skip git clone; use existing directory for .pylon/ setup only")
-	cmd.Flags().Bool("migrate", false, "convert legacy submodule to clone (must be combined with --force)")
 
 	return cmd
 }
@@ -85,25 +80,6 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		}
 		switch {
 		case force:
-			migrate, _ := cmd.Flags().GetBool("migrate")
-			coupling := detectProjectCoupling(root, projectName)
-			if coupling == CouplingSubmodule {
-				if !migrate {
-					return fmt.Errorf("%s is registered as a git submodule. Run 'pylon migrate-project %s' first, or pass --migrate together with --force to convert and re-clone", projectName, projectName)
-				}
-				// --force --migrate: migrate-project와 동일한 보존-기반 흐름.
-				// .pylon/을 임시 보관한 뒤 submodule을 해제하고, 기존 origin URL로 재clone한 다음
-				// .pylon/을 복원한다. URL 인자는 기존 origin과 동일하다고 가정한다.
-				if err := runSubmoduleSafetyChecks(root, projectName, false); err != nil {
-					return fmt.Errorf("migration blocked: %w (use 'pylon migrate-project --force' to override)", err)
-				}
-				if err := performMigration(root, projectName); err != nil {
-					return err
-				}
-				// performMigration이 .pylon/ 보존·재clone·복원·exclude를 모두 처리하므로
-				// add-project의 일반 흐름(중복 clone, .pylon/ 자동 재생성)은 스킵한다.
-				return nil
-			}
 			fmt.Printf("Removing existing directory: %s\n", projectName)
 			if err := os.RemoveAll(projectDir); err != nil {
 				return fmt.Errorf("failed to remove existing directory: %w", err)

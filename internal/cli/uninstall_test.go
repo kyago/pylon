@@ -163,11 +163,6 @@ func TestBuildUninstallPlan(t *testing.T) {
 	if plan.binaryPath != "" {
 		t.Error("expected binaryPath to be empty when removeBinary=false")
 	}
-
-	// Verify no submodules (not requested)
-	if len(plan.submodules) != 0 {
-		t.Errorf("expected no submodules, got %d", len(plan.submodules))
-	}
 }
 
 func TestExecuteUninstall(t *testing.T) {
@@ -249,9 +244,6 @@ func TestUninstall_RemoveProjects_ClonePath(t *testing.T) {
 	plan, err := buildUninstallPlan(ws, true, false)
 	if err != nil {
 		t.Fatalf("buildUninstallPlan: %v", err)
-	}
-	if len(plan.submodules) > 0 {
-		t.Errorf("clone project should not be in submodules list, got %v", plan.submodules)
 	}
 	if len(plan.cloneProjects) != 1 || plan.cloneProjects[0] != "myproj" {
 		t.Errorf("expected cloneProjects=[myproj], got %v", plan.cloneProjects)

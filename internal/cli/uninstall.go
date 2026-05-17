@@ -8,8 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/spf13/cobra"
+
+	"github.com/kyago/pylon/internal/config"
 )
 
 func newUninstallCmd() *cobra.Command {
@@ -26,14 +27,14 @@ This removes:
 
 Project source code is preserved by default.
 
-Use --remove-projects to also remove project directories (clones) and submodule registrations.
+Use --remove-projects to also remove project clone directories.
 Use --remove-binary to also delete the pylon binary from $GOPATH/bin.`,
 		RunE: runUninstall,
 	}
 
 	cmd.Flags().BoolP("force", "f", false, "skip confirmation prompt")
 	cmd.Flags().Bool("dry-run", false, "show what would be removed without removing")
-	cmd.Flags().Bool("remove-projects", false, "also remove project directories (clones) and submodule registrations")
+	cmd.Flags().Bool("remove-projects", false, "also remove project clone directories")
 	cmd.Flags().Bool("remove-binary", false, "also remove the pylon binary from $GOPATH/bin")
 
 	return cmd
@@ -43,7 +44,6 @@ Use --remove-binary to also delete the pylon binary from $GOPATH/bin.`,
 type uninstallPlan struct {
 	runtimeFiles   []string // .claude/, CLAUDE.md
 	projectPylons  []string // {project}/.pylon/ directories
-	submodules     []string // legacy submodule projects (only if --remove-projects)
 	cloneProjects  []string // standalone clone projects (only if --remove-projects)
 	workspacePylon string   // .pylon/ directory
 	gitignorePath  string   // .gitignore to clean
@@ -120,12 +120,7 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 			plan.projectPylons = append(plan.projectPylons, projectPylon)
 		}
 		if removeProjects {
-			switch detectProjectCoupling(root, p.Name) {
-			case CouplingSubmodule:
-				plan.submodules = append(plan.submodules, p.Name)
-			case CouplingClone:
-				plan.cloneProjects = append(plan.cloneProjects, p.Name)
-			}
+			plan.cloneProjects = append(plan.cloneProjects, p.Name)
 		}
 	}
 
@@ -167,13 +162,6 @@ func printUninstallPlan(plan *uninstallPlan) {
 		fmt.Println("  [Project .pylon/ directories]")
 		for _, p := range plan.projectPylons {
 			fmt.Printf("    - %s\n", p)
-		}
-	}
-
-	if len(plan.submodules) > 0 {
-		fmt.Println("  [Git submodule deregistration]")
-		for _, s := range plan.submodules {
-			fmt.Printf("    - %s\n", s)
 		}
 	}
 
@@ -221,19 +209,7 @@ func executeUninstall(root string, plan *uninstallPlan) error {
 		}
 	}
 
-	// Step 3: Remove git submodules (if requested)
-	if len(plan.submodules) > 0 {
-		for _, name := range plan.submodules {
-			if err := removeSubmodule(root, name); err != nil {
-				errors = append(errors, fmt.Sprintf("failed to remove submodule (%s): %v", name, err))
-			} else {
-				fmt.Printf("✓ Removed submodule: %s\n", name)
-			}
-		}
-		fmt.Println("\n  Note: Submodule removal modified .gitmodules. Please commit the changes manually.")
-	}
-
-	// Step 3b: Remove clone project directories (if requested)
+	// Step 3: Remove clone project directories (if requested)
 	if len(plan.cloneProjects) > 0 {
 		for _, name := range plan.cloneProjects {
 			projDir := filepath.Join(root, name)
@@ -282,31 +258,6 @@ func executeUninstall(root string, plan *uninstallPlan) error {
 	}
 
 	fmt.Println("Pylon has been completely removed.")
-	return nil
-}
-
-// removeSubmodule removes a git submodule registration and its cached data.
-func removeSubmodule(root, name string) error {
-	// git submodule deinit
-	deinitCmd := exec.Command("git", "submodule", "deinit", "-f", "--", name)
-	deinitCmd.Dir = root
-	if output, err := deinitCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("deinit failed: %w\n%s", err, output)
-	}
-
-	// git rm
-	rmCmd := exec.Command("git", "rm", "-f", "--", name)
-	rmCmd.Dir = root
-	if output, err := rmCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git rm failed: %w\n%s", err, output)
-	}
-
-	// Remove cached module data
-	gitModulesDir := filepath.Join(root, ".git", "modules", name)
-	if err := os.RemoveAll(gitModulesDir); err != nil {
-		return fmt.Errorf("failed to remove cached module data %s: %w", gitModulesDir, err)
-	}
-
 	return nil
 }
 

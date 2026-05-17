@@ -115,7 +115,6 @@ pylon mem store         # 메모리 저장
 pylon mem list          # 메모리 목록
 pylon status            # 파이프라인 상태
 pylon add-project       # 프로젝트를 워크스페이스에 clone하여 추가
-pylon migrate-project   # 기존 submodule 프로젝트를 clone으로 전환
 pylon sync-memory       # 메모리 동기화
 pylon sync-agents       # 에이전트 동기화
 pylon sync-projects     # 프로젝트 동기화
