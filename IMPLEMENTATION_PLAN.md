@@ -85,7 +85,6 @@ pylon/
 │   │   ├── worktree.go                  # Git worktree 생성/정리
 │   │   ├── worktree_test.go
 │   │   ├── branch.go                    # 브랜치 전략 (task/{date}-{slug})
-│   │   ├── submodule.go                # Submodule 관리
 │   │   └── pr.go                        # gh pr create 래퍼
 │   ├── memory/                          # 메모리 관리
 │   │   ├── manager.go                   # 3계층 메모리 매니저
