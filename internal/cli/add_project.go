@@ -219,7 +219,8 @@ func inferProjectName(repoURL string) string {
 }
 
 // resolveGitExcludePath returns the absolute path to a project's .git/info/exclude file.
-// It uses "git rev-parse --git-dir" to correctly resolve submodule git directories.
+// It uses "git rev-parse --git-dir" to correctly resolve non-standard git layouts
+// (e.g. worktrees, or legacy submodule clones whose .git is a gitlink file).
 func resolveGitExcludePath(projectDir string) (string, error) {
 	gitDirCmd := exec.Command("git", "rev-parse", "--git-dir")
 	gitDirCmd.Dir = projectDir

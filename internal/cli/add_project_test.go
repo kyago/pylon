@@ -38,7 +38,7 @@ func TestInferProjectName(t *testing.T) {
 
 func TestExcludePylonFromRepo(t *testing.T) {
 	requireGit(t)
-	// Create a temporary git repo to act as the "submodule"
+	// Create a temporary git repo to act as the project clone
 	tmpDir := t.TempDir()
 	cmd := exec.Command("git", "init", tmpDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
