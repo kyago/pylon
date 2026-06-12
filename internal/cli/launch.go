@@ -703,6 +703,12 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 		// 심링크는 제거하고 최신 주입 내용으로 재생성한다. 일반 파일은 pylon이
 		// 생성한 주입 파일(주입 마커 포함)만 갱신하고, 마커가 없는(사용자가 직접
 		// 작성한) 파일은 보존한다. 이미 최신 내용이면 다시 쓰지 않는다.
+		//
+		// 계약: 주입 마커를 포함한 .claude/agents/ 파일은 pylon 소유로 간주되며,
+		// 사용자가 이 파일을 직접 수정하더라도(마커가 남아 있는 한) update 시
+		// 최신 주입 내용으로 덮어써진다. 에이전트 커스터마이징은 .claude/agents/가
+		// 아니라 .pylon/agents/ 또는 .pylon/skills/에서 해야 한다. 마커가 없는
+		// 파일(사용자가 처음부터 작성한 에이전트)은 절대 덮어쓰지 않는다.
 		if info, err := os.Lstat(linkPath); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				os.Remove(linkPath)
@@ -725,6 +731,11 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 	// Only symlinks are removed — pylon-generated regular files (from skill injection) are
 	// left in place because they cannot be reliably distinguished from user-created files
 	// without a manifest. This is a known limitation; a manifest-based approach can be added later.
+	//
+	// Related known gap: if an agent that still exists in .pylon/agents/ loses all of its
+	// skills between versions, it routes to the ensureSymlink path above, which does not
+	// touch existing regular files — so a previously injected (marker-bearing) regular file
+	// is left with stale content until manually removed. Not data loss; same manifest limitation.
 	claudeEntries, err := os.ReadDir(claudeAgentsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "경고: .claude/agents/ 읽기 실패: %v\n", err)
