@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +72,26 @@ func TestResolveUpdateTarget(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("resolveUpdateTarget(%v) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDoctorSyncArgs(t *testing.T) {
+	tests := []struct {
+		name      string
+		workspace string
+		want      []string
+	}{
+		{"no workspace override", "", []string{"doctor"}},
+		{"workspace override propagated", "/tmp/ws", []string{"doctor", "--workspace", "/tmp/ws"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := doctorSyncArgs(tt.workspace)
+			if strings.Join(got, " ") != strings.Join(tt.want, " ") {
+				t.Errorf("doctorSyncArgs(%q) = %v, want %v", tt.workspace, got, tt.want)
 			}
 		})
 	}

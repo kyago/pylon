@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,71 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 )
+
+// firstEmbeddedSkill returns the name of the first embedded skill .md file,
+// skipping the test if none are present.
+func firstEmbeddedSkill(t *testing.T) string {
+	t.Helper()
+	entries, err := embeddedSkills.ReadDir("skills")
+	if err != nil {
+		t.Fatalf("read embedded skills: %v", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			return e.Name()
+		}
+	}
+	t.Skip("no embedded skill files available to test")
+	return ""
+}
+
+// TestSyncEmbeddedDir_RefreshesStaleFile reproduces the version-upgrade bug:
+// an existing file with outdated content (from a previous pylon version) must
+// be refreshed to the embedded content, not silently skipped.
+func TestSyncEmbeddedDir_RefreshesStaleFile(t *testing.T) {
+	targetDir := t.TempDir()
+	name := firstEmbeddedSkill(t)
+
+	want, err := embeddedSkills.ReadFile("skills/" + name)
+	if err != nil {
+		t.Fatalf("read embedded file: %v", err)
+	}
+
+	// Pre-seed a stale version, simulating a file installed by an older pylon.
+	destPath := filepath.Join(targetDir, name)
+	if err := os.WriteFile(destPath, []byte("STALE OLD VERSION\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
+
+	got, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("stale file %s was not refreshed to embedded content", name)
+	}
+	if changed == 0 {
+		t.Errorf("expected changed count > 0 when a stale file is refreshed, got 0")
+	}
+}
+
+// TestSyncEmbeddedDir_SkipsUnchangedFile verifies that re-syncing identical
+// content reports no changes (idempotent, no needless rewrites).
+func TestSyncEmbeddedDir_SkipsUnchangedFile(t *testing.T) {
+	targetDir := t.TempDir()
+
+	first := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
+	if first == 0 {
+		t.Fatal("expected files to be installed on first sync")
+	}
+
+	second := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
+	if second != 0 {
+		t.Errorf("expected 0 changes on second sync of identical content, got %d", second)
+	}
+}
 
 func TestCheckExcludeStatus(t *testing.T) {
 	requireGit(t)
