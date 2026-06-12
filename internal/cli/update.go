@@ -122,9 +122,10 @@ Examples:
 
 			fmt.Printf("✅ pylon %s 설치 완료\n", release.TagName)
 
-			// Run config sync using the NEW binary
+			// Run config sync using the NEW binary, preserving any --workspace override
+			// so resource sync targets the same workspace the user is updating.
 			fmt.Println("\n설정 동기화 중...")
-			doctorCmd := exec.Command(currentBinary, "doctor")
+			doctorCmd := exec.Command(currentBinary, doctorSyncArgs(flagWorkspace)...)
 			doctorCmd.Stdout = os.Stdout
 			doctorCmd.Stderr = os.Stderr
 			if err := doctorCmd.Run(); err != nil {
@@ -134,6 +135,16 @@ Examples:
 			return nil
 		},
 	}
+}
+
+// doctorSyncArgs builds the argument list for the post-update `pylon doctor`
+// invocation, propagating the --workspace override when one is set.
+func doctorSyncArgs(workspace string) []string {
+	args := []string{"doctor"}
+	if workspace != "" {
+		args = append(args, "--workspace", workspace)
+	}
+	return args
 }
 
 // resolveUpdateTarget determines the version target from CLI args.

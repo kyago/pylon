@@ -281,6 +281,60 @@ Skill body`
 	}
 }
 
+func TestGenerateClaudeAgentsWithSkills_RefreshesStaleInjectedFile(t *testing.T) {
+	root := t.TempDir()
+	pylonDir := filepath.Join(root, ".pylon")
+	agentsDir := filepath.Join(pylonDir, "agents")
+	claudeAgentsDir := filepath.Join(root, ".claude", "agents")
+	os.MkdirAll(agentsDir, 0755)
+	os.MkdirAll(claudeAgentsDir, 0755)
+
+	agentContent := `---
+name: test-agent
+role: Test Agent
+skills:
+  - some-skill
+---
+# Test Agent`
+	os.WriteFile(filepath.Join(agentsDir, "test-agent.md"), []byte(agentContent), 0644)
+
+	// New skill body (as if updated by a version upgrade).
+	skillsDir := filepath.Join(pylonDir, "skills")
+	os.MkdirAll(skillsDir, 0755)
+	skillContent := `---
+name: some-skill
+description: A test skill
+---
+NEW skill body content`
+	os.WriteFile(filepath.Join(skillsDir, "some-skill.md"), []byte(skillContent), 0644)
+
+	// Pre-create a regular file carrying the pylon injection marker but STALE
+	// skill content, simulating a file materialized by an older pylon version.
+	staleInjected := "# Test Agent\n\n## 주입된 스킬\n\n### some-skill\n_A test skill_\n\nOLD stale skill body\n"
+	linkPath := filepath.Join(claudeAgentsDir, "test-agent.md")
+	os.WriteFile(linkPath, []byte(staleInjected), 0644)
+
+	cfg := &config.Config{
+		Skills: config.SkillsConfig{
+			Enabled:               true,
+			PreloadToAgents:       true,
+			ProgressiveDisclosure: false,
+		},
+	}
+
+	if err := generateClaudeAgentsWithSkills(root, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content, _ := os.ReadFile(linkPath)
+	if strings.Contains(string(content), "OLD stale skill body") {
+		t.Error("stale injected file should be refreshed, but old skill body remains")
+	}
+	if !strings.Contains(string(content), "NEW skill body content") {
+		t.Error("refreshed file should contain the new skill body")
+	}
+}
+
 func TestGenerateClaudeAgentsWithSkills_StaleCleanup(t *testing.T) {
 	root := t.TempDir()
 	pylonDir := filepath.Join(root, ".pylon")

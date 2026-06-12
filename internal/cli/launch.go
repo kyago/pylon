@@ -89,7 +89,6 @@ func runLaunch() error {
 	return syscall.Exec(claudePath, args, env)
 }
 
-
 // openWorkspaceStore is a shared helper that finds the workspace root, loads config,
 // and opens the SQLite store. Caller must close the returned Store.
 func openWorkspaceStore() (string, *config.Config, *store.Store, error) {
@@ -594,7 +593,6 @@ func buildSlashCommands(root string) map[string]string {
 	return commands
 }
 
-
 // addToGitignore appends pylon-managed entries to .gitignore if not already present.
 func addClaudeDirToGitignore(root string) error {
 	gitignorePath := filepath.Join(root, ".gitignore")
@@ -701,13 +699,21 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 		// Append skill section to agent content
 		combined := string(content) + "\n\n" + injected
 
-		// Remove existing symlink only; preserve user-created regular files
+		// linkPath의 이름은 .pylon/agents/ 기반이므로 pylon 관리 에이전트다.
+		// 심링크는 제거하고 최신 주입 내용으로 재생성한다. 일반 파일은 pylon이
+		// 생성한 주입 파일(주입 마커 포함)만 갱신하고, 마커가 없는(사용자가 직접
+		// 작성한) 파일은 보존한다. 이미 최신 내용이면 다시 쓰지 않는다.
 		if info, err := os.Lstat(linkPath); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				os.Remove(linkPath)
 			} else {
-				// Regular file exists — don't overwrite user files
-				continue
+				existing, rerr := os.ReadFile(linkPath)
+				if rerr != nil || !strings.Contains(string(existing), skillInjectionMarker) {
+					continue // 사용자 작성 파일(주입 마커 없음) — 보존
+				}
+				if string(existing) == combined {
+					continue // 이미 최신 주입 내용 — 갱신 불필요
+				}
 			}
 		}
 		if err := os.WriteFile(linkPath, []byte(combined), 0644); err != nil {
@@ -745,6 +751,12 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 	return nil
 }
 
+// skillInjectionMarker is the header that marks a .claude/agents/ file as
+// pylon-generated with injected skill content. It is used to distinguish
+// pylon-managed injected files (safe to refresh on upgrade) from files a user
+// authored by hand (preserved).
+const skillInjectionMarker = "## 주입된 스킬"
+
 // buildSkillInjection generates the skill content to inject into an agent file.
 // If progressiveDisclosure is true, only metadata (name + description) is injected.
 // If false, the full skill body is injected.
@@ -759,7 +771,7 @@ func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillC
 		}
 
 		if !injected {
-			b.WriteString("## 주입된 스킬\n\n")
+			b.WriteString(skillInjectionMarker + "\n\n")
 			injected = true
 		}
 
@@ -830,7 +842,7 @@ type settingsHookCommand struct {
 // settingsHookEntry represents a hook group in .claude/settings.json.
 // Each group has a matcher string and an array of hook commands.
 type settingsHookEntry struct {
-	Matcher string               `json:"matcher"`
+	Matcher string                `json:"matcher"`
 	Hooks   []settingsHookCommand `json:"hooks"`
 }
 

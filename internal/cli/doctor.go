@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"os"
@@ -8,16 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/kyago/pylon/internal/config"
+	"github.com/spf13/cobra"
 )
 
 // Check represents a single dependency check.
 // Spec Reference: Section 7 "pylon doctor"
 type Check struct {
-	Name     string
-	Required bool
-	Verify   func() (version string, err error)
+	Name       string
+	Required   bool
+	Verify     func() (version string, err error)
 	InstallURL string
 }
 
@@ -288,7 +289,9 @@ func syncConfigIfWorkspace() {
 
 // syncResourcesIfWorkspace syncs embedded agents, skills, commands, and scripts
 // to the workspace if running inside a pylon workspace.
-// New files are installed; existing files are skipped to preserve user customizations.
+// .pylon/ resources are pylon-managed: missing files are installed and files
+// whose content differs from the embedded version are refreshed, so upgrades
+// pick up new resource content.
 func syncResourcesIfWorkspace() {
 	startDir := flagWorkspace
 	if startDir == "" {
@@ -300,23 +303,19 @@ func syncResourcesIfWorkspace() {
 	}
 
 	pylonDir := filepath.Join(root, ".pylon")
-	var totalInstalled int
+	var totalWritten int
 
 	// Sync agents
-	installed := syncEmbeddedDir(embeddedAgents, "agents", filepath.Join(pylonDir, "agents"), ".md")
-	totalInstalled += installed
+	totalWritten += syncEmbeddedDir(embeddedAgents, "agents", filepath.Join(pylonDir, "agents"), ".md")
 
 	// Sync skills
-	installed = syncEmbeddedDir(embeddedSkills, "skills", filepath.Join(pylonDir, "skills"), ".md")
-	totalInstalled += installed
+	totalWritten += syncEmbeddedDir(embeddedSkills, "skills", filepath.Join(pylonDir, "skills"), ".md")
 
 	// Sync commands
-	installed = syncEmbeddedDir(embeddedCommands, "commands", filepath.Join(pylonDir, "commands"), ".md")
-	totalInstalled += installed
+	totalWritten += syncEmbeddedDir(embeddedCommands, "commands", filepath.Join(pylonDir, "commands"), ".md")
 
 	// Sync scripts
-	installed = syncEmbeddedDir(embeddedScripts, "scripts/bash", filepath.Join(pylonDir, "scripts", "bash"), ".sh")
-	totalInstalled += installed
+	totalWritten += syncEmbeddedDir(embeddedScripts, "scripts/bash", filepath.Join(pylonDir, "scripts", "bash"), ".sh")
 
 	// Update .claude/agents/ with skill injection (consistent with pylon launch)
 	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
@@ -331,16 +330,18 @@ func syncResourcesIfWorkspace() {
 		}
 	}
 
-	if totalInstalled > 0 {
-		fmt.Printf("✓ 내장 리소스 %d개 신규 설치\n", totalInstalled)
+	if totalWritten > 0 {
+		fmt.Printf("✓ 내장 리소스 %d개 설치/갱신\n", totalWritten)
 	} else {
 		fmt.Println("✓ 내장 리소스 최신 상태")
 	}
 }
 
 // syncEmbeddedDir copies files from an embed.FS subdirectory to a target directory.
-// Only new files are installed; existing files are skipped.
-// Returns the number of newly installed files.
+// .pylon/ resources are treated as pylon-managed: a file is written when it is
+// missing or when its on-disk content differs from the embedded version, so that
+// version upgrades refresh stale files. Unchanged files are left untouched.
+// Returns the number of files written (newly installed or refreshed).
 func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		fmt.Printf("⚠ %s 디렉토리 생성 실패: %v\n", targetDir, err)
@@ -353,19 +354,19 @@ func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
 		return 0
 	}
 
-	installed := 0
+	written := 0
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), suffix) {
 			continue // 비재귀: 서브디렉토리 스킵 (현재 리소스 구조에서는 불필요)
-		}
-		destPath := filepath.Join(targetDir, entry.Name())
-		if _, err := os.Stat(destPath); err == nil {
-			continue // already exists, skip
 		}
 		content, err := fs.ReadFile(embedDir + "/" + entry.Name())
 		if err != nil {
 			fmt.Printf("⚠ %s 읽기 실패: %v\n", entry.Name(), err)
 			continue
+		}
+		destPath := filepath.Join(targetDir, entry.Name())
+		if existing, err := os.ReadFile(destPath); err == nil && bytes.Equal(existing, content) {
+			continue // 디스크 내용이 내장 버전과 동일 — 갱신 불필요
 		}
 		perm := os.FileMode(0644)
 		if suffix == ".sh" {
@@ -375,9 +376,9 @@ func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
 			fmt.Printf("⚠ %s 쓰기 실패: %v\n", entry.Name(), err)
 			continue
 		}
-		installed++
+		written++
 	}
-	return installed
+	return written
 }
 
 func verifyClaude() (string, error) {
