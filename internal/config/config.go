@@ -22,7 +22,6 @@ type Config struct {
 	Memory       MemoryConfig             `yaml:"memory"`
 	Conversation ConversationConfig       `yaml:"conversation"`
 	Workflow     WorkflowConfig           `yaml:"workflow"`
-	Ontology     OntologyConfig           `yaml:"ontology"`
 	Skills       SkillsConfig             `yaml:"skills"`
 }
 
@@ -31,14 +30,6 @@ type SkillsConfig struct {
 	Enabled               bool `yaml:"enabled"`
 	PreloadToAgents       bool `yaml:"preload_to_agents"`
 	ProgressiveDisclosure bool `yaml:"progressive_disclosure"`
-}
-
-// OntologyConfig defines pylon-ontology MCP server integration settings.
-type OntologyConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	PackageName string `yaml:"package_name"`
-	AutoExtract bool   `yaml:"auto_extract"`
-	AutoVerify  bool   `yaml:"auto_verify"`
 }
 
 // RuntimeConfig defines agent runtime settings.
@@ -298,10 +289,6 @@ func ParseConfig(data []byte) (*Config, error) {
 			ProactiveInjection: true,
 			SessionArchive:     true,
 		},
-		Ontology: OntologyConfig{
-			AutoExtract: true,
-			AutoVerify:  true,
-		},
 		Skills: SkillsConfig{
 			Enabled:               true,
 			PreloadToAgents:       true,
@@ -386,10 +373,5 @@ func applyDefaults(cfg *Config) {
 	// Workflow defaults
 	if cfg.Workflow.DefaultWorkflow == "" {
 		cfg.Workflow.DefaultWorkflow = "feature"
-	}
-
-	// Ontology defaults
-	if cfg.Ontology.PackageName == "" {
-		cfg.Ontology.PackageName = "pylon-ontology"
 	}
 }
