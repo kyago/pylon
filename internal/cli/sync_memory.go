@@ -131,22 +131,33 @@ func runSyncIncremental(project, agent, filePath, content string) error {
 	defer s.Close()
 
 	// Read content from stdin if not provided via flag
+	explicitContent := content != ""
 	if content == "" {
 		content = readStdin()
 	}
 
-	// Try to parse Claude Code hook payload from stdin content
-	// PostToolUse hooks receive JSON like:
+	// PostToolUse hooks pipe JSON like:
 	//   {"tool_name": "Write", "tool_input": {"file_path": "...", "content": "..."}, ...}
-	if content != "" {
+	// Storing this raw diff as memory pollutes BM25 search (issue #76), so without
+	// an explicit --content summary we only extract the file path and skip storage.
+	if content != "" && !explicitContent {
 		parsedFile, parsedContent := tryParseToolUsePayload(content)
-		if parsedContent != "" {
-			content = parsedContent
-		}
 		if parsedFile != "" && filePath == "" {
 			filePath = parsedFile
 		}
+		if parsedFile != "" || parsedContent != "" {
+			if flagJSON {
+				fmt.Println(`{"status":"skip","reason":"raw tool payload without --content"}`)
+			} else {
+				fmt.Println("요약(--content) 없이 전달된 raw 도구 페이로드는 저장하지 않습니다")
+			}
+			return nil
+		}
 	}
+
+	// Normalize worktree paths so the same file edited in a worktree and in the
+	// main checkout resolves to one project/key instead of duplicating entries.
+	filePath = normalizeWorktreePath(filePath)
 
 	// Resolve project name using file path for multi-project inference
 	project, err = resolveProject(root, project, filePath)
@@ -386,6 +397,26 @@ func tryParseToolUsePayload(data string) (filePath, content string) {
 	}
 
 	return filePath, content
+}
+
+// normalizeWorktreePath removes a `.claude/worktrees/<name>/` segment from a
+// path so worktree copies of a file map to the same project and memory key.
+func normalizeWorktreePath(p string) string {
+	if p == "" {
+		return p
+	}
+	const marker = ".claude/worktrees/"
+	sl := filepath.ToSlash(p)
+	idx := strings.Index(sl, marker)
+	if idx < 0 {
+		return p
+	}
+	rest := sl[idx+len(marker):]
+	sep := strings.Index(rest, "/")
+	if sep < 0 {
+		return p
+	}
+	return filepath.FromSlash(sl[:idx] + rest[sep+1:])
 }
 
 // buildIncrementalKey creates a memory key for incremental file change tracking.

@@ -529,38 +529,10 @@ func TestGenerateSettingsHooks(t *testing.T) {
 		t.Errorf("Stop hook command should contain 'pylon sync-memory --from-session', got: %s", cmd)
 	}
 
-	// Verify PostToolUse hook exists with correct structure
-	postHooks, ok := hooksMap["PostToolUse"]
-	if !ok {
-		t.Fatal("PostToolUse hook not found")
-	}
-	postArr, ok := postHooks.([]any)
-	if !ok || len(postArr) == 0 {
-		t.Fatal("PostToolUse hook should be a non-empty array")
-	}
-	postGroup, ok := postArr[0].(map[string]any)
-	if !ok {
-		t.Fatal("PostToolUse hook group should be a map")
-	}
-	// Verify matcher is a string
-	postMatcher, ok := postGroup["matcher"].(string)
-	if !ok {
-		t.Fatal("PostToolUse hook matcher should be a string")
-	}
-	if postMatcher != "Edit|Write" {
-		t.Errorf("PostToolUse hook matcher = %q, want 'Edit|Write'", postMatcher)
-	}
-	// Verify hooks array
-	postInnerHooks, ok := postGroup["hooks"].([]any)
-	if !ok || len(postInnerHooks) == 0 {
-		t.Fatal("PostToolUse hook group should have a non-empty 'hooks' array")
-	}
-	postCmd, ok := postInnerHooks[0].(map[string]any)
-	if !ok {
-		t.Fatal("PostToolUse inner hook should be a map")
-	}
-	if postCmd["type"] != "command" {
-		t.Errorf("PostToolUse hook type = %v, want 'command'", postCmd["type"])
+	// PostToolUse hook must NOT be installed by default: it stored raw edit
+	// diffs as memory and polluted BM25 search (issue #76).
+	if _, ok := hooksMap["PostToolUse"]; ok {
+		t.Fatal("PostToolUse hook should not be installed by default (issue #76)")
 	}
 
 	// Verify no description field (not in Claude Code spec)
@@ -886,5 +858,60 @@ func TestGenerateClaudeDir_IncludesSettings(t *testing.T) {
 	hooksMap, ok := hooks.(map[string]any)
 	if !ok || len(hooksMap) == 0 {
 		t.Error("settings.json hooks should contain hook definitions")
+	}
+}
+
+func TestNormalizeWorktreePath(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"src/main.go", "src/main.go"},
+		{".claude/worktrees/task+123/src/main.go", "src/main.go"},
+		{"/Users/me/ws/.claude/worktrees/fix-bug/internal/a.go", "/Users/me/ws/internal/a.go"},
+		{".claude/worktrees/only-name", ".claude/worktrees/only-name"},
+	}
+	for _, tt := range tests {
+		if got := normalizeWorktreePath(tt.input); got != tt.want {
+			t.Errorf("normalizeWorktreePath(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// stdin에서 raw 도구 페이로드가 들어오고 --content가 없으면 저장을 건너뛰어야 한다 (issue #76).
+func TestRunSyncIncremental_SkipsRawToolPayload(t *testing.T) {
+	tmpDir := setupTestWorkspace(t)
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	payload := `{"tool_name": "Edit", "tool_input": {"file_path": "src/main.go", "old_string": "a", "new_string": "b"}}`
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.WriteString(payload)
+	w.Close()
+	oldStdin := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin }()
+
+	if err := runSyncIncremental("test-project", "test-agent", "", ""); err != nil {
+		t.Fatalf("runSyncIncremental() error = %v", err)
+	}
+
+	_, _, s, err := openWorkspaceStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	entries, err := s.ListProjectMemory("test-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("raw tool payload should not be stored, got %d entries", len(entries))
 	}
 }

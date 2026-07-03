@@ -1,15 +1,4 @@
 {
-  "PostToolUse": [
-    {
-      "matcher": "Edit|Write",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "pylon sync-memory --incremental --agent claude"
-        }
-      ]
-    }
-  ],
   "Stop": [
     {
       "matcher": "*",
