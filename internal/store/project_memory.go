@@ -216,6 +216,96 @@ func (s *Store) ListProjectMemory(projectID string) ([]MemoryEntry, error) {
 	return entries, rows.Err()
 }
 
+// keyFilePrefixExpr extracts the file portion of an incremental key
+// ("<file>/<timestamp>"); keys without '/' are used as-is.
+const keyFilePrefixExpr = `CASE WHEN instr(%s.key, '/') > 0 THEN substr(%s.key, 1, instr(%s.key, '/') - 1) ELSE %s.key END`
+
+// DeleteMemory removes memory entries matching the given filters.
+// projectID가 빈 문자열이면 전체 프로젝트를 대상으로 한다. key와 category는
+// 비어 있지 않은 것만 조건에 포함된다. dryRun이면 삭제하지 않고 건수만 반환한다.
+// FTS 인덱스는 delete 트리거로 자동 동기화된다.
+func (s *Store) DeleteMemory(projectID, category, key string, dryRun bool) (int64, error) {
+	var conds []string
+	var args []any
+	if projectID != "" {
+		conds = append(conds, "project_id = ?")
+		args = append(args, projectID)
+	}
+	if category != "" {
+		conds = append(conds, "category = ?")
+		args = append(args, category)
+	}
+	if key != "" {
+		conds = append(conds, "key = ?")
+		args = append(args, key)
+	}
+	if len(conds) == 0 {
+		return 0, fmt.Errorf("at least one filter (project, category, key) is required")
+	}
+	where := strings.Join(conds, " AND ")
+
+	if dryRun {
+		var n int64
+		err := s.db.QueryRow(`SELECT COUNT(*) FROM project_memory WHERE `+where, args...).Scan(&n)
+		if err != nil {
+			return 0, fmt.Errorf("failed to count memory: %w", err)
+		}
+		return n, nil
+	}
+
+	res, err := s.db.Exec(`DELETE FROM project_memory WHERE `+where, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete memory: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// DedupMemoryChanges removes duplicate "change" entries for the same file,
+// keeping only the most recent one per (project, file). projectID가 빈 문자열이면
+// 전체 프로젝트를 대상으로 한다.
+func (s *Store) DedupMemoryChanges(projectID string, dryRun bool) (int64, error) {
+	pmPrefix := fmt.Sprintf(keyFilePrefixExpr, "pm", "pm", "pm", "pm")
+	p2Prefix := fmt.Sprintf(keyFilePrefixExpr, "p2", "p2", "p2", "p2")
+
+	where := fmt.Sprintf(`
+		pm.category = 'change'
+		AND (? = '' OR pm.project_id = ?)
+		AND EXISTS (
+			SELECT 1 FROM project_memory p2
+			WHERE p2.project_id = pm.project_id
+			  AND p2.category = pm.category
+			  AND %s = %s
+			  AND (p2.created_at > pm.created_at
+			       OR (p2.created_at = pm.created_at AND p2.id > pm.id))
+		)`, p2Prefix, pmPrefix)
+
+	args := []any{projectID, projectID}
+
+	if dryRun {
+		var n int64
+		err := s.db.QueryRow(`SELECT COUNT(*) FROM project_memory pm WHERE `+where, args...).Scan(&n)
+		if err != nil {
+			return 0, fmt.Errorf("failed to count duplicate memory: %w", err)
+		}
+		return n, nil
+	}
+
+	res, err := s.db.Exec(`DELETE FROM project_memory WHERE id IN (
+		SELECT pm.id FROM project_memory pm WHERE `+where+`)`, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to dedup memory: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// Vacuum reclaims unused space in the database file.
+func (s *Store) Vacuum() error {
+	if _, err := s.db.Exec(`VACUUM`); err != nil {
+		return fmt.Errorf("failed to vacuum database: %w", err)
+	}
+	return nil
+}
+
 // IncrementAccessCount bumps the access count for a memory entry.
 func (s *Store) IncrementAccessCount(memoryID string) error {
 	_, err := s.db.Exec(`UPDATE project_memory SET access_count = access_count + 1 WHERE id = ?`, memoryID)

@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -20,12 +21,16 @@ func newMemCmd() *cobra.Command {
 사용 가능한 하위 명령:
   search  BM25 검색
   store   메모리 저장
-  list    메모리 목록`,
+  list    메모리 목록
+  delete  메모리 삭제 (키/카테고리 단위)
+  prune   오염 메모리 정리 (카테고리 일괄/중복 제거)`,
 	}
 
 	cmd.AddCommand(newMemSearchCmd())
 	cmd.AddCommand(newMemStoreCmd())
 	cmd.AddCommand(newMemListCmd())
+	cmd.AddCommand(newMemDeleteCmd())
+	cmd.AddCommand(newMemPruneCmd())
 
 	return cmd
 }
@@ -101,6 +106,172 @@ func newMemListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&category, "category", "", "filter by category (optional)")
 
 	return cmd
+}
+
+func newMemDeleteCmd() *cobra.Command {
+	var project, key, category string
+	var dryRun, yes bool
+
+	cmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete memory entries by key or category",
+		Long: `메모리 항목을 삭제합니다.
+
+사용 예:
+  pylon mem delete --project myapp --key some-key
+  pylon mem delete --project myapp --category change --dry-run`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if project == "" {
+				return fmt.Errorf("--project is required")
+			}
+			if key == "" && category == "" {
+				return fmt.Errorf("--key or --category is required")
+			}
+			return runMemDelete(project, category, key, dryRun, yes)
+		},
+	}
+
+	cmd.Flags().StringVar(&project, "project", "", "project name")
+	cmd.Flags().StringVar(&key, "key", "", "memory key to delete")
+	cmd.Flags().StringVar(&category, "category", "", "delete all entries in this category")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show affected count without deleting")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
+
+	return cmd
+}
+
+func newMemPruneCmd() *cobra.Command {
+	var project, category string
+	var dedup, dryRun, yes bool
+
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune polluted memory entries (bulk delete / dedup)",
+		Long: `오염된 메모리를 정리합니다. 삭제 후 VACUUM으로 저장 공간을 회수합니다.
+
+사용 예:
+  pylon mem prune --category change                # 전체 프로젝트의 change 일괄 삭제
+  pylon mem prune --category change --project app  # 특정 프로젝트만
+  pylon mem prune --dedup                          # 동일 파일 중복 change 중 최신 1건만 유지
+  pylon mem prune --category change --dry-run      # 영향 건수 미리보기`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !dedup && category == "" {
+				return fmt.Errorf("--category or --dedup is required")
+			}
+			return runMemPrune(project, category, dedup, dryRun, yes)
+		},
+	}
+
+	cmd.Flags().StringVar(&project, "project", "", "project name (empty = all projects)")
+	cmd.Flags().StringVar(&category, "category", "", "delete all entries in this category")
+	cmd.Flags().BoolVar(&dedup, "dedup", false, "keep only the latest change entry per file")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show affected count without deleting")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
+
+	return cmd
+}
+
+// confirmDeletion asks the user to confirm a destructive operation.
+func confirmDeletion(count int64) bool {
+	fmt.Printf("%d건이 삭제됩니다. 계속하시겠습니까? [y/N]: ", count)
+	var answer string
+	fmt.Scanln(&answer)
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes"
+}
+
+func printPruneResult(action string, count int64, dryRun bool) {
+	if flagJSON {
+		data, _ := json.Marshal(map[string]any{
+			"status":  "ok",
+			"action":  action,
+			"count":   count,
+			"dry_run": dryRun,
+		})
+		fmt.Println(string(data))
+	} else if dryRun {
+		fmt.Printf("%d건이 삭제 대상입니다 (dry-run, 실제 삭제되지 않음)\n", count)
+	} else {
+		fmt.Printf("✓ %d건 삭제 완료\n", count)
+	}
+}
+
+func runMemDelete(project, category, key string, dryRun, yes bool) error {
+	_, _, s, err := openWorkspaceStore()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	count, err := s.DeleteMemory(project, category, key, true)
+	if err != nil {
+		return fmt.Errorf("failed to count memory: %w", err)
+	}
+
+	if dryRun || count == 0 {
+		printPruneResult("delete", count, true)
+		return nil
+	}
+
+	if !yes && !flagJSON && !confirmDeletion(count) {
+		fmt.Println("취소되었습니다")
+		return nil
+	}
+
+	deleted, err := s.DeleteMemory(project, category, key, false)
+	if err != nil {
+		return fmt.Errorf("failed to delete memory: %w", err)
+	}
+
+	printPruneResult("delete", deleted, false)
+	return nil
+}
+
+func runMemPrune(project, category string, dedup, dryRun, yes bool) error {
+	_, _, s, err := openWorkspaceStore()
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	countFn := func(dry bool) (int64, error) {
+		if dedup {
+			return s.DedupMemoryChanges(project, dry)
+		}
+		return s.DeleteMemory(project, category, "", dry)
+	}
+
+	action := "prune"
+	if dedup {
+		action = "dedup"
+	}
+
+	count, err := countFn(true)
+	if err != nil {
+		return fmt.Errorf("failed to count memory: %w", err)
+	}
+
+	if dryRun || count == 0 {
+		printPruneResult(action, count, true)
+		return nil
+	}
+
+	if !yes && !flagJSON && !confirmDeletion(count) {
+		fmt.Println("취소되었습니다")
+		return nil
+	}
+
+	deleted, err := countFn(false)
+	if err != nil {
+		return fmt.Errorf("failed to prune memory: %w", err)
+	}
+
+	if err := s.Vacuum(); err != nil {
+		return err
+	}
+
+	printPruneResult(action, deleted, false)
+	return nil
 }
 
 func runMemSearch(project, query string, limit int) error {
