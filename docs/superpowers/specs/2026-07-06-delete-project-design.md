@@ -22,11 +22,11 @@ pylon delete-project <name> [--purge] [--force]
 3. `store.GetProject(name)`으로 조회 → 미등록이면 `project "%s" is not registered` 에러
 4. 삭제 대상 요약 출력:
    - projects 레코드 1건
-   - 관련 project_memory / blackboard 건수
+   - 관련 project_memory 건수
    - `--purge`면 삭제될 클론 디렉터리 경로
 5. `--force`가 아니고 `--json`이 아니면 `[y/N]` 확인 프롬프트. 거부 시 "취소되었습니다" 후 종료
 6. 실행:
-   - **기본**: 단일 트랜잭션으로 `projects` + `project_memory` + `blackboard`(해당 `project_id`) 삭제
+   - **기본**: 단일 트랜잭션으로 `projects` + `project_memory`(해당 `project_id`) 삭제
    - **`--purge`**: DB 삭제 성공 후 클론 디렉터리 `os.RemoveAll`
 
 ## store 계층 추가 (`internal/store/projects.go`)
@@ -34,16 +34,17 @@ pylon delete-project <name> [--purge] [--force]
 - `GetProject(projectID string) (*ProjectRecord, error)`
   - 존재 확인 및 `--purge`용 `path` 조회. 미존재 시 `sql.ErrNoRows` 래핑하여 반환.
 - `DeleteProject(projectID string) (DeleteProjectResult, error)`
-  - 단일 트랜잭션에서 `project_memory`, `blackboard`, `projects` 순으로 삭제
+  - 단일 트랜잭션에서 `project_memory`, `projects` 순으로 삭제
   - 각 테이블 삭제 건수를 담은 결과 구조체 반환
 
 ```go
 type DeleteProjectResult struct {
-    Projects   int64
-    Memory     int64
-    Blackboard int64
+    Projects int64
+    Memory   int64
 }
 ```
+
+참고: `blackboard` 테이블은 migration 007에서 삭제되어 더 이상 존재하지 않으므로 대상에서 제외한다.
 
 ## 안전장치
 
@@ -60,7 +61,7 @@ type DeleteProjectResult struct {
 `internal/cli/delete_project_test.go` 신규 작성. `add_project_test.go` 패턴을 따른다.
 
 - 미등록 프로젝트 삭제 시 에러
-- 기본 삭제: projects/project_memory/blackboard DB 레코드 제거, 디렉터리는 보존
+- 기본 삭제: projects/project_memory DB 레코드 제거, 디렉터리는 보존
 - `--purge`: 클론 디렉터리까지 제거
 - `--force`로 프롬프트 생략 동작
 - 워크스페이스 밖 경로는 `--purge` 시 디렉터리 삭제를 건너뜀

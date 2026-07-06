@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -27,6 +28,59 @@ func (s *Store) UpsertProject(rec *ProjectRecord) error {
 		return fmt.Errorf("failed to upsert project: %w", err)
 	}
 	return nil
+}
+
+// GetProject returns a single project by ID. Returns sql.ErrNoRows (wrapped)
+// when the project is not registered.
+func (s *Store) GetProject(projectID string) (*ProjectRecord, error) {
+	var p ProjectRecord
+	err := s.db.QueryRow(`
+		SELECT project_id, path, stack, created_at
+		FROM projects
+		WHERE project_id = ?`, projectID,
+	).Scan(&p.ProjectID, &p.Path, &p.Stack, &p.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("project %q is not registered", projectID)
+		}
+		return nil, fmt.Errorf("failed to get project: %w", err)
+	}
+	return &p, nil
+}
+
+// DeleteProjectResult reports how many rows were removed per table.
+type DeleteProjectResult struct {
+	Projects int64
+	Memory   int64
+}
+
+// DeleteProject removes a project registration together with its associated
+// project_memory rows in a single transaction.
+func (s *Store) DeleteProject(projectID string) (DeleteProjectResult, error) {
+	var res DeleteProjectResult
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return res, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	memRes, err := tx.Exec(`DELETE FROM project_memory WHERE project_id = ?`, projectID)
+	if err != nil {
+		return res, fmt.Errorf("failed to delete project_memory: %w", err)
+	}
+	res.Memory, _ = memRes.RowsAffected()
+
+	projRes, err := tx.Exec(`DELETE FROM projects WHERE project_id = ?`, projectID)
+	if err != nil {
+		return res, fmt.Errorf("failed to delete project: %w", err)
+	}
+	res.Projects, _ = projRes.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return res, nil
 }
 
 // ListProjects returns all registered projects.
