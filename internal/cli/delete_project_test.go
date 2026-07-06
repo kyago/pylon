@@ -23,7 +23,15 @@ func setupDeleteWorkspace(t *testing.T, projectName string, registerDir bool) st
 
 	projectDir := filepath.Join(root, projectName)
 	if registerDir {
-		if err := os.MkdirAll(projectDir, 0755); err != nil {
+		// Create the clone directory with a source file and a .pylon/ marker,
+		// mirroring what add-project leaves on disk.
+		if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(projectDir, "main.go"), []byte("package main\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(projectDir, ".pylon", "context.md"), []byte("# ctx\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -94,7 +102,7 @@ func TestRunDeleteProject_NotRegistered(t *testing.T) {
 	}
 }
 
-func TestRunDeleteProject_Default_KeepsDirectory(t *testing.T) {
+func TestRunDeleteProject_Default_KeepsSourceRemovesMarker(t *testing.T) {
 	root := setupDeleteWorkspace(t, "myapp", true)
 	projectDir := filepath.Join(root, "myapp")
 
@@ -106,9 +114,16 @@ func TestRunDeleteProject_Default_KeepsDirectory(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Directory preserved
+	// Source directory and files preserved
 	if !dirExists(projectDir) {
 		t.Error("project directory should be preserved without --purge")
+	}
+	if !fileExists(filepath.Join(projectDir, "main.go")) {
+		t.Error("source files should be preserved without --purge")
+	}
+	// .pylon/ marker removed so sync-projects won't re-discover it
+	if dirExists(filepath.Join(projectDir, ".pylon")) {
+		t.Error(".pylon/ marker should be removed on default delete")
 	}
 
 	// DB registration and memory removed
@@ -170,7 +185,7 @@ func TestRunDeleteProject_ConfirmDecline(t *testing.T) {
 	}
 }
 
-func TestResolvePurgeDir(t *testing.T) {
+func TestResolveProjectDir(t *testing.T) {
 	root := t.TempDir()
 	inside := filepath.Join(root, "proj")
 	if err := os.MkdirAll(inside, 0755); err != nil {
@@ -178,23 +193,23 @@ func TestResolvePurgeDir(t *testing.T) {
 	}
 
 	// Inside the workspace and existing → safe.
-	if dir, ok := resolvePurgeDir(root, inside); !ok || dir != filepath.Clean(inside) {
+	if dir, ok := resolveProjectDir(root, inside); !ok || dir != filepath.Clean(inside) {
 		t.Errorf("expected inside path to be purgeable, got %q ok=%v", dir, ok)
 	}
 
 	// Root itself → not safe.
-	if _, ok := resolvePurgeDir(root, root); ok {
+	if _, ok := resolveProjectDir(root, root); ok {
 		t.Error("workspace root should not be purgeable")
 	}
 
 	// Outside the workspace → not safe.
 	outside := t.TempDir()
-	if _, ok := resolvePurgeDir(root, outside); ok {
+	if _, ok := resolveProjectDir(root, outside); ok {
 		t.Error("path outside workspace should not be purgeable")
 	}
 
 	// Nonexistent path inside workspace → not safe.
-	if _, ok := resolvePurgeDir(root, filepath.Join(root, "missing")); ok {
+	if _, ok := resolveProjectDir(root, filepath.Join(root, "missing")); ok {
 		t.Error("nonexistent directory should not be purgeable")
 	}
 }

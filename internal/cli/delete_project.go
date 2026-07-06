@@ -53,12 +53,20 @@ func runDeleteProject(name string, purge, force bool) error {
 		return err
 	}
 
-	// Determine whether the cloned directory is safe to purge: it must live
-	// under the workspace root and actually exist on disk.
-	purgeDir := ""
-	if purge {
-		if dir, ok := resolvePurgeDir(root, proj.Path); ok {
-			purgeDir = dir
+	// Resolve the project directory only if it lives strictly under the
+	// workspace root and exists — guards against removing arbitrary paths.
+	projDir, dirSafe := resolveProjectDir(root, proj.Path)
+	// The on-disk target we remove: the whole clone for --purge, otherwise
+	// just the .pylon/ marker so 'sync-projects' won't re-discover it.
+	removeTarget := ""
+	if dirSafe {
+		if purge {
+			removeTarget = projDir
+		} else {
+			marker := filepath.Join(projDir, ".pylon")
+			if dirExists(marker) {
+				removeTarget = marker
+			}
 		}
 	}
 
@@ -66,11 +74,13 @@ func runDeleteProject(name string, purge, force bool) error {
 		fmt.Printf("Delete project %q:\n", name)
 		fmt.Println("  - registry + memory records")
 		if purge {
-			if purgeDir != "" {
-				fmt.Printf("  - directory: %s\n", purgeDir)
+			if removeTarget != "" {
+				fmt.Printf("  - directory: %s\n", removeTarget)
 			} else {
 				fmt.Printf("  ⚠ --purge requested but directory %q is outside the workspace or missing; it will be kept\n", proj.Path)
 			}
+		} else if removeTarget != "" {
+			fmt.Printf("  - .pylon/ marker: %s\n", removeTarget)
 		}
 		fmt.Printf("계속하시겠습니까? [y/N]: ")
 		var answer string
@@ -86,24 +96,25 @@ func runDeleteProject(name string, purge, force bool) error {
 		return fmt.Errorf("failed to delete project: %w", err)
 	}
 
-	dirRemoved := false
-	var dirErr error
-	if purgeDir != "" {
-		if dirErr = os.RemoveAll(purgeDir); dirErr == nil {
-			dirRemoved = true
+	removed := false
+	var rmErr error
+	if removeTarget != "" {
+		if rmErr = os.RemoveAll(removeTarget); rmErr == nil {
+			removed = true
 		}
 	}
 
 	if flagJSON {
 		out := map[string]any{
-			"status":      "ok",
-			"project":     name,
-			"projects":    res.Projects,
-			"memory":      res.Memory,
-			"dir_removed": dirRemoved,
+			"status":   "ok",
+			"project":  name,
+			"projects": res.Projects,
+			"memory":   res.Memory,
+			"purged":   purge,
+			"removed":  removed,
 		}
-		if dirErr != nil {
-			out["dir_error"] = dirErr.Error()
+		if rmErr != nil {
+			out["remove_error"] = rmErr.Error()
 		}
 		data, _ := json.Marshal(out)
 		fmt.Println(string(data))
@@ -111,18 +122,25 @@ func runDeleteProject(name string, purge, force bool) error {
 	}
 
 	fmt.Printf("✓ 프로젝트 %q 등록 해제 (memory %d건 정리)\n", name, res.Memory)
-	if dirRemoved {
-		fmt.Printf("✓ 디렉터리 삭제: %s\n", purgeDir)
-	} else if dirErr != nil {
-		fmt.Printf("⚠ 디렉터리 삭제 실패 (레지스트리는 정리됨): %v\n", dirErr)
+	switch {
+	case removed && purge:
+		fmt.Printf("✓ 디렉터리 삭제: %s\n", removeTarget)
+	case removed:
+		fmt.Printf("✓ .pylon/ 마커 제거 (소스 보존): %s\n", removeTarget)
+	case rmErr != nil:
+		fmt.Printf("⚠ 삭제 실패 (레지스트리는 정리됨): %v\n", rmErr)
+	case purge:
+		fmt.Printf("⚠ 디렉터리 %q가 워크스페이스 밖이거나 없어 보존됨\n", proj.Path)
+	case !dirSafe:
+		fmt.Printf("⚠ 디렉터리 %q가 워크스페이스 밖이라 .pylon/ 마커를 제거하지 못함; sync-projects가 재등록할 수 있음\n", proj.Path)
 	}
 	return nil
 }
 
-// resolvePurgeDir returns the absolute clone directory to purge, and whether it
-// is safe: the path must resolve to a location strictly under the workspace
-// root and must currently exist as a directory.
-func resolvePurgeDir(root, projPath string) (string, bool) {
+// resolveProjectDir returns the absolute project directory, and whether it is
+// safe to modify: the path must resolve to a location strictly under the
+// workspace root and must currently exist as a directory.
+func resolveProjectDir(root, projPath string) (string, bool) {
 	if projPath == "" {
 		return "", false
 	}
