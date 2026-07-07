@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,6 +184,97 @@ func TestRunDeleteProject_ConfirmDecline(t *testing.T) {
 	if _, err := s.GetProject("myapp"); err != nil {
 		t.Errorf("project should remain registered after decline: %v", err)
 	}
+}
+
+// TestRunDeleteProject_OutsideWorkspaceKept covers the safety-critical branch
+// where a project's registered path points outside the workspace: the DB row
+// must still be removed, but the external directory must be left untouched.
+func TestRunDeleteProject_OutsideWorkspaceKept(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// External directory, outside the workspace root.
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "keep.txt"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := openTestStore(t, root)
+	if err := s.UpsertProject(&store.ProjectRecord{ProjectID: "ext", Path: external, Stack: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	// --purge on an outside path: DB removed, directory kept.
+	if err := runDeleteProject("ext", true, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !dirExists(external) || !fileExists(filepath.Join(external, "keep.txt")) {
+		t.Error("external directory must not be touched even with --purge")
+	}
+	s2 := openTestStore(t, root)
+	defer s2.Close()
+	if _, err := s2.GetProject("ext"); err == nil {
+		t.Error("expected project to be unregistered despite outside path")
+	}
+}
+
+// TestRunDeleteProject_JSONOutput exercises the --json output path.
+func TestRunDeleteProject_JSONOutput(t *testing.T) {
+	root := setupDeleteWorkspace(t, "myapp", true)
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	oldJSON := flagJSON
+	flagJSON = true
+	defer func() {
+		flagWorkspace = oldWorkspace
+		flagJSON = oldJSON
+	}()
+
+	out := captureStdout(t, func() {
+		if err := runDeleteProject("myapp", false, false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	for _, want := range []string{`"status":"ok"`, `"project":"myapp"`, `"purged":false`, `"removed":true`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("JSON output missing %q; got: %s", want, out)
+		}
+	}
+}
+
+// captureStdout redirects os.Stdout for the duration of fn and returns what was
+// written.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+	fn()
+	os.Stdout = oldStdout
+	if err := w.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return string(data)
 }
 
 func TestResolveProjectDir(t *testing.T) {
