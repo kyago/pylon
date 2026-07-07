@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -419,10 +420,17 @@ func normalizeWorktreePath(p string) string {
 	return filepath.FromSlash(sl[:idx] + rest[sep+1:])
 }
 
+// incrementalKeySeq is a process-local monotonic counter appended to
+// incremental keys so they stay unique even when multiple calls fall within the
+// same clock tick. time.Now() resolution is platform-dependent and can repeat
+// in rapid succession, which would otherwise collide the UNIQUE(project_id,
+// category, key) memory constraint.
+var incrementalKeySeq atomic.Uint64
+
 // buildIncrementalKey creates a memory key for incremental file change tracking.
 // The key does not include the category prefix since that is stored separately.
 func buildIncrementalKey(filePath string) string {
-	ts := time.Now().Format("20060102-150405.000000000")
+	ts := fmt.Sprintf("%s-%d", time.Now().Format("20060102-150405.000000000"), incrementalKeySeq.Add(1))
 	if filePath != "" {
 		// Use file path as part of key for traceability
 		// Normalize both forward and back slashes for cross-platform compatibility

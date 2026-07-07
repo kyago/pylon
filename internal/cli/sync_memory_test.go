@@ -365,11 +365,17 @@ func TestBuildIncrementalKey_LongPath(t *testing.T) {
 }
 
 func TestBuildIncrementalKey_UniqueTimestamp(t *testing.T) {
-	// Two keys generated in quick succession should be different due to nanoseconds
-	key1 := buildIncrementalKey("test.go")
-	key2 := buildIncrementalKey("test.go")
-	if key1 == key2 {
-		t.Errorf("keys should be unique even in rapid succession: %q == %q", key1, key2)
+	// Keys generated in rapid succession must all be unique. The timestamp alone
+	// is not sufficient because time.Now() resolution can repeat within a tick;
+	// a monotonic sequence guarantees uniqueness (see buildIncrementalKey).
+	const n = 1000
+	seen := make(map[string]struct{}, n)
+	for i := 0; i < n; i++ {
+		k := buildIncrementalKey("test.go")
+		if _, dup := seen[k]; dup {
+			t.Fatalf("duplicate key generated in rapid succession: %q", k)
+		}
+		seen[k] = struct{}{}
 	}
 }
 
