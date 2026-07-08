@@ -437,6 +437,39 @@ func TestDiffClaudeCommands(t *testing.T) {
 	}
 }
 
+func TestDiffClaudeCommands_RemovesPreviouslyManagedCommand(t *testing.T) {
+	root := newTestWorkspace(t)
+	commandsDir := filepath.Join(root, ".claude", "commands")
+	initial := map[string]string{
+		filepath.Join("pl", "old.md"):  "old\n",
+		filepath.Join("pl", "keep.md"): "keep\n",
+	}
+	if err := applyClaudeCommands(commandsDir, initial); err != nil {
+		t.Fatal(err)
+	}
+	custom := filepath.Join(commandsDir, "pl", "custom.md")
+	if err := os.WriteFile(custom, []byte("custom\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	desired := map[string]string{
+		filepath.Join("pl", "keep.md"): "keep\n",
+	}
+	diff := diffClaudeCommands(commandsDir, desired)
+	if len(diff.removed) != 1 || diff.removed[0] != filepath.Join("pl", "old.md") {
+		t.Fatalf("removed = %v, want [pl/old.md]", diff.removed)
+	}
+	if err := applyClaudeCommands(commandsDir, desired); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "old.md")); !os.IsNotExist(err) {
+		t.Errorf("expected previously managed command to be removed, got err=%v", err)
+	}
+	if _, err := os.Stat(custom); err != nil {
+		t.Errorf("expected custom command to be preserved: %v", err)
+	}
+}
+
 func TestSyncClaudeCommands_ConsentApplies(t *testing.T) {
 	root := newTestWorkspace(t)
 	commandsDir := filepath.Join(root, ".claude", "commands")

@@ -420,6 +420,22 @@ func diffClaudeCommands(commandsDir string, desired map[string]string) commandDi
 			d.removed = append(d.removed, name+".md")
 		}
 	}
+	removed := make(map[string]bool)
+	for _, rel := range d.removed {
+		removed[rel] = true
+	}
+	for rel := range readManagedClaudeCommandSet(commandsDir) {
+		if _, ok := desired[rel]; ok {
+			continue
+		}
+		if removed[rel] {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(commandsDir, rel)); err == nil {
+			d.removed = append(d.removed, rel)
+			removed[rel] = true
+		}
+	}
 	sort.Strings(d.added)
 	sort.Strings(d.changed)
 	sort.Strings(d.removed)
