@@ -83,8 +83,8 @@ func TestDoctorSyncArgs(t *testing.T) {
 		workspace string
 		want      []string
 	}{
-		{"no workspace override", "", []string{"doctor"}},
-		{"workspace override propagated", "/tmp/ws", []string{"doctor", "--workspace", "/tmp/ws"}},
+		{"no workspace override", "", []string{"doctor", "--yes"}},
+		{"workspace override propagated", "/tmp/ws", []string{"doctor", "--workspace", "/tmp/ws", "--yes"}},
 	}
 
 	for _, tt := range tests {

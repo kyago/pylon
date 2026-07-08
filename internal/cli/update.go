@@ -144,6 +144,7 @@ func doctorSyncArgs(workspace string) []string {
 	if workspace != "" {
 		args = append(args, "--workspace", workspace)
 	}
+	args = append(args, "--yes")
 	return args
 }
 
