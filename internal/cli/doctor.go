@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"embed"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/kyago/pylon/internal/config"
@@ -55,6 +58,7 @@ for any projects that are missing the local-scope ignore entry.`,
 	}
 
 	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in project repos")
+	cmd.Flags().Bool("yes", false, "커맨드 동기화 확인 프롬프트를 건너뛰고 자동 승인")
 
 	return cmd
 }
@@ -91,6 +95,11 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	// Sync embedded resources (agents, skills, commands, scripts) if in a workspace
 	syncResourcesIfWorkspace()
+
+	// Reconcile Claude Code slash commands (.claude/commands/) with confirmation.
+	// Runs after .pylon/commands/ is synced so the diff reflects the latest content.
+	autoYes, _ := cmd.Flags().GetBool("yes")
+	syncClaudeCommandsIfWorkspace(cmd.InOrStdin(), autoYes)
 
 	// Check project repo .pylon/ exclude settings (skip if git is missing)
 	fixExcludes, _ := cmd.Flags().GetBool("fix-excludes")
@@ -379,6 +388,95 @@ func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
 		written++
 	}
 	return written
+}
+
+// commandDiff describes how the on-disk .claude/commands/ differs from the
+// desired command set.
+type commandDiff struct {
+	added   []string // in desired, missing on disk
+	changed []string // present but content differs
+	removed []string // legacy files present on disk that will be deleted
+}
+
+func (d commandDiff) empty() bool {
+	return len(d.added) == 0 && len(d.changed) == 0 && len(d.removed) == 0
+}
+
+// diffClaudeCommands compares the desired command set against the on-disk
+// .claude/commands/. Removals are limited to the fixed legacy list, mirroring
+// applyClaudeCommands — user-added commands are never flagged for deletion.
+func diffClaudeCommands(commandsDir string, desired map[string]string) commandDiff {
+	var d commandDiff
+	for rel, content := range desired {
+		existing, err := os.ReadFile(filepath.Join(commandsDir, rel))
+		if err != nil {
+			d.added = append(d.added, rel)
+		} else if !bytes.Equal(existing, []byte(content)) {
+			d.changed = append(d.changed, rel)
+		}
+	}
+	for _, name := range legacyCommandFiles {
+		if _, err := os.Stat(filepath.Join(commandsDir, name+".md")); err == nil {
+			d.removed = append(d.removed, name+".md")
+		}
+	}
+	sort.Strings(d.added)
+	sort.Strings(d.changed)
+	sort.Strings(d.removed)
+	return d
+}
+
+// syncClaudeCommandsIfWorkspace reconciles .claude/commands/ with the desired
+// command set when inside a pylon workspace. It prints a diff and only applies
+// changes after the user consents (default: No). When autoYes is true the prompt
+// is skipped and changes are applied automatically.
+func syncClaudeCommandsIfWorkspace(in io.Reader, autoYes bool) {
+	startDir := flagWorkspace
+	if startDir == "" {
+		startDir = "."
+	}
+	root, err := config.FindWorkspaceRoot(startDir)
+	if err != nil {
+		return // not in a workspace, skip
+	}
+
+	commandsDir := filepath.Join(root, ".claude", "commands")
+	desired := buildDesiredClaudeCommands(root)
+	diff := diffClaudeCommands(commandsDir, desired)
+
+	fmt.Println()
+	if diff.empty() {
+		fmt.Println("✓ Claude Code 커맨드 최신 상태")
+		return
+	}
+
+	fmt.Println("🔄 Claude Code 커맨드 변경 사항:")
+	for _, f := range diff.added {
+		fmt.Printf("  + %s (추가)\n", f)
+	}
+	for _, f := range diff.changed {
+		fmt.Printf("  ~ %s (변경)\n", f)
+	}
+	for _, f := range diff.removed {
+		fmt.Printf("  - %s (삭제)\n", f)
+	}
+
+	if !autoYes {
+		fmt.Print("적용하시겠습니까? [y/N]: ")
+		answer, _ := bufio.NewReader(in).ReadString('\n')
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		if answer != "y" && answer != "yes" {
+			fmt.Println("커맨드 동기화 건너뜀")
+			return
+		}
+	}
+
+	if err := applyClaudeCommands(commandsDir, desired); err != nil {
+		fmt.Printf("⚠ 커맨드 동기화 실패: %v\n", err)
+		return
+	}
+	total := len(diff.added) + len(diff.changed) + len(diff.removed)
+	fmt.Printf("✓ 커맨드 %d개 동기화 완료\n", total)
 }
 
 func verifyClaude() (string, error) {

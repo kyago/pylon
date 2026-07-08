@@ -186,75 +186,16 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		return fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
 	}
 
-	// Clean up legacy command files (pre-namespace) to prevent stale slash commands
-	legacyCommands := []string{"index", "status", "verify", "add-project", "cancel", "review"}
-	for _, name := range legacyCommands {
-		legacy := filepath.Join(commandsDir, name+".md")
-		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("레거시 커맨드 파일 제거 실패 (%s): %w", legacy, err)
-		}
+	// Reconcile .claude/commands/ with the desired command set. The desired-state
+	// computation is shared with `pylon doctor` so the two never drift.
+	desired := buildDesiredClaudeCommands(root)
+	if err := applyClaudeCommands(commandsDir, desired); err != nil {
+		return err
 	}
 
-	// Generate slash commands from Go code
-	commands := buildSlashCommands(root)
-	for name, content := range commands {
-		cmdPath := filepath.Join(commandsDir, filepath.FromSlash(name)+".md")
-		if err := os.MkdirAll(filepath.Dir(cmdPath), 0755); err != nil {
-			return fmt.Errorf("커맨드 디렉토리 생성 실패: %w", err)
-		}
-		if err := os.WriteFile(cmdPath, []byte(content), 0644); err != nil {
-			return fmt.Errorf("커맨드 %s 생성 실패: %w", name, err)
-		}
-	}
-
-	// Pipeline slash commands → .claude/commands/pl/
-	// Priority: .pylon/commands/ (user customization) > embedded defaults
-	plDir := filepath.Join(commandsDir, "pl")
-	if err := os.MkdirAll(plDir, 0755); err != nil {
-		return fmt.Errorf("pl/ 디렉토리 생성 실패: %w", err)
-	}
-
-	pylonCmdsDir := filepath.Join(root, ".pylon", "commands")
-	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
-		// Use workspace .pylon/commands/ (user may have customized)
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			content, err := os.ReadFile(filepath.Join(pylonCmdsDir, entry.Name()))
-			if err != nil {
-				continue
-			}
-			destName := strings.TrimPrefix(entry.Name(), "pl-")
-			if err := os.WriteFile(filepath.Join(plDir, destName), content, 0644); err != nil {
-				return fmt.Errorf("커맨드 복사 실패 (%s): %w", entry.Name(), err)
-			}
-		}
-	} else {
-		// Fallback: use embedded default commands (existing workspaces without .pylon/commands/)
-		embedded, _ := embeddedCommands.ReadDir("commands")
-		for _, entry := range embedded {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			content, err := embeddedCommands.ReadFile("commands/" + entry.Name())
-			if err != nil {
-				continue
-			}
-			destName := strings.TrimPrefix(entry.Name(), "pl-")
-			if err := os.WriteFile(filepath.Join(plDir, destName), content, 0644); err != nil {
-				return fmt.Errorf("내장 커맨드 생성 실패 (%s): %w", entry.Name(), err)
-			}
-		}
-		// Also bootstrap .pylon/commands/ for future customization
-		os.MkdirAll(pylonCmdsDir, 0755)
-		for _, entry := range embedded {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			content, _ := embeddedCommands.ReadFile("commands/" + entry.Name())
-			_ = os.WriteFile(filepath.Join(pylonCmdsDir, entry.Name()), content, 0644)
-		}
+	// Bootstrap .pylon/commands/ from embedded defaults for future customization
+	if err := bootstrapPylonCommands(filepath.Join(root, ".pylon", "commands")); err != nil {
+		return err
 	}
 
 	// Pipeline scripts → .pylon/scripts/bash/
@@ -557,6 +498,103 @@ func buildSlashCommands(root string) map[string]string {
 `,
 	}
 	return commands
+}
+
+// legacyCommandFiles lists pre-namespace top-level command files that should be
+// removed from .claude/commands/ to prevent stale slash commands.
+var legacyCommandFiles = []string{"index", "status", "verify", "add-project", "cancel", "review"}
+
+// buildDesiredClaudeCommands computes the full set of .claude/commands/ files
+// that should exist, keyed by path relative to the commands dir (e.g.
+// "pl/index.md"). It is read-only and shared by `pylon launch` and `pylon doctor`
+// so both agree on the desired state.
+func buildDesiredClaudeCommands(root string) map[string]string {
+	desired := make(map[string]string)
+
+	// Dynamic slash commands generated from Go code
+	for name, content := range buildSlashCommands(root) {
+		desired[filepath.FromSlash(name)+".md"] = content
+	}
+
+	// Pipeline slash commands → pl/: prefer .pylon/commands/ (user customization),
+	// fall back to embedded defaults for workspaces without .pylon/commands/.
+	pylonCmdsDir := filepath.Join(root, ".pylon", "commands")
+	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			content, err := os.ReadFile(filepath.Join(pylonCmdsDir, entry.Name()))
+			if err != nil {
+				continue
+			}
+			destName := strings.TrimPrefix(entry.Name(), "pl-")
+			desired[filepath.Join("pl", destName)] = string(content)
+		}
+	} else {
+		embedded, _ := embeddedCommands.ReadDir("commands")
+		for _, entry := range embedded {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			content, err := embeddedCommands.ReadFile("commands/" + entry.Name())
+			if err != nil {
+				continue
+			}
+			destName := strings.TrimPrefix(entry.Name(), "pl-")
+			desired[filepath.Join("pl", destName)] = string(content)
+		}
+	}
+
+	return desired
+}
+
+// applyClaudeCommands writes the desired command files into commandsDir and
+// removes legacy (pre-namespace) top-level command files. It intentionally does
+// NOT remove other on-disk files so any user-added commands are preserved.
+func applyClaudeCommands(commandsDir string, desired map[string]string) error {
+	for _, name := range legacyCommandFiles {
+		legacy := filepath.Join(commandsDir, name+".md")
+		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("레거시 커맨드 파일 제거 실패 (%s): %w", legacy, err)
+		}
+	}
+	for rel, content := range desired {
+		cmdPath := filepath.Join(commandsDir, rel)
+		if err := os.MkdirAll(filepath.Dir(cmdPath), 0755); err != nil {
+			return fmt.Errorf("커맨드 디렉토리 생성 실패: %w", err)
+		}
+		if err := os.WriteFile(cmdPath, []byte(content), 0644); err != nil {
+			return fmt.Errorf("커맨드 %s 생성 실패: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+// bootstrapPylonCommands writes embedded default commands into .pylon/commands/
+// when the directory is empty, giving users a starting point to customize.
+func bootstrapPylonCommands(pylonCmdsDir string) error {
+	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
+		return nil // already populated — preserve user customizations
+	}
+	if err := os.MkdirAll(pylonCmdsDir, 0755); err != nil {
+		return fmt.Errorf(".pylon/commands/ 디렉토리 생성 실패: %w", err)
+	}
+	embedded, err := embeddedCommands.ReadDir("commands")
+	if err != nil {
+		return nil
+	}
+	for _, entry := range embedded {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		content, err := embeddedCommands.ReadFile("commands/" + entry.Name())
+		if err != nil {
+			continue
+		}
+		_ = os.WriteFile(filepath.Join(pylonCmdsDir, entry.Name()), content, 0644)
+	}
+	return nil
 }
 
 // addToGitignore appends pylon-managed entries to .gitignore if not already present.

@@ -344,6 +344,156 @@ func TestCheckRepoExcludes_SkipsNonGitProjects(t *testing.T) {
 	}
 }
 
+// newTestWorkspace creates a minimal pylon workspace (empty .pylon/commands/)
+// and points flagWorkspace at it for the duration of the test.
+func newTestWorkspace(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon", "commands"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = old })
+	return root
+}
+
+// TestBuildDesiredClaudeCommands_Keyset verifies the desired command set equals
+// exactly the dynamic slash commands plus the embedded pl-* commands (prefix
+// stripped). This guards the shared source of truth used by launch and doctor.
+func TestBuildDesiredClaudeCommands_Keyset(t *testing.T) {
+	root := newTestWorkspace(t) // empty .pylon/commands -> embedded fallback
+
+	desired := buildDesiredClaudeCommands(root)
+
+	want := map[string]bool{
+		filepath.Join("pl", "index.md"):        true,
+		filepath.Join("pl", "project-list.md"): true,
+	}
+	embedded, err := embeddedCommands.ReadDir("commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range embedded {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		want[filepath.Join("pl", strings.TrimPrefix(e.Name(), "pl-"))] = true
+	}
+
+	if len(desired) != len(want) {
+		t.Errorf("desired has %d files, want %d", len(desired), len(want))
+	}
+	for k := range want {
+		if _, ok := desired[k]; !ok {
+			t.Errorf("desired missing expected key %q", k)
+		}
+	}
+	for k := range desired {
+		if !want[k] {
+			t.Errorf("desired has unexpected key %q", k)
+		}
+	}
+}
+
+func TestDiffClaudeCommands(t *testing.T) {
+	root := newTestWorkspace(t)
+	commandsDir := filepath.Join(root, ".claude", "commands")
+	desired := buildDesiredClaudeCommands(root)
+
+	// Nothing on disk -> everything is an addition, nothing changed/removed.
+	diff := diffClaudeCommands(commandsDir, desired)
+	if len(diff.added) != len(desired) {
+		t.Errorf("added = %d, want %d", len(diff.added), len(desired))
+	}
+	if len(diff.changed) != 0 || len(diff.removed) != 0 {
+		t.Errorf("expected no changed/removed, got changed=%d removed=%d", len(diff.changed), len(diff.removed))
+	}
+
+	// Apply, then a stale edit + a legacy file -> one changed + one removed.
+	if err := applyClaudeCommands(commandsDir, desired); err != nil {
+		t.Fatal(err)
+	}
+	staleTarget := filepath.Join("pl", "index.md")
+	if err := os.WriteFile(filepath.Join(commandsDir, staleTarget), []byte("STALE\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commandsDir, "status.md"), []byte("legacy\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff = diffClaudeCommands(commandsDir, desired)
+	if len(diff.added) != 0 {
+		t.Errorf("expected no additions, got %v", diff.added)
+	}
+	if len(diff.changed) != 1 || diff.changed[0] != staleTarget {
+		t.Errorf("changed = %v, want [%s]", diff.changed, staleTarget)
+	}
+	if len(diff.removed) != 1 || diff.removed[0] != "status.md" {
+		t.Errorf("removed = %v, want [status.md]", diff.removed)
+	}
+}
+
+func TestSyncClaudeCommands_ConsentApplies(t *testing.T) {
+	root := newTestWorkspace(t)
+	commandsDir := filepath.Join(root, ".claude", "commands")
+
+	syncClaudeCommandsIfWorkspace(bytes.NewBufferString("y\n"), false)
+
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); err != nil {
+		t.Errorf("expected pl/index.md to be created after consent: %v", err)
+	}
+}
+
+func TestSyncClaudeCommands_DeclineDoesNothing(t *testing.T) {
+	root := newTestWorkspace(t)
+	commandsDir := filepath.Join(root, ".claude", "commands")
+
+	syncClaudeCommandsIfWorkspace(bytes.NewBufferString("n\n"), false)
+
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); !os.IsNotExist(err) {
+		t.Errorf("expected no commands written after decline, got err=%v", err)
+	}
+}
+
+// TestSyncClaudeCommands_EmptyInputDeclines verifies default = No on EOF.
+func TestSyncClaudeCommands_EmptyInputDeclines(t *testing.T) {
+	root := newTestWorkspace(t)
+	commandsDir := filepath.Join(root, ".claude", "commands")
+
+	syncClaudeCommandsIfWorkspace(bytes.NewBufferString(""), false)
+
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); !os.IsNotExist(err) {
+		t.Errorf("expected no commands written on empty input, got err=%v", err)
+	}
+}
+
+// TestSyncClaudeCommands_AutoYesSkipsPrompt applies without reading stdin.
+func TestSyncClaudeCommands_AutoYesSkipsPrompt(t *testing.T) {
+	root := newTestWorkspace(t)
+	commandsDir := filepath.Join(root, ".claude", "commands")
+
+	syncClaudeCommandsIfWorkspace(bytes.NewBufferString(""), true)
+
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); err != nil {
+		t.Errorf("expected commands written with autoYes, got err=%v", err)
+	}
+}
+
+func TestNewDoctorCmd_YesFlag(t *testing.T) {
+	cmd := newDoctorCmd()
+	f := cmd.Flags().Lookup("yes")
+	if f == nil {
+		t.Fatal("--yes flag not found")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("--yes default = %q, want %q", f.DefValue, "false")
+	}
+}
+
 func TestNewDoctorCmd_FixExcludesFlag(t *testing.T) {
 	cmd := newDoctorCmd()
 
