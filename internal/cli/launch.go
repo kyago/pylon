@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/history"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -40,6 +41,12 @@ func runLaunch() error {
 	cfg, err := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml"))
 	if err != nil {
 		return fmt.Errorf("설정 로드 실패: %w", err)
+	}
+	if _, err := history.VerifyFossil(); err != nil {
+		return err
+	}
+	if !history.NewManager(root, cfg.History, nil, nil).IsInitialized() {
+		return fmt.Errorf("Fossil 작업 이력 저장소가 없습니다 — 'pylon history init'을 실행하세요")
 	}
 
 	// Step 3: Discover projects

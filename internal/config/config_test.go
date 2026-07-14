@@ -118,6 +118,7 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 		{"memory.compaction_threshold (default)", cfg.Memory.CompactionThreshold, 0.7},
 		{"memory.proactive_max_tokens (default)", cfg.Memory.ProactiveMaxTokens, 2000},
 		{"conversation.retention_days (default)", cfg.Conversation.RetentionDays, 90},
+		{"history.sync_on_checkpoint (default)", cfg.History.SyncOnCheckpoint, true},
 	}
 
 	for _, tt := range defaults {
@@ -126,6 +127,23 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 				t.Errorf("got %v, expected %v", tt.got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestParseConfig_HistoryRemote(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`version: "0.1"
+history:
+  remote: https://history.example.com/pylon
+  sync_on_checkpoint: false
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+	if cfg.History.Remote != "https://history.example.com/pylon" {
+		t.Fatalf("history.remote = %q", cfg.History.Remote)
+	}
+	if cfg.History.SyncOnCheckpoint {
+		t.Fatal("history.sync_on_checkpoint should preserve explicit false")
 	}
 }
 
