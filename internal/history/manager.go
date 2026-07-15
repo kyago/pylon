@@ -83,6 +83,9 @@ type checkpointState struct {
 }
 
 type historyState struct {
+	// Checkpoints is an external deduplication cache. Fossil remains the durable
+	// history; deleting state.json only causes an otherwise identical checkpoint
+	// to be committed again.
 	Checkpoints map[string]map[Phase]checkpointState `json:"checkpoints"`
 }
 
@@ -127,12 +130,10 @@ func (m *Manager) Initialize() error {
 	if err := os.MkdirAll(m.historyDir(), 0700); err != nil {
 		return fmt.Errorf("history directory 생성 실패: %w", err)
 	}
-	createdRepository := false
 	if _, err := os.Stat(m.repositoryPath()); os.IsNotExist(err) {
 		if _, err := m.Runner.Run(m.Root, "init", m.repositoryPath()); err != nil {
 			return fmt.Errorf("Fossil 저장소 초기화 실패: %w", err)
 		}
-		createdRepository = true
 	} else if err != nil {
 		return err
 	}
@@ -142,9 +143,6 @@ func (m *Manager) Initialize() error {
 			return err
 		}
 		args := []string{"open", m.repositoryPath(), "--workdir", m.checkoutDir(), "--nosync", "--force"}
-		if createdRepository {
-			args = append(args, "--empty")
-		}
 		if _, err := m.Runner.Run(m.Root, args...); err != nil {
 			return fmt.Errorf("Fossil checkout 초기화 실패: %w", err)
 		}
@@ -183,19 +181,29 @@ func (m *Manager) Log(pipelineID string, limit int) (string, error) {
 		fossilLimit = 0
 	}
 	out, err := m.Runner.Run(m.Root, "timeline", "--oneline", "-n", fmt.Sprintf("%d", fossilLimit), "-t", "ci", "-R", m.repositoryPath())
-	if err != nil || pipelineID == "" {
+	if err != nil {
 		return strings.TrimSpace(out), err
 	}
-	var lines []string
+	var timelineLines []string
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, pipelineID) {
-			lines = append(lines, line)
-			if len(lines) == limit {
+		if !strings.HasPrefix(strings.TrimSpace(line), "+++") {
+			timelineLines = append(timelineLines, line)
+		}
+	}
+	if pipelineID == "" {
+		return strings.TrimSpace(strings.Join(timelineLines, "\n")), nil
+	}
+	marker := fmt.Sprintf("파이프라인 %s:", pipelineID)
+	var filtered []string
+	for _, line := range timelineLines {
+		if strings.Contains(line, marker) {
+			filtered = append(filtered, line)
+			if len(filtered) == limit {
 				break
 			}
 		}
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	return strings.TrimSpace(strings.Join(filtered, "\n")), nil
 }
 
 func (m *Manager) Show(checkin string) (string, error) {
@@ -444,9 +452,12 @@ func (m *Manager) Checkpoint(pipelineID string, phase Phase) (CheckpointResult, 
 		}
 	}
 
-	if m.Config.Remote != "" && m.Config.SyncOnCheckpoint {
-		if _, err := m.Runner.Run(m.Root, "sync", m.Config.Remote, "--once", "-R", m.repositoryPath()); err != nil {
-			result.PendingSync = true
+	if m.Config.Remote != "" {
+		result.PendingSync = true
+		if m.Config.SyncOnCheckpoint {
+			if _, err := m.Runner.Run(m.Root, "sync", m.Config.Remote, "--once", "-R", m.repositoryPath()); err == nil {
+				result.PendingSync = false
+			}
 		}
 	}
 	if state.Checkpoints[pipelineID] == nil {
@@ -802,7 +813,7 @@ func acquireLock(path string, timeout time.Duration) (func(), error) {
 			return nil, err
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("history checkpoint 잠금 시간 초과")
+			return nil, fmt.Errorf("history checkpoint 잠금 시간 초과: %s (실행 중인 pylon 프로세스가 없다면 이 디렉토리를 제거한 뒤 다시 시도하세요)", path)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

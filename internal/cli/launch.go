@@ -42,11 +42,8 @@ func runLaunch() error {
 	if err != nil {
 		return fmt.Errorf("설정 로드 실패: %w", err)
 	}
-	if _, err := history.VerifyFossil(); err != nil {
+	if err := prepareHistory(root, cfg.History); err != nil {
 		return err
-	}
-	if !history.NewManager(root, cfg.History, nil, nil).IsInitialized() {
-		return fmt.Errorf("Fossil 작업 이력 저장소가 없습니다 — 'pylon history init'을 실행하세요")
 	}
 
 	// Step 3: Discover projects
@@ -95,6 +92,16 @@ func runLaunch() error {
 
 	fmt.Println("Claude Code를 시작합니다...")
 	return syscall.Exec(claudePath, args, env)
+}
+
+func prepareHistory(root string, cfg config.HistoryConfig) error {
+	if _, err := history.VerifyFossil(); err != nil {
+		return fmt.Errorf("Fossil 확인 실패 — 'pylon doctor'로 설치 상태를 확인하세요: %w", err)
+	}
+	if err := history.NewManager(root, cfg, nil, nil).Initialize(); err != nil {
+		return fmt.Errorf("Fossil 작업 이력 저장소 초기화 실패: %w", err)
+	}
+	return nil
 }
 
 // openWorkspaceStore is a shared helper that finds the workspace root, loads config,

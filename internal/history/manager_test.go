@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ type fakeRunner struct {
 	calls    []commandCall
 	syncErr  error
 	commitID string
+	timeline string
 }
 
 func (r *fakeRunner) Run(dir string, args ...string) (string, error) {
@@ -57,6 +59,9 @@ func (r *fakeRunner) Run(dir string, args ...string) (string, error) {
 	case "sync":
 		return "", r.syncErr
 	case "timeline":
+		if r.timeline != "" {
+			return r.timeline, nil
+		}
 		return "pipe-1 timeline output", nil
 	case "info":
 		return "checkin details", nil
@@ -134,6 +139,11 @@ func TestManagerInitializeCreatesDetachedFossilCheckout(t *testing.T) {
 	if runner.count("init") != 1 || runner.count("open") != 1 {
 		t.Fatalf("unexpected commands: %#v", runner.calls)
 	}
+	for _, call := range runner.calls {
+		if len(call.args) > 0 && call.args[0] == "open" && strings.Contains(strings.Join(call.args, " "), "--empty") {
+			t.Fatal("new repository must open its initial check-in, not an empty checkout")
+		}
+	}
 	if err := m.Initialize(); err != nil {
 		t.Fatalf("second Initialize failed: %v", err)
 	}
@@ -182,6 +192,44 @@ func TestManagerReopensExistingRepositoryAtLatestCheckin(t *testing.T) {
 		if len(call.args) > 0 && call.args[0] == "open" && strings.Contains(strings.Join(call.args, " "), "--empty") {
 			t.Fatal("existing repository must reopen the latest check-in, not an empty checkout")
 		}
+	}
+}
+
+func TestManagerFossilIntegrationCheckpointDedupAndLog(t *testing.T) {
+	if _, err := exec.LookPath("fossil"); err != nil {
+		t.Skip("fossil binary is not installed")
+	}
+
+	root := t.TempDir()
+	runtimeDir := filepath.Join(root, ".pylon", "runtime", "pipe-integration")
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "tasks.json"), []byte(`{"tasks":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(root, config.HistoryConfig{}, nil, nil)
+	if err := m.Initialize(); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+	first, err := m.Checkpoint("pipe-integration", PhasePlanned)
+	if err != nil {
+		t.Fatalf("first Checkpoint failed: %v", err)
+	}
+	second, err := m.Checkpoint("pipe-integration", PhasePlanned)
+	if err != nil {
+		t.Fatalf("duplicate Checkpoint failed: %v", err)
+	}
+	if first.Checkin == "" || !second.Duplicate || second.Checkin != first.Checkin {
+		t.Fatalf("unexpected checkpoint results: first=%#v second=%#v", first, second)
+	}
+	log, err := m.Log("pipe-integration", 5)
+	if err != nil {
+		t.Fatalf("Log failed: %v", err)
+	}
+	if !strings.Contains(log, "파이프라인 pipe-integration: 계획 완료") {
+		t.Fatalf("checkpoint missing from Log output: %q", log)
 	}
 }
 
@@ -330,6 +378,27 @@ func TestCheckpointKeepsLocalCommitWhenSyncFails(t *testing.T) {
 	}
 }
 
+func TestCheckpointMarksPendingWhenAutomaticSyncDisabled(t *testing.T) {
+	root := t.TempDir()
+	pipelineDir := filepath.Join(root, ".pylon", "runtime", "pipe-1")
+	if err := os.MkdirAll(pipelineDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pipelineDir, "tasks.json"), []byte(`{"tasks":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	m := NewManager(root, config.HistoryConfig{Remote: "https://history.example.com/pylon", SyncOnCheckpoint: false}, nil, runner)
+
+	result, err := m.Checkpoint("pipe-1", PhasePlanned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.PendingSync || runner.count("sync") != 0 {
+		t.Fatalf("disabled automatic sync must remain pending: result=%#v calls=%#v", result, runner.calls)
+	}
+}
+
 func TestCompletedCheckpointAggregatesSubpipelineResults(t *testing.T) {
 	root := t.TempDir()
 	pipelineDir := filepath.Join(root, ".pylon", "runtime", "pipe-1")
@@ -421,15 +490,31 @@ func TestConcurrentCheckpointUsesSingleWriter(t *testing.T) {
 	}
 }
 
+func TestAcquireLockTimeoutReportsRecoveryPath(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), ".checkpoint.lock")
+	if err := os.Mkdir(lockPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := acquireLock(lockPath, 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected lock timeout")
+	}
+	message := err.Error()
+	if !strings.Contains(message, lockPath) || !strings.Contains(message, "제거") {
+		t.Fatalf("lock timeout must include path and recovery guidance: %q", message)
+	}
+}
+
 func TestHistoryReadAndSyncCommandsUseDetachedRepository(t *testing.T) {
 	root := t.TempDir()
-	runner := &fakeRunner{}
+	runner := &fakeRunner{timeline: "12:00:01 [abc] 파이프라인 pipe-1: 계획 완료 (user: test)"}
 	m := NewManager(root, config.HistoryConfig{Remote: "https://history.example.com/pylon"}, nil, runner)
 	if err := m.Initialize(); err != nil {
 		t.Fatal(err)
 	}
 
-	if output, err := m.Log("pipe-1", 5); err != nil || output != "pipe-1 timeline output" {
+	if output, err := m.Log("pipe-1", 5); err != nil || output != runner.timeline {
 		t.Fatalf("Log output=%q err=%v", output, err)
 	}
 	if output, err := m.Show("abc123"); err != nil || output != "checkin details" {
@@ -453,6 +538,34 @@ func TestHistoryReadAndSyncCommandsUseDetachedRepository(t *testing.T) {
 		if !foundRepo {
 			t.Fatalf("%s did not target detached repository: %#v", command, runner.calls)
 		}
+	}
+}
+
+func TestHistoryLogFiltersExactPipelineAndRemovesFooter(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{timeline: strings.Join([]string{
+		"12:00:02 [bbb] 파이프라인 pipe-10: 계획 완료 (user: test)",
+		"12:00:01 [aaa] 파이프라인 pipe-1: 계획 완료 (user: test)",
+		"+++ no more data (2) +++",
+	}, "\n")}
+	m := NewManager(root, config.HistoryConfig{}, nil, runner)
+	if err := m.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+
+	filtered, err := m.Log("pipe-1", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(filtered, "pipe-10") || !strings.Contains(filtered, "파이프라인 pipe-1:") {
+		t.Fatalf("pipeline filter used a prefix match: %q", filtered)
+	}
+	all, err := m.Log("", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(all, "+++ no more data") {
+		t.Fatalf("Fossil footer leaked into log output: %q", all)
 	}
 }
 
