@@ -136,6 +136,14 @@ for REPO in "${AFFECTED_REPOS[@]}"; do
 done
 ```
 
+**계획 이력 체크포인트:**
+
+```bash
+pylon history checkpoint \
+  --pipeline "$(basename "$PIPELINE_DIR")" \
+  --phase planned
+```
+
 **repo-Agent 병렬 스폰:**
 
 `AFFECTED_REPOS`의 각 repo에 대해 아래 템플릿을 인스턴스화하여 **단일 응답에서 모두 병렬로** 스폰합니다.
@@ -212,6 +220,14 @@ for REPO in "${AFFECTED_REPOS[@]}"; do
 done
 ```
 
+**실행 이력 체크포인트:**
+
+```bash
+pylon history checkpoint \
+  --pipeline "$(basename "$PIPELINE_DIR")" \
+  --phase executed
+```
+
 ### Step 6: PR 생성
 
 성공한 repo에 대해서만 PM이 직접 per-repo PR을 생성합니다.
@@ -239,6 +255,21 @@ for REPO in "${SUCCESSFUL_REPOS[@]}"; do
     "$PIPELINE_DIR/status.json" > "$PIPELINE_DIR/status.json.tmp" \
     && mv "$PIPELINE_DIR/status.json.tmp" "$PIPELINE_DIR/status.json"
 done
+```
+
+**최종 상태 및 완료 이력 체크포인트:**
+
+```bash
+FINAL_STATUS="success"
+[[ ${#FAILED_REPOS[@]} -gt 0 ]] && FINAL_STATUS="failed"
+jq --arg status "$FINAL_STATUS" \
+   '.stage = "done" | .status = $status' \
+   "$PIPELINE_DIR/status.json" > "$PIPELINE_DIR/status.json.tmp" \
+  && mv "$PIPELINE_DIR/status.json.tmp" "$PIPELINE_DIR/status.json"
+
+pylon history checkpoint \
+  --pipeline "$(basename "$PIPELINE_DIR")" \
+  --phase completed
 ```
 
 > `config.yml`의 `git.pr.auto_pr: true` 설정 시에만 자동 실행됩니다.

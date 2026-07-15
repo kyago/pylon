@@ -20,6 +20,7 @@ type Config struct {
 	Projects     map[string]ProjectConfig `yaml:"projects"`
 	Wiki         WikiConfig               `yaml:"wiki"`
 	Memory       MemoryConfig             `yaml:"memory"`
+	History      HistoryConfig            `yaml:"history"`
 	Conversation ConversationConfig       `yaml:"conversation"`
 	Workflow     WorkflowConfig           `yaml:"workflow"`
 	Skills       SkillsConfig             `yaml:"skills"`
@@ -35,16 +36,16 @@ type SkillsConfig struct {
 // RuntimeConfig defines agent runtime settings.
 // Spec Reference: Section 16 "runtime"
 type RuntimeConfig struct {
-	Backend              string            `yaml:"backend"`
-	MaxConcurrent        int               `yaml:"max_concurrent"`
-	MaxPipelines         int               `yaml:"max_pipelines"`
-	TaskTimeout          string            `yaml:"task_timeout"`
-	MaxAttempts          int               `yaml:"max_attempts"`
-	MaxTurns             int               `yaml:"max_turns"`
-	PermissionMode       string            `yaml:"permission_mode"`
-	AutoApproveTaskReview bool             `yaml:"auto_approve_task_review"`
-	Env                  map[string]string `yaml:"env"`
-	WorkerLimits         map[string]int    `yaml:"worker_limits"` // model → max concurrent
+	Backend               string            `yaml:"backend"`
+	MaxConcurrent         int               `yaml:"max_concurrent"`
+	MaxPipelines          int               `yaml:"max_pipelines"`
+	TaskTimeout           string            `yaml:"task_timeout"`
+	MaxAttempts           int               `yaml:"max_attempts"`
+	MaxTurns              int               `yaml:"max_turns"`
+	PermissionMode        string            `yaml:"permission_mode"`
+	AutoApproveTaskReview bool              `yaml:"auto_approve_task_review"`
+	Env                   map[string]string `yaml:"env"`
+	WorkerLimits          map[string]int    `yaml:"worker_limits"` // model → max concurrent
 }
 
 // GitConfig defines git integration settings.
@@ -95,6 +96,12 @@ type MemoryConfig struct {
 	ProactiveMaxTokens  int     `yaml:"proactive_max_tokens"`
 	SessionArchive      bool    `yaml:"session_archive"`
 	RetentionDays       int     `yaml:"retention_days"`
+}
+
+// HistoryConfig defines Fossil-backed workspace history settings.
+type HistoryConfig struct {
+	Remote           string `yaml:"remote"`
+	SyncOnCheckpoint bool   `yaml:"sync_on_checkpoint"`
 }
 
 // ConversationConfig defines conversation history settings.
@@ -288,6 +295,9 @@ func ParseConfig(data []byte) (*Config, error) {
 		Memory: MemoryConfig{
 			ProactiveInjection: true,
 			SessionArchive:     true,
+		},
+		History: HistoryConfig{
+			SyncOnCheckpoint: true,
 		},
 		Skills: SkillsConfig{
 			Enabled:               true,

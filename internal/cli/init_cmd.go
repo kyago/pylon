@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/history"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -113,6 +114,10 @@ runtime:
   max_turns: 50
   permission_mode: acceptEdits
 
+history:
+  remote: ""
+  sync_on_checkpoint: true
+
 git:
   pr:
 %s
@@ -162,6 +167,7 @@ git:
 		"# Pylon runtime (agent communication, state)",
 		".pylon/runtime/",
 		".pylon/conversations/",
+		".pylon/history/",
 		"",
 		"# Claude CLI agent symlinks (managed by pylon)",
 		".claude/agents/",
@@ -189,6 +195,13 @@ git:
 
 	if err := s.Migrate(); err != nil {
 		return fmt.Errorf("failed to migrate: %w", err)
+	}
+	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
+	if err != nil {
+		return fmt.Errorf("failed to load history config: %w", err)
+	}
+	if err := history.NewManager(workDir, cfg.History, s, nil).Initialize(); err != nil {
+		return fmt.Errorf("Fossil 작업 이력 저장소 초기화 실패: %w", err)
 	}
 
 	projects, err := config.DiscoverProjects(workDir)
@@ -225,6 +238,7 @@ git:
 	fmt.Println("  .pylon/scripts/bash/       - pipeline shell scripts")
 	fmt.Println("  .pylon/commands/           - pipeline slash commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
+	fmt.Println("  .pylon/history/            - Fossil work history")
 	fmt.Println("  .pylon/conversations/      - conversation history")
 	fmt.Println("  .pylon/tasks/              - confirmed task specs")
 	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/agents/)")
@@ -236,7 +250,6 @@ git:
 
 	return nil
 }
-
 
 func writeAgentTemplates(pylonDir string) error {
 	entries, err := embeddedAgents.ReadDir("agents")
