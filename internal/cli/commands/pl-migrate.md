@@ -26,9 +26,16 @@ Fossil 도입 이전에 끝난 파이프라인은 체크포인트 없이 `.pylon
 
 ```bash
 for dir in .pylon/runtime/*/; do
-  [ -f "${dir}status.json" ] && echo "${dir}: $(jq -r '.status // "unknown"' "${dir}status.json")"
+  if [ -f "${dir}status.json" ]; then
+    echo "${dir}: $(jq -r '.status // "unknown"' "${dir}status.json")"
+  else
+    echo "${dir}: no-status"
+  fi
 done
 ```
+
+종료된 디렉토리가 하나도 없으면 이 단계를 건너뛰고 Step 2로 진행합니다.
+`no-status`인 디렉토리는 판단 불가로 취급해 보존하고 사용자에게 보고합니다.
 
 상태별 phase 매핑:
 
@@ -39,12 +46,14 @@ done
 | `failed` | `failed` |
 | `running` 또는 판단 불가 | 건드리지 않고 사용자에게 보고 |
 
-종료 상태인 디렉토리마다 체크포인트를 생성하고, **성공한 경우에만** runtime 디렉토리를 삭제합니다:
+종료 상태인 디렉토리마다 체크포인트를 생성하고, **성공한 경우에만** runtime 디렉토리를 삭제합니다.
+`<pipeline-id>`는 runtime 디렉토리 이름 그대로입니다 (예: `.pylon/runtime/20260305-user-login/` → `20260305-user-login`).
+`&&` 체이닝이 체크포인트 실패 시 삭제를 막아주므로 반드시 아래 형태로 실행합니다:
 
 ```bash
-pylon history checkpoint --pipeline "<pipeline-id>" --phase <phase>
 BRANCH=$(jq -r '.branch // ""' ".pylon/runtime/<pipeline-id>/status.json")
-.pylon/scripts/bash/cleanup-pipeline.sh ".pylon/runtime/<pipeline-id>" "$BRANCH" true
+pylon history checkpoint --pipeline "<pipeline-id>" --phase <phase> && \
+  .pylon/scripts/bash/cleanup-pipeline.sh ".pylon/runtime/<pipeline-id>" "$BRANCH" true
 ```
 
 체크포인트가 실패하면(예: fossil 미설치) 해당 디렉토리는 보존하고 실패 원인을 보고합니다.
