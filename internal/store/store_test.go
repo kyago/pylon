@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 )
 
 func setupTestStore(t *testing.T) *Store {
@@ -171,65 +170,6 @@ func TestMigrate_RecordsAppliedVersions(t *testing.T) {
 
 	if len(versions) != len(expectedFiles) {
 		t.Errorf("expected %d migration records, got %d", len(expectedFiles), len(versions))
-	}
-}
-
-// --- Pipeline State Tests ---
-
-func TestPipelineState_UpsertGet(t *testing.T) {
-	s := setupTestStore(t)
-
-	rec := &PipelineRecord{
-		PipelineID: "pipe-1",
-		Stage:      "init",
-		StateJSON:  `{"pipeline_id":"pipe-1"}`,
-		UpdatedAt:  time.Now(),
-	}
-
-	if err := s.UpsertPipeline(rec); err != nil {
-		t.Fatalf("upsert failed: %v", err)
-	}
-
-	got, err := s.GetPipeline("pipe-1")
-	if err != nil {
-		t.Fatalf("get failed: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected pipeline record")
-	}
-	if got.Stage != "init" {
-		t.Errorf("expected stage 'init', got %q", got.Stage)
-	}
-}
-
-func TestPipelineState_Update(t *testing.T) {
-	s := setupTestStore(t)
-
-	rec := &PipelineRecord{PipelineID: "pipe-1", Stage: "init", StateJSON: `{}`, UpdatedAt: time.Now()}
-	s.UpsertPipeline(rec)
-
-	rec.Stage = "po_conversation"
-	rec.UpdatedAt = time.Now()
-	s.UpsertPipeline(rec)
-
-	got, _ := s.GetPipeline("pipe-1")
-	if got.Stage != "po_conversation" {
-		t.Errorf("expected updated stage, got %q", got.Stage)
-	}
-}
-
-func TestPipelineState_GetActive(t *testing.T) {
-	s := setupTestStore(t)
-
-	s.UpsertPipeline(&PipelineRecord{PipelineID: "active-1", Stage: "agent_executing", StateJSON: `{}`, UpdatedAt: time.Now()})
-	s.UpsertPipeline(&PipelineRecord{PipelineID: "done-1", Stage: "completed", StateJSON: `{}`, UpdatedAt: time.Now()})
-
-	active, err := s.GetActivePipelines()
-	if err != nil {
-		t.Fatalf("GetActivePipelines failed: %v", err)
-	}
-	if len(active) != 1 {
-		t.Errorf("expected 1 active pipeline, got %d", len(active))
 	}
 }
 

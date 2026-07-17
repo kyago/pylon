@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/history"
-	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -19,7 +18,7 @@ func newCancelCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "cancel [pipeline-id]",
 		Short: "Cancel a running pipeline",
-		Long: `Cancel a running pipeline. Supports both v2 file-based and legacy SQLite pipelines.`,
+		Long: `Cancel a running pipeline (file-based v2 pipelines under .pylon/runtime/).`,
 		Args: cobra.ExactArgs(1),
 		RunE: runCancel,
 	}
@@ -90,38 +89,5 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Legacy: SQLite-based cancellation
-	cfg, err := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml"))
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	dbPath := filepath.Join(root, ".pylon", "pylon.db")
-	s, err := store.NewStore(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open store: %w", err)
-	}
-	defer s.Close()
-
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	orch := orchestrator.NewOrchestrator(cfg, s, root)
-	orch.SetPipelineID(pipelineID)
-
-	if _, err := orch.Recover(); err != nil {
-		return fmt.Errorf("recovery failed: %w", err)
-	}
-
-	if orch.Pipeline == nil || orch.Pipeline.ID != pipelineID {
-		return fmt.Errorf("pipeline %s not found", pipelineID)
-	}
-
-	if err := orch.TransitionTo(orchestrator.StageFailed); err != nil {
-		return fmt.Errorf("failed to cancel pipeline %s: %w", pipelineID, err)
-	}
-
-	fmt.Printf("✓ Pipeline %s cancelled\n", pipelineID)
-	return nil
+	return fmt.Errorf("pipeline %s not found", pipelineID)
 }

@@ -49,6 +49,21 @@ func TestRunCancel_V2KeepsRuntimeWhenCheckpointFails(t *testing.T) {
 	}
 }
 
+// legacy SQLite 폴백 제거 후, runtime 디렉토리가 없는 알 수 없는 파이프라인은
+// 명확한 에러를 반환해야 한다.
+func TestRunCancel_UnknownPipelineReturnsError(t *testing.T) {
+	root := setupTestWorkspace(t)
+
+	prev := flagWorkspace
+	flagWorkspace = root
+	defer func() { flagWorkspace = prev }()
+
+	err := runCancel(newCancelCmd(), []string{"no-such-pipeline"})
+	if err == nil {
+		t.Fatal("expected error for unknown pipeline")
+	}
+}
+
 // cleanup-pipeline.sh의 runtime 정리 분기를 직접 검증한다:
 // 세 번째 인자가 true면 디렉토리 삭제, 아니면 cleaned 마킹 후 보존.
 func TestCleanupPipelineScript_RuntimeBranches(t *testing.T) {
