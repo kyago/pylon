@@ -14,15 +14,15 @@ import (
 // Config represents the full pylon workspace configuration.
 // Spec Reference: Section 16 "Full Schema"
 type Config struct {
-	Version      string                   `yaml:"version"`
-	Runtime      RuntimeConfig            `yaml:"runtime"`
-	Git          GitConfig                `yaml:"git"`
-	Projects     map[string]ProjectConfig `yaml:"projects"`
-	Wiki         WikiConfig               `yaml:"wiki"`
-	Memory       MemoryConfig             `yaml:"memory"`
-	History      HistoryConfig            `yaml:"history"`
-	Workflow     WorkflowConfig           `yaml:"workflow"`
-	Skills       SkillsConfig             `yaml:"skills"`
+	Version  string                   `yaml:"version"`
+	Runtime  RuntimeConfig            `yaml:"runtime"`
+	Git      GitConfig                `yaml:"git"`
+	Projects map[string]ProjectConfig `yaml:"projects"`
+	Wiki     WikiConfig               `yaml:"wiki"`
+	Memory   MemoryConfig             `yaml:"memory"`
+	History  HistoryConfig            `yaml:"history"`
+	Workflow WorkflowConfig           `yaml:"workflow"`
+	Skills   SkillsConfig             `yaml:"skills"`
 }
 
 // SkillsConfig defines agent skill management settings.
