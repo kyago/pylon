@@ -179,6 +179,12 @@ fi
 pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase completed
 ```
 
+체크포인트가 성공하면 runtime 디렉토리를 정리합니다(이력은 Fossil에 보존됨). 체크포인트가 실패한 경우 이 단계를 건너뜁니다:
+
+```bash
+.pylon/scripts/bash/cleanup-pipeline.sh "$PIPELINE_DIR" "$BRANCH" true
+```
+
 실행 결과를 요약합니다:
 - 생성/변경된 파일 목록
 - 테스트 결과

@@ -6,6 +6,7 @@ require_cmd git jq
 
 PIPELINE_DIR="${1:-}"
 BRANCH="${2:-}"
+DELETE_RUNTIME="${3:-false}"
 
 CLEANED=()
 
@@ -29,10 +30,16 @@ fi
 
 # Clean pipeline runtime directory
 if [[ -n "$PIPELINE_DIR" && -d "$PIPELINE_DIR" ]]; then
-  # Mark as cleaned, don't delete (keep for history)
-  jq -cn --arg status "cleaned" --arg cleaned_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{status: $status, cleaned_at: $cleaned_at}' > "$PIPELINE_DIR/status.json"
-  CLEANED+=("runtime:$PIPELINE_DIR")
+  if [[ "$DELETE_RUNTIME" == "true" ]]; then
+    # A terminal history checkpoint exists — the runtime copy is redundant
+    rm -rf "$PIPELINE_DIR"
+    CLEANED+=("runtime-deleted:$PIPELINE_DIR")
+  else
+    # No checkpoint confirmed — mark as cleaned, keep files
+    jq -cn --arg status "cleaned" --arg cleaned_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{status: $status, cleaned_at: $cleaned_at}' > "$PIPELINE_DIR/status.json"
+    CLEANED+=("runtime:$PIPELINE_DIR")
+  fi
 fi
 
 CLEANED_JSON=$(printf '%s\n' "${CLEANED[@]}" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]")

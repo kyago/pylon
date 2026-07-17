@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/history"
 	"github.com/kyago/pylon/internal/orchestrator"
 	"github.com/kyago/pylon/internal/store"
 )
@@ -57,15 +58,35 @@ func runCancel(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to update status: %w", err)
 		}
 
+		// Record a final cancelled checkpoint so the runtime directory can be
+		// deleted without losing history. Best effort: on failure we fall back
+		// to preserving the runtime directory.
+		checkpointed := false
+		if cfg, cfgErr := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml")); cfgErr == nil {
+			if s, storeErr := store.NewStore(filepath.Join(root, ".pylon", "pylon.db")); storeErr == nil {
+				if s.Migrate() == nil {
+					mgr := history.NewManager(root, cfg.History, s, nil)
+					if _, cpErr := mgr.Checkpoint(pipelineID, history.PhaseCancelled); cpErr == nil {
+						checkpointed = true
+					}
+				}
+				s.Close()
+			}
+		}
+
 		// Run cleanup script if available
 		cleanupScript := filepath.Join(root, ".pylon", "scripts", "bash", "cleanup-pipeline.sh")
 		if _, err := os.Stat(cleanupScript); err == nil {
-			cleanup := exec.Command("bash", cleanupScript, pipelineDir, branch)
+			cleanup := exec.Command("bash", cleanupScript, pipelineDir, branch, fmt.Sprintf("%t", checkpointed))
 			cleanup.Dir = root
 			cleanup.Run() // best effort
 		}
 
-		fmt.Printf("✓ Pipeline %s cancelled\n", pipelineID)
+		if checkpointed {
+			fmt.Printf("✓ Pipeline %s cancelled (이력 체크포인트 기록됨)\n", pipelineID)
+		} else {
+			fmt.Printf("✓ Pipeline %s cancelled\n", pipelineID)
+		}
 		return nil
 	}
 
