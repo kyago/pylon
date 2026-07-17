@@ -20,18 +20,20 @@ import (
 // Check represents a single dependency check.
 // Spec Reference: Section 7 "pylon doctor"
 type Check struct {
-	Name       string
-	Required   bool
-	Verify     func() (version string, err error)
-	InstallURL string
+	Name        string
+	Required    bool
+	Verify      func() (version string, err error)
+	InstallURL  string
+	BrewFormula string // Homebrew formula name; empty when brew install is not documented
 }
 
 var checks = []Check{
 	{
-		Name:       "fossil",
-		Required:   true,
-		Verify:     history.VerifyFossil,
-		InstallURL: "https://fossil-scm.org/home/uv/download.html",
+		Name:        "fossil",
+		Required:    true,
+		Verify:      history.VerifyFossil,
+		InstallURL:  "https://fossil-scm.org/home/uv/download.html",
+		BrewFormula: "fossil",
 	},
 	{
 		Name:       "git",
@@ -132,11 +134,28 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	printInstallHints(failures)
+	return fmt.Errorf("doctor checks failed")
+}
+
+// installHint returns the install guidance for a failed check.
+// When the tool has a brew formula and brew is available, the brew
+// command is shown first with the download URL as fallback.
+func installHint(c Check, hasBrew bool) string {
+	if c.BrewFormula != "" && hasBrew {
+		return fmt.Sprintf("brew install %s (또는 %s)", c.BrewFormula, c.InstallURL)
+	}
+	return c.InstallURL
+}
+
+// printInstallHints prints install guidance for each failed check.
+func printInstallHints(failures []Check) {
+	_, err := exec.LookPath("brew")
+	hasBrew := err == nil
 	fmt.Println("Some checks failed. Install missing tools:")
 	for _, f := range failures {
-		fmt.Printf("  %s: %s\n", f.Name, f.InstallURL)
+		fmt.Printf("  %s: %s\n", f.Name, installHint(f, hasBrew))
 	}
-	return fmt.Errorf("doctor checks failed")
 }
 
 // checkRepoExcludes verifies that all projects have .pylon/
@@ -239,10 +258,7 @@ func RunDoctorChecks() (bool, error) {
 
 	fmt.Println()
 	if !allPassed {
-		fmt.Println("Some checks failed. Install missing tools:")
-		for _, f := range failures {
-			fmt.Printf("  %s: %s\n", f.Name, f.InstallURL)
-		}
+		printInstallHints(failures)
 	}
 
 	return allPassed, nil
