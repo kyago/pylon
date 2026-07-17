@@ -84,7 +84,7 @@ func newHistoryCheckpointCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&pipelineID, "pipeline", "", "pipeline ID")
-	cmd.Flags().StringVar(&phase, "phase", "", "planned, executed, or completed")
+	cmd.Flags().StringVar(&phase, "phase", "", "planned, executed, completed, cancelled, or failed")
 	return cmd
 }
 
