@@ -7,21 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/memory"
-	"github.com/kyago/pylon/internal/store"
-)
-
-const (
-	// maxWriteContentLen is the maximum length of Write tool content stored in memory.
-	maxWriteContentLen = 500
-	// maxEditStringLen is the maximum length of Edit tool old/new strings stored in memory.
-	maxEditStringLen = 200
 )
 
 func newSyncMemoryCmd() *cobra.Command {
@@ -39,12 +30,11 @@ func newSyncMemoryCmd() *cobra.Command {
 		Short: "Synchronize session learnings to project memory",
 		Long: `세션 학습 내용을 프로젝트 메모리에 동기화합니다.
 
-Claude Code Hook에서 자동 호출되어 세션 종료 시 또는 파일 변경 시
+Claude Code Hook에서 자동 호출되어 세션 종료 시
 학습 내용을 project_memory(SQLite + BM25 FTS)에 저장합니다.
 
 사용 예:
-  pylon sync-memory --from-session --project myapp --agent architect
-  pylon sync-memory --incremental --project myapp --file src/main.go --content "리팩토링 완료"`,
+  pylon sync-memory --from-session --project myapp --agent architect`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !fromSession && !incremental {
 				return fmt.Errorf("--from-session 또는 --incremental 중 하나를 지정하세요")
@@ -55,16 +45,18 @@ Claude Code Hook에서 자동 호출되어 세션 종료 시 또는 파일 변�
 			if fromSession {
 				return runSyncFromSession(project, agent, content)
 			}
-			return runSyncIncremental(project, agent, filePath, content)
+			return runSyncIncremental()
 		},
 	}
 
 	cmd.Flags().BoolVar(&fromSession, "from-session", false, "세션 종료 시 전체 학습 내용 동기화")
-	cmd.Flags().BoolVar(&incremental, "incremental", false, "파일 변경 단위 메모리 갱신")
+	cmd.Flags().BoolVar(&incremental, "incremental", false, "(deprecated) 저장하지 않음 — 파일 변경 이력은 Fossil history가 담당")
 	cmd.Flags().StringVar(&project, "project", "", "대상 프로젝트 이름")
 	cmd.Flags().StringVar(&agent, "agent", "claude", "에이전트 이름")
 	cmd.Flags().StringVar(&content, "content", "", "학습 내용 (생략 시 stdin에서 읽음)")
-	cmd.Flags().StringVar(&filePath, "file", "", "변경된 파일 경로 (--incremental 시 사용)")
+	cmd.Flags().StringVar(&filePath, "file", "", "(deprecated) 사용되지 않음")
+	_ = cmd.Flags().MarkDeprecated("incremental", "파일 변경 이력은 Fossil history가 담당합니다")
+	_ = cmd.Flags().MarkDeprecated("file", "파일 변경 이력은 Fossil history가 담당합니다")
 
 	return cmd
 }
@@ -78,8 +70,8 @@ func runSyncFromSession(project, agent, content string) error {
 	}
 	defer s.Close()
 
-	// Resolve project name (no file path available in session sync)
-	project, err = resolveProject(root, project, "")
+	// Resolve project name
+	project, err = resolveProject(root, project)
 	if err != nil {
 		return err
 	}
@@ -123,130 +115,35 @@ func runSyncFromSession(project, agent, content string) error {
 	return nil
 }
 
-// runSyncIncremental handles --incremental: records file change context to memory.
-func runSyncIncremental(project, agent, filePath, content string) error {
-	root, _, s, err := openWorkspaceStore()
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-
-	// Read content from stdin if not provided via flag
-	explicitContent := content != ""
-	if content == "" {
-		content = readStdin()
-	}
-
-	// PostToolUse hooks pipe JSON like:
-	//   {"tool_name": "Write", "tool_input": {"file_path": "...", "content": "..."}, ...}
-	// Storing this raw diff as memory pollutes BM25 search (issue #76), so without
-	// an explicit --content summary we only extract the file path and skip storage.
-	if content != "" && !explicitContent {
-		parsedFile, parsedContent := tryParseToolUsePayload(content)
-		if parsedFile != "" && filePath == "" {
-			filePath = parsedFile
-		}
-		if parsedFile != "" || parsedContent != "" {
-			if flagJSON {
-				fmt.Println(`{"status":"skip","reason":"raw tool payload without --content"}`)
-			} else {
-				fmt.Println("요약(--content) 없이 전달된 raw 도구 페이로드는 저장하지 않습니다")
-			}
-			return nil
-		}
-	}
-
-	// Normalize worktree paths so the same file edited in a worktree and in the
-	// main checkout resolves to one project/key instead of duplicating entries.
-	filePath = normalizeWorktreePath(filePath)
-
-	// Resolve project name using file path for multi-project inference
-	project, err = resolveProject(root, project, filePath)
-	if err != nil {
-		return err
-	}
-
-	if content == "" {
-		if flagJSON {
-			fmt.Println(`{"status":"skip","reason":"no content provided"}`)
-		} else {
-			fmt.Println("저장할 내용이 없습니다")
-		}
-		return nil
-	}
-
-	// Build memory key from file path or timestamp
-	key := buildIncrementalKey(filePath)
-
-	entry := &store.MemoryEntry{
-		ProjectID:  project,
-		Category:   "change",
-		Key:        key,
-		Content:    content,
-		Author:     agent,
-		Confidence: 0.7,
-	}
-
-	if err := s.InsertMemory(entry); err != nil {
-		return fmt.Errorf("변경 내용 저장 실패: %w", err)
-	}
-
+// runSyncIncremental is a deprecated no-op. File-change history is recorded
+// by Fossil history checkpoints (execution-summary.json의 changed_files);
+// storing raw changes in project_memory polluted BM25 search (issue #76).
+func runSyncIncremental() error {
+	// Drain piped stdin so PostToolUse hooks do not hit a broken pipe.
+	_ = readStdin()
 	if flagJSON {
-		data, _ := json.Marshal(map[string]string{
-			"status":  "ok",
-			"id":      entry.ID,
-			"project": project,
-			"key":     key,
-		})
-		fmt.Println(string(data))
+		fmt.Println(`{"status":"skip","reason":"change tracking moved to fossil history"}`)
 	} else {
-		fmt.Printf("✓ 변경 기록 저장: %s/%s\n", project, key)
+		fmt.Println("파일 변경 이력은 Fossil history가 담당합니다 — 저장을 건너뜁니다")
 	}
-
 	return nil
 }
 
-// resolveProject determines the project name from flag, file path, or workspace context.
-// When filePath is provided in a multi-project workspace, it is matched against each
-// project's root directory to infer which project the file belongs to.
-func resolveProject(root, project, filePath string) (string, error) {
+// resolveProject determines the project name from flag or workspace context.
+func resolveProject(root, project string) (string, error) {
 	if project != "" {
 		return project, nil
 	}
-
-	// Try to infer from discovered projects
 	projects, err := config.DiscoverProjects(root)
-	if err != nil {
-		// If project discovery fails, fall back to workspace directory name
+	if err != nil || len(projects) == 0 {
 		return filepath.Base(root), nil
 	}
-
-	switch len(projects) {
-	case 0:
-		// No projects discovered: fall back to workspace directory name
-		return filepath.Base(root), nil
-	case 1:
-		// Single project discovered: use its name
+	if len(projects) == 1 {
 		return projects[0].Name, nil
-	default:
-		// Multiple projects: try to infer from file path
-		if filePath != "" {
-			cleanFile := filepath.Clean(filePath)
-			// If filePath is relative, resolve against workspace root
-			if !filepath.IsAbs(cleanFile) {
-				cleanFile = filepath.Join(root, cleanFile)
-			}
-			for _, p := range projects {
-				projRoot := filepath.Clean(p.Path)
-				if strings.HasPrefix(cleanFile, projRoot+string(filepath.Separator)) || cleanFile == projRoot {
-					return p.Name, nil
-				}
-			}
-		}
-		// Hooks cannot pass --project dynamically, so erroring here would
-		// cause all hook invocations to fail in multi-project workspaces.
-		return filepath.Base(root), nil
 	}
+	// Hooks cannot pass --project dynamically, so erroring here would
+	// cause all hook invocations to fail in multi-project workspaces.
+	return filepath.Base(root), nil
 }
 
 // readStdin reads stdin if data is piped (non-interactive).
@@ -335,113 +232,5 @@ func tryParseJSONLearnings(data string) []string {
 	}
 
 	return learnings
-}
-
-// tryParseToolUsePayload attempts to extract file path and content from a
-// Claude Code PostToolUse hook JSON payload. The payload looks like:
-//
-//	{"tool_name": "Write", "tool_input": {"file_path": "...", "content": "..."}, ...}
-//
-// Returns the extracted file path and a content summary. If the payload cannot
-// be parsed, returns empty strings so the caller can fall through.
-func tryParseToolUsePayload(data string) (filePath, content string) {
-	type toolInput struct {
-		FilePath string `json:"file_path"`
-		Content  string `json:"content"`
-		// Edit tool may use different fields
-		OldString string `json:"old_string"`
-		NewString string `json:"new_string"`
-	}
-	type toolUsePayload struct {
-		ToolName  string    `json:"tool_name"`
-		ToolInput toolInput `json:"tool_input"`
-	}
-
-	var payload toolUsePayload
-	if err := json.Unmarshal([]byte(data), &payload); err != nil {
-		return "", ""
-	}
-
-	filePath = payload.ToolInput.FilePath
-
-	// Build a meaningful content description based on the tool
-	switch payload.ToolName {
-	case "Write":
-		if payload.ToolInput.Content != "" {
-			// For large file writes, store a truncated summary
-			c := payload.ToolInput.Content
-			if len(c) > maxWriteContentLen {
-				c = c[:maxWriteContentLen] + "... (truncated)"
-			}
-			content = fmt.Sprintf("[Write] %s: %s", filePath, c)
-		} else {
-			content = fmt.Sprintf("[Write] %s", filePath)
-		}
-	case "Edit":
-		if payload.ToolInput.OldString != "" && payload.ToolInput.NewString != "" {
-			old := payload.ToolInput.OldString
-			if len(old) > maxEditStringLen {
-				old = old[:maxEditStringLen] + "..."
-			}
-			new := payload.ToolInput.NewString
-			if len(new) > maxEditStringLen {
-				new = new[:maxEditStringLen] + "..."
-			}
-			content = fmt.Sprintf("[Edit] %s: %q → %q", filePath, old, new)
-		} else {
-			content = fmt.Sprintf("[Edit] %s", filePath)
-		}
-	default:
-		if filePath != "" {
-			content = fmt.Sprintf("[%s] %s", payload.ToolName, filePath)
-		}
-	}
-
-	return filePath, content
-}
-
-// normalizeWorktreePath removes a `.claude/worktrees/<name>/` segment from a
-// path so worktree copies of a file map to the same project and memory key.
-func normalizeWorktreePath(p string) string {
-	if p == "" {
-		return p
-	}
-	const marker = ".claude/worktrees/"
-	sl := filepath.ToSlash(p)
-	idx := strings.Index(sl, marker)
-	if idx < 0 {
-		return p
-	}
-	rest := sl[idx+len(marker):]
-	sep := strings.Index(rest, "/")
-	if sep < 0 {
-		return p
-	}
-	return filepath.FromSlash(sl[:idx] + rest[sep+1:])
-}
-
-// incrementalKeySeq is a process-local monotonic counter appended to
-// incremental keys so they stay unique even when multiple calls fall within the
-// same clock tick. time.Now() resolution is platform-dependent and can repeat
-// in rapid succession, which would otherwise collide the UNIQUE(project_id,
-// category, key) memory constraint.
-var incrementalKeySeq atomic.Uint64
-
-// buildIncrementalKey creates a memory key for incremental file change tracking.
-// The key does not include the category prefix since that is stored separately.
-func buildIncrementalKey(filePath string) string {
-	ts := fmt.Sprintf("%s-%d", time.Now().Format("20060102-150405.000000000"), incrementalKeySeq.Add(1))
-	if filePath != "" {
-		// Use file path as part of key for traceability
-		// Normalize both forward and back slashes for cross-platform compatibility
-		clean := strings.ReplaceAll(filePath, "/", "-")
-		clean = strings.ReplaceAll(clean, "\\", "-")
-		clean = strings.ReplaceAll(clean, ".", "-")
-		if len(clean) > 40 {
-			clean = clean[len(clean)-40:]
-		}
-		return fmt.Sprintf("%s/%s", clean, ts)
-	}
-	return ts
 }
 

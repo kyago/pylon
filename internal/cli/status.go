@@ -10,8 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/domain"
-	"github.com/kyago/pylon/internal/orchestrator"
-	"github.com/kyago/pylon/internal/store"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -20,7 +18,7 @@ func newStatusCmd() *cobra.Command {
 		Short: "Show current work status",
 		Long: `Display the status of running tasks and queued work items.
 
-Shows both file-based v2 pipelines (.pylon/runtime/) and legacy SQLite pipelines.`,
+Shows file-based v2 pipelines (.pylon/runtime/).`,
 		RunE: runStatus,
 	}
 }
@@ -84,30 +82,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			fmt.Println("  Artifacts:")
 			for _, f := range existingFiles {
 				fmt.Printf("    ✓ %s\n", f)
-			}
-		}
-	}
-
-	// Legacy: Show SQLite pipeline status
-	dbPath := filepath.Join(root, ".pylon", "pylon.db")
-	s, storeErr := store.NewStore(dbPath)
-	if storeErr == nil {
-		defer s.Close()
-		s.Migrate()
-
-		actives, listErr := s.GetActivePipelines()
-		if listErr == nil && len(actives) > 0 {
-			fmt.Println("\n## SQLite 파이프라인 (레거시)")
-			foundAny = true
-			for _, rec := range actives {
-				pipeline, pErr := orchestrator.LoadPipeline([]byte(rec.StateJSON))
-				if pErr != nil {
-					fmt.Printf("Pipeline: %s (state parse error: %v)\n", rec.PipelineID, pErr)
-					continue
-				}
-				fmt.Printf("\nPipeline: %s\n", pipeline.ID)
-				fmt.Printf("  Stage:    %s\n", pipeline.CurrentStage)
-				fmt.Printf("  Attempts: %d/%d\n", pipeline.Attempts, pipeline.MaxAttempts)
 			}
 		}
 	}

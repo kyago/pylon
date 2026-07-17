@@ -62,7 +62,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Step 2: Check if .pylon/ already exists
 	pylonDir := filepath.Join(workDir, ".pylon")
 	if _, err := os.Stat(pylonDir); err == nil {
-		return fmt.Errorf(".pylon/ already exists in %s. Use 'pylon destroy' to remove it first", workDir)
+		return fmt.Errorf(".pylon/ already exists in %s. Use 'pylon uninstall' to remove it first", workDir)
 	}
 
 	// Step 3: Interactive input

@@ -28,10 +28,19 @@ const (
 	PhasePlanned   Phase = "planned"
 	PhaseExecuted  Phase = "executed"
 	PhaseCompleted Phase = "completed"
+	PhaseCancelled Phase = "cancelled"
+	PhaseFailed    Phase = "failed"
 )
 
 var validPhases = map[Phase]bool{
 	PhasePlanned: true, PhaseExecuted: true, PhaseCompleted: true,
+	PhaseCancelled: true, PhaseFailed: true,
+}
+
+// isTerminalPhase reports whether a phase records the final state of a
+// pipeline, after which the runtime directory may be safely removed.
+func isTerminalPhase(phase Phase) bool {
+	return phase == PhaseCompleted || phase == PhaseCancelled || phase == PhaseFailed
 }
 
 type CommandRunner interface {
@@ -477,7 +486,7 @@ func (m *Manager) stageCheckpoint(sourceDir, destDir string, phase Phase) ([]str
 			return nil, "", err
 		}
 	}
-	if phase == PhaseExecuted || phase == PhaseCompleted {
+	if phase != PhasePlanned {
 		executionSource := filepath.Join(sourceDir, "execution-log.json")
 		if _, err := os.Stat(executionSource); os.IsNotExist(err) {
 			executionSource = filepath.Join(sourceDir, "status.json")
@@ -493,7 +502,7 @@ func (m *Manager) stageCheckpoint(sourceDir, destDir string, phase Phase) ([]str
 	if status == "" {
 		status = string(phase)
 	}
-	if phase == PhaseCompleted {
+	if isTerminalPhase(phase) {
 		if err := summarizeResultFiles(sourceDir, "verification.json", filepath.Join(destDir, "verification-summary.json"), verificationKeys); err != nil {
 			return nil, "", err
 		}
@@ -747,6 +756,10 @@ func phaseLabel(phase Phase) string {
 		return "계획 완료"
 	case PhaseExecuted:
 		return "실행 완료"
+	case PhaseCancelled:
+		return "작업 취소"
+	case PhaseFailed:
+		return "작업 실패"
 	default:
 		return "작업 완료"
 	}

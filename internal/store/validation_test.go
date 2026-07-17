@@ -2,74 +2,9 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"testing"
-	"time"
 )
-
-// --- Pipeline stage validation ---
-
-func TestPipeline_RejectsInvalidStage(t *testing.T) {
-	s := setupTestStore(t)
-
-	rec := &PipelineRecord{
-		PipelineID: "pipe-1",
-		Stage:      "invalid_stage",
-		StateJSON:  `{}`,
-		UpdatedAt:  time.Now(),
-	}
-
-	err := s.UpsertPipeline(rec)
-	if err == nil {
-		t.Fatal("expected error for invalid stage")
-	}
-	if !errors.Is(err, ErrInvalidPipelineStage) {
-		t.Errorf("expected ErrInvalidPipelineStage, got: %v", err)
-	}
-}
-
-func TestPipeline_AcceptsAllValidStages(t *testing.T) {
-	s := setupTestStore(t)
-
-	validStages := []string{
-		"init", "po_conversation", "architect_analysis",
-		"pm_task_breakdown", "agent_executing", "verification",
-		"pr_creation", "po_validation", "wiki_update",
-		"completed", "failed",
-	}
-
-	for i, stage := range validStages {
-		rec := &PipelineRecord{
-			PipelineID: fmt.Sprintf("pipe-%d", i),
-			Stage:      stage,
-			StateJSON:  `{}`,
-			UpdatedAt:  time.Now(),
-		}
-		if err := s.UpsertPipeline(rec); err != nil {
-			t.Errorf("stage %q should be valid, got error: %v", stage, err)
-		}
-	}
-}
-
-func TestPipeline_RejectsEmptyStage(t *testing.T) {
-	s := setupTestStore(t)
-
-	rec := &PipelineRecord{
-		PipelineID: "pipe-empty",
-		Stage:      "",
-		StateJSON:  `{}`,
-		UpdatedAt:  time.Now(),
-	}
-
-	err := s.UpsertPipeline(rec)
-	if err == nil {
-		t.Fatal("expected error for empty stage")
-	}
-	if !errors.Is(err, ErrInvalidPipelineStage) {
-		t.Errorf("expected ErrInvalidPipelineStage, got: %v", err)
-	}
-}
 
 // --- Project memory confidence validation ---
 

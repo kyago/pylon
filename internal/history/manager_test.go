@@ -646,3 +646,79 @@ func TestVerifyFossilFailsWhenMissing(t *testing.T) {
 		t.Fatal("expected missing fossil error")
 	}
 }
+
+func TestCheckpointCancelledPhaseCapturesFinalState(t *testing.T) {
+	root := t.TempDir()
+	pipelineDir := filepath.Join(root, ".pylon", "runtime", "pipe-1")
+	if err := os.MkdirAll(pipelineDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(pipelineDir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("requirement.md", "로그인 구현")
+	write("tasks.json", `{"tasks":[{"id":"T1","repo":"services/service-a","status":"pending"}]}`)
+	write("execution-log.json", `{"tasks":[{"id":"T1","status":"failed","error":"tests failed","prompt":"secret"}]}`)
+	write("status.json", `{"status":"cancelled","stage":"agent_executing"}`)
+
+	runner := &fakeRunner{}
+	m := NewManager(root, config.HistoryConfig{}, nil, runner)
+
+	result, err := m.Checkpoint("pipe-1", PhaseCancelled)
+	if err != nil {
+		t.Fatalf("Checkpoint(cancelled) failed: %v", err)
+	}
+	if result.Checkin == "" {
+		t.Fatal("expected checkin id")
+	}
+
+	historyDir := filepath.Join(root, ".pylon", "history", "checkout", "pipelines", "pipe-1")
+	execution, err := os.ReadFile(filepath.Join(historyDir, "execution-summary.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(execution), "secret") || !strings.Contains(string(execution), "tests failed") {
+		t.Fatalf("execution summary was not curated: %s", execution)
+	}
+	statusSummary, err := os.ReadFile(filepath.Join(historyDir, "status-summary.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(statusSummary), "cancelled") {
+		t.Fatalf("status summary missing cancelled: %s", statusSummary)
+	}
+
+	var manifest Manifest
+	manifestBytes, err := os.ReadFile(filepath.Join(historyDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Phase != PhaseCancelled || manifest.Status != "cancelled" {
+		t.Fatalf("unexpected manifest: %#v", manifest)
+	}
+}
+
+func TestCheckpointFailedPhaseIsValid(t *testing.T) {
+	root := t.TempDir()
+	pipelineDir := filepath.Join(root, ".pylon", "runtime", "pipe-1")
+	if err := os.MkdirAll(pipelineDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pipelineDir, "requirement.md"), []byte("req"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(root, config.HistoryConfig{}, nil, &fakeRunner{})
+	result, err := m.Checkpoint("pipe-1", PhaseFailed)
+	if err != nil {
+		t.Fatalf("Checkpoint(failed) failed: %v", err)
+	}
+	if result.Phase != PhaseFailed {
+		t.Fatalf("phase = %s", result.Phase)
+	}
+}

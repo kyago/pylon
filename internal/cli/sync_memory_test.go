@@ -2,13 +2,13 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/store"
 )
 
 func TestNewSyncMemoryCmd_Flags(t *testing.T) {
@@ -204,184 +204,9 @@ func TestTryParseJSONLearnings(t *testing.T) {
 	}
 }
 
-func TestTryParseToolUsePayload(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       string
-		wantFile    string
-		wantContent string
-		wantEmpty   bool
-	}{
-		{
-			name:      "Write tool",
-			input:     `{"tool_name": "Write", "tool_input": {"file_path": "src/main.go", "content": "package main"}}`,
-			wantFile:  "src/main.go",
-			wantEmpty: false,
-		},
-		{
-			name:      "Edit tool",
-			input:     `{"tool_name": "Edit", "tool_input": {"file_path": "src/main.go", "old_string": "foo", "new_string": "bar"}}`,
-			wantFile:  "src/main.go",
-			wantEmpty: false,
-		},
-		{
-			name:      "invalid json",
-			input:     `not json`,
-			wantFile:  "",
-			wantEmpty: true,
-		},
-		{
-			name:      "empty object",
-			input:     `{}`,
-			wantFile:  "",
-			wantEmpty: true,
-		},
-		{
-			name:      "unknown tool with file",
-			input:     `{"tool_name": "CustomTool", "tool_input": {"file_path": "config.yml"}}`,
-			wantFile:  "config.yml",
-			wantEmpty: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotFile, gotContent := tryParseToolUsePayload(tt.input)
-			if gotFile != tt.wantFile {
-				t.Errorf("tryParseToolUsePayload() file = %q, want %q", gotFile, tt.wantFile)
-			}
-			if tt.wantEmpty && gotContent != "" {
-				t.Errorf("tryParseToolUsePayload() content should be empty, got %q", gotContent)
-			}
-			if !tt.wantEmpty && gotContent == "" {
-				t.Errorf("tryParseToolUsePayload() content should not be empty")
-			}
-		})
-	}
-}
-
-func TestTryParseToolUsePayload_WriteContent(t *testing.T) {
-	input := `{"tool_name": "Write", "tool_input": {"file_path": "src/main.go", "content": "package main\n\nfunc main() {}"}}`
-	gotFile, gotContent := tryParseToolUsePayload(input)
-	if gotFile != "src/main.go" {
-		t.Errorf("file = %q, want %q", gotFile, "src/main.go")
-	}
-	if !strings.Contains(gotContent, "[Write]") {
-		t.Errorf("content should contain '[Write]' prefix, got: %q", gotContent)
-	}
-	if !strings.Contains(gotContent, "src/main.go") {
-		t.Errorf("content should contain file path, got: %q", gotContent)
-	}
-}
-
-func TestTryParseToolUsePayload_EditContent(t *testing.T) {
-	input := `{"tool_name": "Edit", "tool_input": {"file_path": "src/main.go", "old_string": "oldCode()", "new_string": "newCode()"}}`
-	_, gotContent := tryParseToolUsePayload(input)
-	if !strings.Contains(gotContent, "[Edit]") {
-		t.Errorf("content should contain '[Edit]' prefix, got: %q", gotContent)
-	}
-	if !strings.Contains(gotContent, "oldCode()") {
-		t.Errorf("content should contain old string, got: %q", gotContent)
-	}
-	if !strings.Contains(gotContent, "newCode()") {
-		t.Errorf("content should contain new string, got: %q", gotContent)
-	}
-}
-
-func TestTryParseToolUsePayload_LargeContentTruncated(t *testing.T) {
-	largeContent := strings.Repeat("x", 1000)
-	input := fmt.Sprintf(`{"tool_name": "Write", "tool_input": {"file_path": "big.go", "content": %q}}`, largeContent)
-	_, gotContent := tryParseToolUsePayload(input)
-	if !strings.Contains(gotContent, "truncated") {
-		t.Errorf("large content should be truncated, got length %d", len(gotContent))
-	}
-}
-
-func TestResolveProject_MultiProject(t *testing.T) {
-	// In multi-project workspaces, resolveProject should fall back to workspace name
-	// (not error) because hooks cannot pass --project dynamically
-	tmpDir := t.TempDir()
-	// DiscoverProjects will find 0 projects in an empty dir, so we test the fallback directly
-	got, err := resolveProject(tmpDir, "", "")
-	if err != nil {
-		t.Fatalf("resolveProject() should not error: %v", err)
-	}
-	expected := filepath.Base(tmpDir)
-	if got != expected {
-		t.Errorf("resolveProject() = %q, want %q", got, expected)
-	}
-}
-
-func TestBuildIncrementalKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		filePath string
-		wantPfx  string
-	}{
-		{"empty path", "", "20"},           // starts with timestamp
-		{"simple file", "main.go", "main"}, // starts with sanitized filename
-		{"nested path", "src/pkg/file.go", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := buildIncrementalKey(tt.filePath)
-			if tt.wantPfx != "" && !strings.HasPrefix(got, tt.wantPfx) {
-				t.Errorf("buildIncrementalKey(%q) = %q, want prefix %q", tt.filePath, got, tt.wantPfx)
-			}
-			// Should not have "change/" prefix (category is stored separately)
-			if strings.HasPrefix(got, "change/") {
-				t.Errorf("buildIncrementalKey(%q) should not have 'change/' prefix, got: %s", tt.filePath, got)
-			}
-			// Should contain nanosecond timestamp
-			if !strings.Contains(got, ".") {
-				t.Errorf("buildIncrementalKey(%q) should contain nanosecond timestamp, got: %s", tt.filePath, got)
-			}
-		})
-	}
-}
-
-func TestBuildIncrementalKey_CrossPlatformPaths(t *testing.T) {
-	// Test both forward and back slash normalization
-	got := buildIncrementalKey("src/pkg/file.go")
-	if strings.Contains(got, "/pkg/") {
-		t.Errorf("forward slashes should be normalized: %s", got)
-	}
-
-	got = buildIncrementalKey("src\\pkg\\file.go")
-	if strings.Contains(got, "\\") {
-		t.Errorf("back slashes should be normalized: %s", got)
-	}
-}
-
-func TestBuildIncrementalKey_LongPath(t *testing.T) {
-	longPath := strings.Repeat("a", 100) + "/file.go"
-	got := buildIncrementalKey(longPath)
-	// Key should be truncated and not excessively long
-	parts := strings.Split(got, "/")
-	if len(parts) < 2 {
-		t.Errorf("expected at least 2 path segments, got %d in %q", len(parts), got)
-	}
-}
-
-func TestBuildIncrementalKey_UniqueTimestamp(t *testing.T) {
-	// Keys generated in rapid succession must all be unique. The timestamp alone
-	// is not sufficient because time.Now() resolution can repeat within a tick;
-	// a monotonic sequence guarantees uniqueness (see buildIncrementalKey).
-	const n = 1000
-	seen := make(map[string]struct{}, n)
-	for i := 0; i < n; i++ {
-		k := buildIncrementalKey("test.go")
-		if _, dup := seen[k]; dup {
-			t.Fatalf("duplicate key generated in rapid succession: %q", k)
-		}
-		seen[k] = struct{}{}
-	}
-}
-
 func TestResolveProject(t *testing.T) {
 	// When project flag is explicitly set, use it directly
-	got, err := resolveProject("/tmp/test", "myproject", "")
+	got, err := resolveProject("/tmp/test", "myproject")
 	if err != nil {
 		t.Fatalf("resolveProject() error = %v", err)
 	}
@@ -392,7 +217,7 @@ func TestResolveProject(t *testing.T) {
 
 func TestResolveProject_FallbackToDirName(t *testing.T) {
 	tmpDir := t.TempDir()
-	got, err := resolveProject(tmpDir, "", "")
+	got, err := resolveProject(tmpDir, "")
 	if err != nil {
 		t.Fatalf("resolveProject() error = %v", err)
 	}
@@ -403,68 +228,18 @@ func TestResolveProject_FallbackToDirName(t *testing.T) {
 	}
 }
 
-func TestResolveProject_FilePathInference(t *testing.T) {
-	// Setup: create a workspace with two projects
+func TestResolveProject_MultiProject(t *testing.T) {
+	// In multi-project workspaces, resolveProject should fall back to workspace name
+	// (not error) because hooks cannot pass --project dynamically
 	tmpDir := t.TempDir()
-	projADir := filepath.Join(tmpDir, "project-a")
-	projBDir := filepath.Join(tmpDir, "project-b")
-	for _, d := range []string{projADir, projBDir} {
-		pylonDir := filepath.Join(d, ".pylon")
-		if err := os.MkdirAll(pylonDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// Create workspace-level .pylon/config.yml with projects
-	wsPylon := filepath.Join(tmpDir, ".pylon")
-	if err := os.MkdirAll(wsPylon, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wsPylon, "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Test: file in project-a should resolve to project-a
-	filePath := filepath.Join(projADir, "src", "main.go")
-	got, err := resolveProject(tmpDir, "", filePath)
+	// DiscoverProjects will find 0 projects in an empty dir, so we test the fallback directly
+	got, err := resolveProject(tmpDir, "")
 	if err != nil {
-		t.Fatalf("resolveProject() error = %v", err)
-	}
-	if got != "project-a" {
-		t.Errorf("resolveProject() = %q, want %q", got, "project-a")
-	}
-
-	// Test: file in project-b should resolve to project-b
-	filePath = filepath.Join(projBDir, "pkg", "util.go")
-	got, err = resolveProject(tmpDir, "", filePath)
-	if err != nil {
-		t.Fatalf("resolveProject() error = %v", err)
-	}
-	if got != "project-b" {
-		t.Errorf("resolveProject() = %q, want %q", got, "project-b")
-	}
-
-	// Test: file outside both projects should fallback to workspace name
-	filePath = filepath.Join(tmpDir, "README.md")
-	got, err = resolveProject(tmpDir, "", filePath)
-	if err != nil {
-		t.Fatalf("resolveProject() error = %v", err)
+		t.Fatalf("resolveProject() should not error: %v", err)
 	}
 	expected := filepath.Base(tmpDir)
 	if got != expected {
-		t.Errorf("resolveProject() = %q, want %q (workspace fallback)", got, expected)
-	}
-
-	// Test: relative path should resolve against workspace root
-	relPath := "project-a/src/handler.go"
-	got, err = resolveProject(tmpDir, "", relPath)
-	if err != nil {
-		t.Fatalf("resolveProject() error = %v", err)
-	}
-	if got != "project-a" {
-		t.Errorf("resolveProject() with relative path = %q, want %q", got, "project-a")
+		t.Errorf("resolveProject() = %q, want %q", got, expected)
 	}
 }
 
@@ -738,18 +513,6 @@ func TestRunSyncFromSession_NoWorkspace(t *testing.T) {
 	}
 }
 
-func TestRunSyncIncremental_NoWorkspace(t *testing.T) {
-	// Point to a non-workspace directory
-	oldWorkspace := flagWorkspace
-	flagWorkspace = t.TempDir()
-	defer func() { flagWorkspace = oldWorkspace }()
-
-	err := runSyncIncremental("test-project", "test-agent", "file.go", "some content")
-	if err == nil {
-		t.Fatal("expected error for non-workspace directory")
-	}
-}
-
 func setupTestWorkspace(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -790,30 +553,33 @@ func TestRunSyncFromSession_EmptyContent(t *testing.T) {
 	}
 }
 
-func TestRunSyncIncremental_WithWorkspace(t *testing.T) {
-	tmpDir := setupTestWorkspace(t)
+// --incremental은 더 이상 아무것도 저장하지 않는다 — 파일 변경 이력은
+// Fossil history(executed 체크포인트의 changed_files)가 담당한다.
+func TestRunSyncIncremental_IsNoOp(t *testing.T) {
+	root := setupTestWorkspace(t)
 
-	oldWorkspace := flagWorkspace
-	flagWorkspace = tmpDir
-	defer func() { flagWorkspace = oldWorkspace }()
+	prev := flagWorkspace
+	flagWorkspace = root
+	defer func() { flagWorkspace = prev }()
 
-	err := runSyncIncremental("test-project", "test-agent", "src/main.go", "refactored auth module")
-	if err != nil {
-		t.Fatalf("runSyncIncremental() error = %v", err)
+	if err := runSyncIncremental(); err != nil {
+		t.Fatalf("runSyncIncremental failed: %v", err)
 	}
-}
 
-func TestRunSyncIncremental_EmptyContent(t *testing.T) {
-	tmpDir := setupTestWorkspace(t)
-
-	oldWorkspace := flagWorkspace
-	flagWorkspace = tmpDir
-	defer func() { flagWorkspace = oldWorkspace }()
-
-	// Empty content should succeed without error (just skip)
-	err := runSyncIncremental("test-project", "test-agent", "file.go", "")
+	s, err := store.NewStore(filepath.Join(root, ".pylon", "pylon.db"))
 	if err != nil {
-		t.Fatalf("runSyncIncremental() error = %v", err)
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.GetMemoryByCategory(filepath.Base(root), "change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("change entries must not be stored, got %d", len(entries))
 	}
 }
 
@@ -867,57 +633,3 @@ func TestGenerateClaudeDir_IncludesSettings(t *testing.T) {
 	}
 }
 
-func TestNormalizeWorktreePath(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"", ""},
-		{"src/main.go", "src/main.go"},
-		{".claude/worktrees/task+123/src/main.go", "src/main.go"},
-		{"/Users/me/ws/.claude/worktrees/fix-bug/internal/a.go", "/Users/me/ws/internal/a.go"},
-		{".claude/worktrees/only-name", ".claude/worktrees/only-name"},
-	}
-	for _, tt := range tests {
-		if got := normalizeWorktreePath(tt.input); got != tt.want {
-			t.Errorf("normalizeWorktreePath(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
-// stdin에서 raw 도구 페이로드가 들어오고 --content가 없으면 저장을 건너뛰어야 한다 (issue #76).
-func TestRunSyncIncremental_SkipsRawToolPayload(t *testing.T) {
-	tmpDir := setupTestWorkspace(t)
-
-	oldWorkspace := flagWorkspace
-	flagWorkspace = tmpDir
-	defer func() { flagWorkspace = oldWorkspace }()
-
-	payload := `{"tool_name": "Edit", "tool_input": {"file_path": "src/main.go", "old_string": "a", "new_string": "b"}}`
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	w.WriteString(payload)
-	w.Close()
-	oldStdin := os.Stdin
-	os.Stdin = r
-	defer func() { os.Stdin = oldStdin }()
-
-	if err := runSyncIncremental("test-project", "test-agent", "", ""); err != nil {
-		t.Fatalf("runSyncIncremental() error = %v", err)
-	}
-
-	_, _, s, err := openWorkspaceStore()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	entries, err := s.ListProjectMemory("test-project")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("raw tool payload should not be stored, got %d entries", len(entries))
-	}
-}
