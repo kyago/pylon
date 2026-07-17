@@ -21,7 +21,6 @@ type Config struct {
 	Wiki         WikiConfig               `yaml:"wiki"`
 	Memory       MemoryConfig             `yaml:"memory"`
 	History      HistoryConfig            `yaml:"history"`
-	Conversation ConversationConfig       `yaml:"conversation"`
 	Workflow     WorkflowConfig           `yaml:"workflow"`
 	Skills       SkillsConfig             `yaml:"skills"`
 }
@@ -94,20 +93,12 @@ type MemoryConfig struct {
 	CompactionThreshold float64 `yaml:"compaction_threshold"`
 	ProactiveInjection  bool    `yaml:"proactive_injection"`
 	ProactiveMaxTokens  int     `yaml:"proactive_max_tokens"`
-	SessionArchive      bool    `yaml:"session_archive"`
-	RetentionDays       int     `yaml:"retention_days"`
 }
 
 // HistoryConfig defines Fossil-backed workspace history settings.
 type HistoryConfig struct {
 	Remote           string `yaml:"remote"`
 	SyncOnCheckpoint bool   `yaml:"sync_on_checkpoint"`
-}
-
-// ConversationConfig defines conversation history settings.
-// Spec Reference: Section 16 "conversation"
-type ConversationConfig struct {
-	RetentionDays int `yaml:"retention_days"`
 }
 
 // WorkflowConfig defines workflow template settings.
@@ -294,7 +285,6 @@ func ParseConfig(data []byte) (*Config, error) {
 		},
 		Memory: MemoryConfig{
 			ProactiveInjection: true,
-			SessionArchive:     true,
 		},
 		History: HistoryConfig{
 			SyncOnCheckpoint: true,
@@ -372,13 +362,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Memory.ProactiveMaxTokens == 0 {
 		cfg.Memory.ProactiveMaxTokens = 2000
 	}
-	// ProactiveInjection and SessionArchive default to true,
+	// ProactiveInjection defaults to true,
 	// handled by pre-initialization in ParseConfig.
-
-	// Conversation defaults
-	if cfg.Conversation.RetentionDays == 0 {
-		cfg.Conversation.RetentionDays = 90
-	}
 
 	// Workflow defaults
 	if cfg.Workflow.DefaultWorkflow == "" {

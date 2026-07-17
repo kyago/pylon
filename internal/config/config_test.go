@@ -40,9 +40,6 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		{"memory.compaction_threshold", cfg.Memory.CompactionThreshold, 0.7},
 		{"memory.proactive_injection", cfg.Memory.ProactiveInjection, true},
 		{"memory.proactive_max_tokens", cfg.Memory.ProactiveMaxTokens, 2000},
-		{"memory.session_archive", cfg.Memory.SessionArchive, true},
-		{"memory.retention_days", cfg.Memory.RetentionDays, 0},
-		{"conversation.retention_days", cfg.Conversation.RetentionDays, 90},
 	}
 
 	for _, tt := range tests {
@@ -114,10 +111,8 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 		{"git.worktree.auto_cleanup (default)", cfg.Git.Worktree.AutoCleanup, true},
 		{"wiki.auto_update (default)", cfg.Wiki.AutoUpdate, true},
 		{"memory.proactive_injection (default)", cfg.Memory.ProactiveInjection, true},
-		{"memory.session_archive (default)", cfg.Memory.SessionArchive, true},
 		{"memory.compaction_threshold (default)", cfg.Memory.CompactionThreshold, 0.7},
 		{"memory.proactive_max_tokens (default)", cfg.Memory.ProactiveMaxTokens, 2000},
-		{"conversation.retention_days (default)", cfg.Conversation.RetentionDays, 90},
 		{"history.sync_on_checkpoint (default)", cfg.History.SyncOnCheckpoint, true},
 	}
 
@@ -127,6 +122,24 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 				t.Errorf("got %v, expected %v", tt.got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestParseConfig_IgnoresRemovedFields(t *testing.T) {
+	yml := `
+version: "1"
+memory:
+  session_archive: true
+  retention_days: 30
+conversation:
+  retention_days: 90
+`
+	cfg, err := ParseConfig([]byte(yml))
+	if err != nil {
+		t.Fatalf("removed fields must be ignored, got error: %v", err)
+	}
+	if cfg.Memory.CompactionThreshold != 0.7 {
+		t.Fatalf("defaults must still apply: %v", cfg.Memory.CompactionThreshold)
 	}
 }
 
@@ -301,7 +314,6 @@ conversation:
 		{"git.default_base", cfg.Git.DefaultBase, "develop"},
 		{"memory.compaction_threshold", cfg.Memory.CompactionThreshold, 0.8},
 		{"memory.proactive_max_tokens", cfg.Memory.ProactiveMaxTokens, 4000},
-		{"conversation.retention_days", cfg.Conversation.RetentionDays, 30},
 	}
 
 	for _, tt := range tests {
