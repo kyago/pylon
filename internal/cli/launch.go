@@ -28,13 +28,9 @@ var embeddedCommands embed.FS
 // Claude Code TUI directly via syscall.Exec.
 func runLaunch() error {
 	// Step 1: Find workspace
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
-		return fmt.Errorf("pylon 워크스페이스가 아닙니다 — 'pylon init'을 먼저 실행하세요")
+		return err
 	}
 
 	// Step 2: Load config
@@ -107,13 +103,9 @@ func prepareHistory(root string, cfg config.HistoryConfig) error {
 // openWorkspaceStore is a shared helper that finds the workspace root, loads config,
 // and opens the SQLite store. Caller must close the returned Store.
 func openWorkspaceStore() (string, *config.Config, *store.Store, error) {
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("not in a pylon workspace")
+		return "", nil, nil, err
 	}
 
 	cfg, err := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml"))

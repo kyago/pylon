@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/kyago/pylon/internal/config"
 )
 
 func newSyncAgentsCmd() *cobra.Command {
@@ -38,13 +36,9 @@ pylon에 내장된 최신 에이전트 템플릿(.pylon/agents/)을 설치하고
 }
 
 func runSyncAgents(force bool) error {
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
-		return fmt.Errorf("pylon 워크스페이스가 아닙니다 — 'pylon init'을 먼저 실행하세요")
+		return err
 	}
 
 	pylonDir := filepath.Join(root, ".pylon")

@@ -57,13 +57,9 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	removeBinary, _ := cmd.Flags().GetBool("remove-binary")
 
 	// Find workspace
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
-		return fmt.Errorf("not in a pylon workspace: %w", err)
+		return err
 	}
 
 	// Build uninstall plan

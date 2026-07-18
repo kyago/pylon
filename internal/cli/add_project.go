@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -42,13 +41,9 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 	repoURL := args[0]
 
 	// Find workspace root
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
-		return fmt.Errorf("not in a pylon workspace — run 'pylon init' first")
+		return err
 	}
 
 	// Determine project name
