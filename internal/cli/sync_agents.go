@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
@@ -98,45 +97,5 @@ func runSyncAgents(force bool) error {
 	}
 
 	fmt.Printf("에이전트 동기화 완료: %d개 신규, %d개 갱신, %d개 스킵\n", installed, updated, skipped)
-	return nil
-}
-
-// syncClaudeAgentLinks ensures .claude/agents/ has symlinks for all .pylon/agents/*.md files.
-func syncClaudeAgentLinks(workDir, pylonDir string) error {
-	claudeAgentsDir := layout.ClaudeAgentsDir(workDir)
-	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
-		return err
-	}
-
-	pylonAgentsDir := filepath.Join(pylonDir, "agents")
-	entries, err := os.ReadDir(pylonAgentsDir)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		relTarget := layout.AgentLinkTarget(entry.Name())
-		linkPath := filepath.Join(claudeAgentsDir, entry.Name())
-
-		// 기존 심링크가 있으면 제거 후 재생성 (대상이 변경됐을 수 있음)
-		if info, err := os.Lstat(linkPath); err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				if err := os.Remove(linkPath); err != nil {
-					fmt.Printf("⚠ 심링크 제거 실패 %s: %v\n", entry.Name(), err)
-					continue
-				}
-			} else {
-				continue // 일반 파일이면 건드리지 않음
-			}
-		}
-
-		if err := os.Symlink(relTarget, linkPath); err != nil && !os.IsExist(err) {
-			fmt.Printf("⚠ 심링크 생성 실패 %s: %v\n", entry.Name(), err)
-		}
-	}
-
 	return nil
 }
