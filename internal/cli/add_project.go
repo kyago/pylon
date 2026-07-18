@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -105,7 +106,7 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 2: Create project .pylon/ structure
-	pylonDir := filepath.Join(projectDir, ".pylon")
+	pylonDir := layout.PylonDir(projectDir)
 	agentsDir := filepath.Join(pylonDir, "agents")
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create project .pylon/: %w", err)
@@ -277,11 +278,11 @@ func excludePylonFromRepo(projectDir string) error {
 
 // techStack holds detected technology information.
 type techStack struct {
-	Language   string
-	Framework  string
-	HasTests   bool
-	BuildTool  string
-	LintTool   string
+	Language  string
+	Framework string
+	HasTests  bool
+	BuildTool string
+	LintTool  string
 }
 
 // detectTechStack analyzes the project directory to identify technologies.
@@ -573,7 +574,7 @@ func generateVerifyYML(stack techStack) string {
 }
 
 func registerProjectInDB(root, projectName, projectDir, stackLang string) error {
-	dbPath := filepath.Join(root, ".pylon", "pylon.db")
+	dbPath := layout.DBPath(root)
 	s, err := store.NewStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("store open: %w", err)

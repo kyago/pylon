@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/spf13/cobra"
 	"github.com/kyago/pylon/internal/domain"
+	"github.com/kyago/pylon/internal/layout"
+	"github.com/spf13/cobra"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -34,7 +35,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	foundAny := false
 
 	// v2: Show file-based pipeline status
-	runtimeDir := filepath.Join(root, ".pylon", "runtime")
+	runtimeDir := layout.RuntimeDir(root)
 	if entries, dirErr := os.ReadDir(runtimeDir); dirErr == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {

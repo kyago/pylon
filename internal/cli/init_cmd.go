@@ -12,6 +12,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/history"
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -60,7 +61,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 2: Check if .pylon/ already exists
-	pylonDir := filepath.Join(workDir, ".pylon")
+	pylonDir := layout.PylonDir(workDir)
 	if _, err := os.Stat(pylonDir); err == nil {
 		return fmt.Errorf(".pylon/ already exists in %s. Use 'pylon uninstall' to remove it first", workDir)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"unicode"
 
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -49,7 +50,7 @@ func runAddAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	pylonDir := filepath.Join(root, ".pylon")
+	pylonDir := layout.PylonDir(root)
 	agentPath := filepath.Join(pylonDir, "agents", name+".md")
 
 	// Check if already exists

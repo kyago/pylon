@@ -14,6 +14,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/history"
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -295,7 +296,7 @@ func syncConfigIfWorkspace() {
 		return // not in a workspace, skip
 	}
 
-	cfgPath := filepath.Join(root, ".pylon", "config.yml")
+	cfgPath := layout.ConfigPath(root)
 	_, added, err := config.SyncConfigDefaults(cfgPath)
 	if err != nil {
 		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)
@@ -322,7 +323,7 @@ func syncResourcesIfWorkspace() {
 		return // not in a workspace, skip
 	}
 
-	pylonDir := filepath.Join(root, ".pylon")
+	pylonDir := layout.PylonDir(root)
 	var totalWritten int
 
 	// Sync agents
@@ -463,7 +464,7 @@ func syncClaudeCommandsIfWorkspace(in io.Reader, autoYes bool) {
 		return // not in a workspace, skip
 	}
 
-	commandsDir := filepath.Join(root, ".claude", "commands")
+	commandsDir := layout.ClaudeCommandsDir(root)
 	desired := buildDesiredClaudeCommands(root)
 	diff := diffClaudeCommands(commandsDir, desired)
 

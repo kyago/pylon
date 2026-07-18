@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -63,7 +64,7 @@ func runDeleteProject(name string, purge, force bool) error {
 		if purge {
 			removeTarget = projDir
 		} else {
-			marker := filepath.Join(projDir, ".pylon")
+			marker := layout.PylonDir(projDir)
 			if dirExists(marker) {
 				removeTarget = marker
 			}

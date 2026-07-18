@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/history"
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/store"
 )
 
@@ -34,7 +35,7 @@ func runLaunch() error {
 	}
 
 	// Step 2: Load config
-	cfg, err := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml"))
+	cfg, err := config.LoadConfig(layout.ConfigPath(root))
 	if err != nil {
 		return fmt.Errorf("설정 로드 실패: %w", err)
 	}
@@ -108,12 +109,12 @@ func openWorkspaceStore() (string, *config.Config, *store.Store, error) {
 		return "", nil, nil, err
 	}
 
-	cfg, err := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml"))
+	cfg, err := config.LoadConfig(layout.ConfigPath(root))
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	dbPath := filepath.Join(root, ".pylon", "pylon.db")
+	dbPath := layout.DBPath(root)
 	s, err := store.NewStore(dbPath)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("failed to open store: %w", err)
@@ -179,7 +180,7 @@ func buildClaudeArgs(cfg *config.Config, permMode string) []string {
 
 // generateClaudeDir creates/updates the .claude/ directory from .pylon/ source of truth.
 func generateClaudeDir(root string, cfg *config.Config, projects []config.ProjectInfo) error {
-	claudeDir := filepath.Join(root, ".claude")
+	claudeDir := layout.ClaudeDir(root)
 	commandsDir := filepath.Join(claudeDir, "commands")
 
 	// Ensure directories exist
@@ -201,13 +202,13 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 	}
 
 	// Bootstrap .pylon/commands/ from embedded defaults for future customization
-	if err := bootstrapPylonCommands(filepath.Join(root, ".pylon", "commands")); err != nil {
+	if err := bootstrapPylonCommands(layout.CommandsDir(root)); err != nil {
 		return err
 	}
 
 	// Pipeline scripts → .pylon/scripts/bash/
 	// Bootstrap embedded scripts if workspace doesn't have them yet (existing workspaces)
-	pylonScriptsDir := filepath.Join(root, ".pylon", "scripts", "bash")
+	pylonScriptsDir := layout.ScriptsDir(root)
 	if err := os.MkdirAll(pylonScriptsDir, 0755); err != nil {
 		return fmt.Errorf("scripts/bash/ 디렉토리 생성 실패: %w", err)
 	}
@@ -339,7 +340,7 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	b.WriteString("`isolation: \"worktree\"` 옵션으로 git worktree 격리를 사용합니다.\n\n")
 
 	// Discover agents by domain and list them
-	pylonDir := filepath.Join(root, ".pylon")
+	pylonDir := layout.PylonDir(root)
 	agentsByDomain := discoverAgentsByDomain(pylonDir)
 	domainOrder := []string{"software", "research", "content", "marketing"}
 	domainLabels := map[string]string{
@@ -527,7 +528,7 @@ func buildDesiredClaudeCommands(root string) map[string]string {
 
 	// Pipeline slash commands → pl/: prefer .pylon/commands/ (user customization),
 	// fall back to embedded defaults for workspaces without .pylon/commands/.
-	pylonCmdsDir := filepath.Join(root, ".pylon", "commands")
+	pylonCmdsDir := layout.CommandsDir(root)
 	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
@@ -703,9 +704,9 @@ func addClaudeDirToGitignore(root string) error {
 // For agents without skills: creates a symlink to .pylon/agents/ (default behavior).
 // Respects SkillsConfig flags: Enabled, PreloadToAgents, ProgressiveDisclosure.
 func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
-	pylonDir := filepath.Join(root, ".pylon")
+	pylonDir := layout.PylonDir(root)
 	pylonAgentsDir := filepath.Join(pylonDir, "agents")
-	claudeAgentsDir := filepath.Join(root, ".claude", "agents")
+	claudeAgentsDir := layout.ClaudeAgentsDir(root)
 	skillsDir := filepath.Join(pylonDir, "skills")
 
 	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
@@ -745,13 +746,13 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 		agent, err := config.ParseAgentFile(agentPath)
 		if err != nil {
 			// Unparseable agent — fall back to symlink
-			ensureSymlink(linkPath, filepath.Join("..", "..", ".pylon", "agents", entry.Name()))
+			ensureSymlink(linkPath, layout.AgentLinkTarget(entry.Name()))
 			continue
 		}
 
 		// If skills disabled or agent has no skills, use symlink
 		if !cfg.Skills.Enabled || !cfg.Skills.PreloadToAgents || len(agent.Skills) == 0 {
-			ensureSymlink(linkPath, filepath.Join("..", "..", ".pylon", "agents", entry.Name()))
+			ensureSymlink(linkPath, layout.AgentLinkTarget(entry.Name()))
 			continue
 		}
 
@@ -764,7 +765,7 @@ func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
 		injected := buildSkillInjection(agent.Skills, skillMap, cfg.Skills.ProgressiveDisclosure)
 		if injected == "" {
 			// No matching skills found, use symlink
-			ensureSymlink(linkPath, filepath.Join("..", "..", ".pylon", "agents", entry.Name()))
+			ensureSymlink(linkPath, layout.AgentLinkTarget(entry.Name()))
 			continue
 		}
 
