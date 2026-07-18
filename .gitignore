@@ -3,6 +3,6 @@ pylon
 *.db
 *.db-wal
 *.db-shm
-.pylon/runtime/
+.pylon/
 .omc/
 .DS_Store
