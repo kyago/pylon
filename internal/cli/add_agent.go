@@ -2,8 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"unicode"
@@ -44,20 +42,6 @@ func runAddAgent(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--role 플래그가 필요합니다 (예: --role \"Backend Developer\")")
 	}
 
-	// Find workspace
-	root, err := resolveRoot()
-	if err != nil {
-		return err
-	}
-
-	pylonDir := layout.PylonDir(root)
-	agentPath := filepath.Join(pylonDir, "agents", name+".md")
-
-	// Check if already exists
-	if _, err := os.Stat(agentPath); err == nil {
-		return fmt.Errorf("에이전트 '%s'가 이미 존재합니다: %s", name, agentPath)
-	}
-
 	// Capitalize for display (avoid deprecated strings.Title)
 	displayName := toTitleCase(strings.ReplaceAll(name, "-", " "))
 
@@ -80,13 +64,16 @@ domain: %s
 4. Deliver results
 `, name, addAgentRole, addAgentDomain, displayName, addAgentRole)
 
-	if err := os.WriteFile(agentPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("에이전트 파일 생성 실패: %w", err)
+	agentPath, err := scaffoldMarkdownResource("에이전트", "agents", name, content)
+	if err != nil {
+		return err
 	}
 
 	// Sync Claude agent symlinks
-	if err := syncClaudeAgentLinks(root, pylonDir); err != nil {
-		fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", err)
+	if root, rerr := resolveRoot(); rerr == nil {
+		if err := syncClaudeAgentLinks(root, layout.PylonDir(root)); err != nil {
+			fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", err)
+		}
 	}
 
 	fmt.Printf("✓ 에이전트 '%s' 생성 완료: %s\n", name, agentPath)

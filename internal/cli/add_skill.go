@@ -2,11 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -25,26 +22,6 @@ func runAddSkill(cmd *cobra.Command, args []string) error {
 	name := strings.TrimSpace(args[0])
 	if name == "" {
 		return fmt.Errorf("스킬 이름이 비어있습니다")
-	}
-
-	// Find workspace
-	root, err := resolveRoot()
-	if err != nil {
-		return err
-	}
-
-	pylonDir := layout.PylonDir(root)
-	skillPath := filepath.Join(pylonDir, "skills", name+".md")
-
-	// Ensure skills directory exists
-	skillsDir := filepath.Join(pylonDir, "skills")
-	if err := os.MkdirAll(skillsDir, 0755); err != nil {
-		return fmt.Errorf("skills 디렉토리 생성 실패: %w", err)
-	}
-
-	// Check if already exists
-	if _, err := os.Stat(skillPath); err == nil {
-		return fmt.Errorf("스킬 '%s'가 이미 존재합니다: %s", name, skillPath)
 	}
 
 	// Generate skill template
@@ -68,8 +45,9 @@ description: "%s 스킬 — 설명을 작성하세요"
 3. 세 번째 단계
 `, name, displayName, displayName)
 
-	if err := os.WriteFile(skillPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("스킬 파일 생성 실패: %w", err)
+	skillPath, err := scaffoldMarkdownResource("스킬", "skills", name, content)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("✓ 스킬 '%s' 생성 완료: %s\n", name, skillPath)
