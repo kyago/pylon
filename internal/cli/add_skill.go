@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,7 @@ func runAddSkill(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	pylonDir := filepath.Join(root, ".pylon")
+	pylonDir := layout.PylonDir(root)
 	skillPath := filepath.Join(pylonDir, "skills", name+".md")
 
 	// Ensure skills directory exists

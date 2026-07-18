@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 func newUninstallCmd() *cobra.Command {
@@ -96,7 +97,7 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 	plan := &uninstallPlan{}
 
 	// 1. Runtime artifacts
-	claudeDir := filepath.Join(root, ".claude")
+	claudeDir := layout.ClaudeDir(root)
 	if dirExists(claudeDir) {
 		plan.runtimeFiles = append(plan.runtimeFiles, claudeDir)
 	}
@@ -111,7 +112,7 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 		return nil, fmt.Errorf("failed to discover projects: %w", err)
 	}
 	for _, p := range projects {
-		projectPylon := filepath.Join(p.Path, ".pylon")
+		projectPylon := layout.PylonDir(p.Path)
 		if dirExists(projectPylon) {
 			plan.projectPylons = append(plan.projectPylons, projectPylon)
 		}
@@ -121,7 +122,7 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 	}
 
 	// 3. Workspace .pylon/
-	pylonDir := filepath.Join(root, ".pylon")
+	pylonDir := layout.PylonDir(root)
 	if dirExists(pylonDir) {
 		plan.workspacePylon = pylonDir
 	}

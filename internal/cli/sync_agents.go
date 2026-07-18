@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -41,7 +42,7 @@ func runSyncAgents(force bool) error {
 		return err
 	}
 
-	pylonDir := filepath.Join(root, ".pylon")
+	pylonDir := layout.PylonDir(root)
 	agentsDir := filepath.Join(pylonDir, "agents")
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {
 		return fmt.Errorf("agents 디렉토리 생성 실패: %w", err)
@@ -102,7 +103,7 @@ func runSyncAgents(force bool) error {
 
 // syncClaudeAgentLinks ensures .claude/agents/ has symlinks for all .pylon/agents/*.md files.
 func syncClaudeAgentLinks(workDir, pylonDir string) error {
-	claudeAgentsDir := filepath.Join(workDir, ".claude", "agents")
+	claudeAgentsDir := layout.ClaudeAgentsDir(workDir)
 	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
 		return err
 	}
@@ -117,7 +118,7 @@ func syncClaudeAgentLinks(workDir, pylonDir string) error {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
-		relTarget := filepath.Join("..", "..", ".pylon", "agents", entry.Name())
+		relTarget := layout.AgentLinkTarget(entry.Name())
 		linkPath := filepath.Join(claudeAgentsDir, entry.Name())
 
 		// 기존 심링크가 있으면 제거 후 재생성 (대상이 변경됐을 수 있음)
