@@ -141,4 +141,26 @@ func TestCleanupPipelineScript_RuntimeBranches(t *testing.T) {
 	if sj["status"] != "cleaned" {
 		t.Fatalf("status = %q, want cleaned", sj["status"])
 	}
+
+	// 분기 3: 정리 대상 없음 → cleaned가 빈 배열이어야 한다.
+	// (bash 3.2 + set -u에서 빈 배열이 크래시하거나 [""]로 직렬화되던 회귀 방지)
+	cmd := exec.Command("bash", script, filepath.Join(tmp, "no-such-dir"), "")
+	cmd.Dir = tmp
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("script failed with nothing to clean: %v\n%s", err, out)
+	}
+	var result struct {
+		OK      bool     `json:"ok"`
+		Cleaned []string `json:"cleaned"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if !result.OK {
+		t.Errorf("ok = false, want true")
+	}
+	if result.Cleaned == nil || len(result.Cleaned) != 0 {
+		t.Errorf("cleaned = %v, want empty array", result.Cleaned)
+	}
 }

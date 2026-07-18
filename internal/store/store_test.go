@@ -55,6 +55,31 @@ func TestNewStore_PragmasApplyToAllPooledConnections(t *testing.T) {
 	if bt <= 0 {
 		t.Errorf("busy_timeout = %d on a fresh pooled connection, want > 0", bt)
 	}
+
+	var jm string
+	if err := s.DB().QueryRow("PRAGMA journal_mode").Scan(&jm); err != nil {
+		t.Fatalf("failed to query journal_mode: %v", err)
+	}
+	if jm != "wal" {
+		t.Errorf("journal_mode = %q on a fresh pooled connection, want \"wal\"", jm)
+	}
+}
+
+func TestMigrate_DropsOrphanConversationsTable(t *testing.T) {
+	s := setupTestStore(t)
+
+	// conversations 테이블은 v2에서 코드 경로가 제거된 고아 테이블이므로
+	// 마이그레이션 완료 후 존재해서는 안 된다.
+	var count int
+	err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversations'`,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to query sqlite_master: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("conversations table should not exist after migration, found %d", count)
+	}
 }
 
 func TestMigrate_Idempotent(t *testing.T) {
