@@ -1,7 +1,0 @@
-name: explore
-description: Exploration and analysis workflow - no code changes
-stages:
-  - init
-  - po_conversation
-  - architect_analysis
-  - completed

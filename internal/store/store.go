@@ -24,21 +24,25 @@ type Store struct {
 // NewStore opens a SQLite database at the given path and enables WAL mode.
 // Use ":memory:" for in-memory testing.
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	// PRAGMA는 커넥션별 설정이므로 DSN에 실어 풀의 모든 커넥션에 적용한다.
+	dsn := "file:" + dbPath +
+		"?_pragma=journal_mode(WAL)" +
+		"&_pragma=foreign_keys(ON)" +
+		"&_pragma=busy_timeout(5000)"
+
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Enable WAL mode for concurrent reads
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+	// 인메모리 DB는 커넥션마다 별도 인스턴스가 생기므로 단일 커넥션으로 고정한다.
+	if dbPath == ":memory:" {
+		db.SetMaxOpenConns(1)
 	}
 
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	return &Store{db: db}, nil

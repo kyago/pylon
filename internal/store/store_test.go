@@ -2,6 +2,7 @@ package store
 
 import (
 	"io/fs"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -24,6 +25,60 @@ func TestNewStore_InMemory(t *testing.T) {
 	s := setupTestStore(t)
 	if s.DB() == nil {
 		t.Error("expected non-nil db")
+	}
+}
+
+func TestNewStore_PragmasApplyToAllPooledConnections(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	// 유휴 커넥션 재사용을 막아 이후 쿼리가 새 커넥션에서 실행되도록 강제한다.
+	// PRAGMA가 DSN이 아닌 개별 커넥션에만 적용되면 새 커넥션에서는 풀린다.
+	s.DB().SetMaxIdleConns(0)
+
+	var fk int
+	if err := s.DB().QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
+		t.Fatalf("failed to query foreign_keys: %v", err)
+	}
+	if fk != 1 {
+		t.Errorf("foreign_keys = %d on a fresh pooled connection, want 1", fk)
+	}
+
+	var bt int
+	if err := s.DB().QueryRow("PRAGMA busy_timeout").Scan(&bt); err != nil {
+		t.Fatalf("failed to query busy_timeout: %v", err)
+	}
+	if bt <= 0 {
+		t.Errorf("busy_timeout = %d on a fresh pooled connection, want > 0", bt)
+	}
+
+	var jm string
+	if err := s.DB().QueryRow("PRAGMA journal_mode").Scan(&jm); err != nil {
+		t.Fatalf("failed to query journal_mode: %v", err)
+	}
+	if jm != "wal" {
+		t.Errorf("journal_mode = %q on a fresh pooled connection, want \"wal\"", jm)
+	}
+}
+
+func TestMigrate_DropsOrphanConversationsTable(t *testing.T) {
+	s := setupTestStore(t)
+
+	// conversations 테이블은 v2에서 코드 경로가 제거된 고아 테이블이므로
+	// 마이그레이션 완료 후 존재해서는 안 된다.
+	var count int
+	err := s.DB().QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversations'`,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to query sqlite_master: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("conversations table should not exist after migration, found %d", count)
 	}
 }
 

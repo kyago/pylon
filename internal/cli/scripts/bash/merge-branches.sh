@@ -24,8 +24,8 @@ for branch in "${SOURCE_BRANCHES[@]}"; do
   fi
 done
 
-MERGED_JSON=$(printf '%s\n' "${MERGED[@]}" | jq -R . | jq -s .)
-FAILED_JSON=$(printf '%s\n' "${FAILED[@]}" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]")
+MERGED_JSON=$(array_to_json ${MERGED[@]+"${MERGED[@]}"})
+FAILED_JSON=$(array_to_json ${FAILED[@]+"${FAILED[@]}"})
 
 jq -cn \
   --arg target "$TARGET_BRANCH" \

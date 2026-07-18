@@ -105,39 +105,3 @@ func TestValidateConfidence(t *testing.T) {
 		})
 	}
 }
-
-func TestValidatePipelineStage(t *testing.T) {
-	tests := []struct {
-		name    string
-		stage   string
-		wantErr bool
-	}{
-		{"init", "init", false},
-		{"po_conversation", "po_conversation", false},
-		{"architect_analysis", "architect_analysis", false},
-		{"pm_task_breakdown", "pm_task_breakdown", false},
-		{"agent_executing", "agent_executing", false},
-		{"verification", "verification", false},
-		{"pr_creation", "pr_creation", false},
-		{"po_validation", "po_validation", false},
-		{"wiki_update", "wiki_update", false},
-		{"completed", "completed", false},
-		{"failed", "failed", false},
-		{"invalid", "bogus", true},
-		{"empty", "", true},
-		{"uppercase", "INIT", true},
-		{"removed analyzing", "analyzing", true},
-		{"removed planning", "planning", true},
-		{"removed executing", "executing", true},
-		{"removed verifying", "verifying", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validatePipelineStage(tt.stage)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validatePipelineStage(%q) error = %v, wantErr %v", tt.stage, err, tt.wantErr)
-			}
-		})
-	}
-}

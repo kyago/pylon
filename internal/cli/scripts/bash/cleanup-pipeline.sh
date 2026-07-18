@@ -42,5 +42,5 @@ if [[ -n "$PIPELINE_DIR" && -d "$PIPELINE_DIR" ]]; then
   fi
 fi
 
-CLEANED_JSON=$(printf '%s\n' "${CLEANED[@]}" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]")
+CLEANED_JSON=$(array_to_json ${CLEANED[@]+"${CLEANED[@]}"})
 jq -cn --argjson cleaned "$CLEANED_JSON" '{ok: true, cleaned: $cleaned}'

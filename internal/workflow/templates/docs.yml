@@ -1,8 +1,0 @@
-name: docs
-description: Documentation-only workflow - no verification or PR
-stages:
-  - init
-  - po_conversation
-  - agent_executing
-  - wiki_update
-  - completed
