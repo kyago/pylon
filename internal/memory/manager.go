@@ -25,10 +25,15 @@ func NewManager(s *store.Store, cfg config.MemoryConfig) *Manager {
 // Spec Reference: Section 8 "Learning Accumulation"
 func (m *Manager) StoreLearnings(projectID, taskID, agentName string, learnings []string) error {
 	for _, learning := range learnings {
+		// 바이트가 아닌 룬 단위로 잘라 멀티바이트 문자가 깨지지 않게 한다.
+		keyRunes := []rune(learning)
+		if len(keyRunes) > 50 {
+			keyRunes = keyRunes[:50]
+		}
 		entry := &store.MemoryEntry{
 			ProjectID:  projectID,
 			Category:   "learning",
-			Key:        fmt.Sprintf("%s/%s", taskID, sanitize(learning[:min(len(learning), 50)])),
+			Key:        fmt.Sprintf("%s/%s", taskID, sanitize(string(keyRunes))),
 			Content:    learning,
 			Author:     agentName,
 			Confidence: 0.8,

@@ -24,6 +24,16 @@ json_output() {
   fi
 }
 
+# Convert arguments to a JSON string array (requires jq). No arguments → []
+# Call with the bash-3.2-safe empty-array expansion: array_to_json ${arr[@]+"${arr[@]}"}
+array_to_json() {
+  if [[ $# -eq 0 ]]; then
+    echo "[]"
+  else
+    printf '%s\n' "$@" | jq -R . | jq -s .
+  fi
+}
+
 # Error handler
 die() {
   echo "ERROR: $1" >&2

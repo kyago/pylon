@@ -1,7 +1,9 @@
 package memory
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/store"
@@ -56,6 +58,29 @@ func TestStoreLearnings(t *testing.T) {
 	}
 	if len(memories) < 2 {
 		t.Errorf("expected at least 2 memories, got %d", len(memories))
+	}
+}
+
+func TestStoreLearnings_MultibyteKeyNotCorrupted(t *testing.T) {
+	m := setupTestManager(t)
+
+	// 한글은 3바이트 문자이므로 50바이트 지점이 문자 중간에 걸린다.
+	long := strings.Repeat("가나다라마바사아자차", 4) // 40자, 120바이트
+	if err := m.StoreLearnings("proj-1", "task-002", "test", []string{long}); err != nil {
+		t.Fatalf("StoreLearnings failed: %v", err)
+	}
+
+	memories, err := m.Store.GetMemoryByCategory("proj-1", "learning")
+	if err != nil {
+		t.Fatalf("GetMemoryByCategory failed: %v", err)
+	}
+	if len(memories) == 0 {
+		t.Fatal("expected stored memory")
+	}
+	for _, mem := range memories {
+		if !utf8.ValidString(mem.Key) {
+			t.Errorf("key contains invalid UTF-8: %q", mem.Key)
+		}
 	}
 }
 

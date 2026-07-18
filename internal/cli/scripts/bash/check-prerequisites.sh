@@ -29,7 +29,7 @@ done
 MISSING=()
 FOUND=()
 
-for file in "${REQUIREMENTS[@]}"; do
+for file in ${REQUIREMENTS[@]+"${REQUIREMENTS[@]}"}; do
   if [[ -f "$PIPELINE_DIR/$file" ]]; then
     FOUND+=("$file")
   else
@@ -38,8 +38,8 @@ for file in "${REQUIREMENTS[@]}"; do
 done
 
 # Build JSON output
-FOUND_JSON=$(printf '%s\n' "${FOUND[@]}" | jq -R . | jq -s .)
-MISSING_JSON=$(printf '%s\n' "${MISSING[@]}" 2>/dev/null | jq -R . | jq -s . 2>/dev/null || echo "[]")
+FOUND_JSON=$(array_to_json ${FOUND[@]+"${FOUND[@]}"})
+MISSING_JSON=$(array_to_json ${MISSING[@]+"${MISSING[@]}"})
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   jq -cn \
