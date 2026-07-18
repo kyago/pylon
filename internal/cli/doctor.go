@@ -163,11 +163,7 @@ func printInstallHints(failures []Check) {
 // When fix is true, missing entries are automatically added.
 // Returns true if all projects are OK, false if any are missing.
 func checkRepoExcludes(fix bool) bool {
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
 		return true // not in a workspace, nothing to check
 	}
@@ -294,11 +290,7 @@ func verifyGH() (string, error) {
 
 // syncConfigIfWorkspace syncs config.yml defaults if running inside a pylon workspace.
 func syncConfigIfWorkspace() {
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
 		return // not in a workspace, skip
 	}
@@ -325,11 +317,7 @@ func syncConfigIfWorkspace() {
 // whose content differs from the embedded version are refreshed, so upgrades
 // pick up new resource content.
 func syncResourcesIfWorkspace() {
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
 		return // not in a workspace, skip
 	}
@@ -470,11 +458,7 @@ func diffClaudeCommands(commandsDir string, desired map[string]string) commandDi
 // changes after the user consents (default: No). When autoYes is true the prompt
 // is skipped and changes are applied automatically.
 func syncClaudeCommandsIfWorkspace(in io.Reader, autoYes bool) {
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
 		return // not in a workspace, skip
 	}

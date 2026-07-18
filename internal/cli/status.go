@@ -8,7 +8,6 @@ import (
 	"sort"
 
 	"github.com/spf13/cobra"
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/domain"
 )
 
@@ -24,13 +23,9 @@ Shows file-based v2 pipelines (.pylon/runtime/).`,
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
-		return fmt.Errorf("not in a pylon workspace: %w", err)
+		return err
 	}
 
 	fmt.Println("Pylon Status")

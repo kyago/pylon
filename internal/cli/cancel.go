@@ -27,13 +27,9 @@ func newCancelCmd() *cobra.Command {
 func runCancel(cmd *cobra.Command, args []string) error {
 	pipelineID := args[0]
 
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
-		return fmt.Errorf("not in a pylon workspace: %w", err)
+		return err
 	}
 
 	// v2: Try file-based cancellation first

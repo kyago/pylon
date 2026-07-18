@@ -8,7 +8,6 @@ import (
 
 	"unicode"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -45,13 +44,9 @@ func runAddAgent(cmd *cobra.Command, args []string) error {
 	}
 
 	// Find workspace
-	startDir := flagWorkspace
-	if startDir == "" {
-		startDir = "."
-	}
-	root, err := config.FindWorkspaceRoot(startDir)
+	root, err := resolveRoot()
 	if err != nil {
-		return fmt.Errorf("pylon 워크스페이스가 아닙니다 — 'pylon init'을 먼저 실행하세요")
+		return err
 	}
 
 	pylonDir := filepath.Join(root, ".pylon")
