@@ -73,14 +73,9 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	stack, contextPath, agentsDir, err := scaffoldProject(projectDir, projectName)
+	_, contextPath, agentsDir, err := scaffoldProject(projectDir, projectName)
 	if err != nil {
 		return err
-	}
-
-	// Register project in SQLite
-	if err := registerProjectInDB(root, projectName, projectDir, stack.Language); err != nil {
-		fmt.Printf("⚠ DB 등록 실패: %v\n", err)
 	}
 
 	fmt.Println()

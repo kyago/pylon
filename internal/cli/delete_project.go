@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
+	"github.com/kyago/pylon/internal/memory"
 	"github.com/spf13/cobra"
 )
 
@@ -15,11 +17,12 @@ func newDeleteProjectCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "delete-project <name>",
-		Short: "Remove a project from the workspace registry",
-		Long: `Remove a project registration added by 'add-project'.
+		Short: "Remove a project from the workspace",
+		Long: `Remove a project added by 'add-project'.
 
-By default only the DB registration is removed (projects, project_memory).
-The cloned directory on disk is preserved unless --purge is given.
+By default only the project memory (.pylon/memory/<name>/) and the project's
+.pylon/ marker are removed. The cloned directory on disk is preserved unless
+--purge is given.
 
 사용 예:
   pylon delete-project myapp
@@ -42,27 +45,37 @@ func runDeleteProject(name string, purge, force bool) error {
 		return err
 	}
 
-	root, _, s, err := openWorkspaceStore()
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-
-	proj, err := s.GetProject(name)
+	root, _, err := openWorkspace()
 	if err != nil {
 		return err
 	}
 
-	removeTarget, dirSafe := projectRemovalTarget(root, proj.Path, purge)
+	// 레지스트리 대신 워크스페이스 스캔으로 프로젝트를 찾는다.
+	discovered, err := config.DiscoverProjects(root)
+	if err != nil {
+		return fmt.Errorf("프로젝트 탐색 실패: %w", err)
+	}
+	projPath := ""
+	for _, p := range discovered {
+		if p.Name == name {
+			projPath = p.Path
+			break
+		}
+	}
+	if projPath == "" {
+		return fmt.Errorf("project %q is not registered", name)
+	}
 
-	if !force && !flagJSON && !confirmProjectDeletion(name, proj.Path, removeTarget, purge) {
+	removeTarget, dirSafe := projectRemovalTarget(root, projPath, purge)
+
+	if !force && !flagJSON && !confirmProjectDeletion(name, projPath, removeTarget, purge) {
 		fmt.Println("취소되었습니다")
 		return nil
 	}
 
-	res, err := s.DeleteProject(name)
+	memDeleted, err := memory.NewStore(root).DeleteProject(name)
 	if err != nil {
-		return fmt.Errorf("failed to delete project: %w", err)
+		return fmt.Errorf("failed to delete project memory: %w", err)
 	}
 
 	removed := false
@@ -77,8 +90,8 @@ func runDeleteProject(name string, purge, force bool) error {
 		out := map[string]any{
 			"status":   "ok",
 			"project":  name,
-			"projects": res.Projects,
-			"memory":   res.Memory,
+			"projects": 1,
+			"memory":   memDeleted,
 			"purged":   purge,
 			"removed":  removed,
 		}
@@ -87,7 +100,7 @@ func runDeleteProject(name string, purge, force bool) error {
 		}
 		return printJSON(out)
 	}
-	printProjectDeletion(name, proj.Path, removeTarget, purge, dirSafe, removed, rmErr, res.Memory)
+	printProjectDeletion(name, projPath, removeTarget, purge, dirSafe, removed, rmErr, memDeleted)
 	return nil
 }
 
@@ -108,7 +121,7 @@ func projectRemovalTarget(root, projectPath string, purge bool) (string, bool) {
 
 func confirmProjectDeletion(name, projectPath, removeTarget string, purge bool) bool {
 	fmt.Printf("Delete project %q:\n", name)
-	fmt.Println("  - registry + memory records")
+	fmt.Println("  - memory records (.pylon/memory/" + name + "/)")
 	if purge && removeTarget != "" {
 		fmt.Printf("  - directory: %s\n", removeTarget)
 	} else if purge {
@@ -135,7 +148,7 @@ func printProjectDeletion(name, projectPath, removeTarget string, purge, dirSafe
 	case purge:
 		fmt.Printf("⚠ 디렉터리 %q가 워크스페이스 밖이거나 없어 보존됨\n", projectPath)
 	case !dirSafe:
-		fmt.Printf("⚠ 디렉터리 %q가 워크스페이스 밖이라 .pylon/ 마커를 제거하지 못함; sync-projects가 재등록할 수 있음\n", projectPath)
+		fmt.Printf("⚠ 디렉터리 %q가 워크스페이스 밖이라 .pylon/ 마커를 제거하지 못함\n", projectPath)
 	}
 }
 

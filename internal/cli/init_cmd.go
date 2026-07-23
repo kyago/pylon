@@ -12,7 +12,6 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
-	"github.com/kyago/pylon/internal/store"
 )
 
 //go:embed agents/*.md
@@ -185,38 +184,18 @@ git:
 		return fmt.Errorf("failed to write .gitignore: %w", err)
 	}
 
-	// Step 6: Initialize DB and sync discovered projects
-	dbPath := filepath.Join(pylonDir, "pylon.db")
-	s, err := store.NewStore(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open store: %w", err)
-	}
-	defer s.Close()
-
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("failed to migrate: %w", err)
-	}
-
+	// Step 6: Discover projects and ensure .pylon/ is git-excluded per project
 	projects, err := config.DiscoverProjects(workDir)
 	if err != nil {
 		fmt.Printf("⚠ 프로젝트 탐색 실패: %v\n", err)
 	}
 	for _, p := range projects {
-		if err := s.UpsertProject(&store.ProjectRecord{
-			ProjectID: p.Name,
-			Path:      p.Path,
-		}); err != nil {
-			fmt.Printf("⚠ %s 등록 실패: %v\n", p.Name, err)
-		}
 		// Ensure .pylon/ is excluded from project git tracking (skip non-git dirs)
 		if err := excludePylonFromRepo(p.Path); err != nil {
 			if !strings.Contains(err.Error(), "not a git repository") {
 				fmt.Printf("⚠ %s: .pylon/ exclude 설정 실패: %v\n", p.Name, err)
 			}
 		}
-	}
-	if len(projects) > 0 {
-		fmt.Printf("✓ %d project(s) registered in DB\n", len(projects))
 	}
 
 	fmt.Println()
