@@ -20,7 +20,6 @@ type Config struct {
 	Projects map[string]ProjectConfig `yaml:"projects"`
 	Wiki     WikiConfig               `yaml:"wiki"`
 	Memory   MemoryConfig             `yaml:"memory"`
-	History  HistoryConfig            `yaml:"history"`
 	Workflow WorkflowConfig           `yaml:"workflow"`
 	Skills   SkillsConfig             `yaml:"skills"`
 }
@@ -90,15 +89,8 @@ type WikiConfig struct {
 // MemoryConfig defines agent memory management settings.
 // Spec Reference: Section 16 "memory"
 type MemoryConfig struct {
-	CompactionThreshold float64 `yaml:"compaction_threshold"`
-	ProactiveInjection  bool    `yaml:"proactive_injection"`
-	ProactiveMaxTokens  int     `yaml:"proactive_max_tokens"`
-}
-
-// HistoryConfig defines Fossil-backed workspace history settings.
-type HistoryConfig struct {
-	Remote           string `yaml:"remote"`
-	SyncOnCheckpoint bool   `yaml:"sync_on_checkpoint"`
+	ProactiveInjection bool `yaml:"proactive_injection"`
+	ProactiveMaxTokens int  `yaml:"proactive_max_tokens"`
 }
 
 // WorkflowConfig defines workflow template settings.
@@ -286,9 +278,6 @@ func ParseConfig(data []byte) (*Config, error) {
 		Memory: MemoryConfig{
 			ProactiveInjection: true,
 		},
-		History: HistoryConfig{
-			SyncOnCheckpoint: true,
-		},
 		Skills: SkillsConfig{
 			Enabled:               true,
 			PreloadToAgents:       true,
@@ -356,9 +345,6 @@ func applyDefaults(cfg *Config) {
 	}
 
 	// Memory defaults
-	if cfg.Memory.CompactionThreshold == 0 {
-		cfg.Memory.CompactionThreshold = 0.7
-	}
 	if cfg.Memory.ProactiveMaxTokens == 0 {
 		cfg.Memory.ProactiveMaxTokens = 2000
 	}

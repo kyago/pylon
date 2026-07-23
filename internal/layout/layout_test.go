@@ -14,7 +14,6 @@ func TestLayoutPaths(t *testing.T) {
 	}{
 		{"PylonDir", PylonDir(root), filepath.Join(root, ".pylon")},
 		{"ConfigPath", ConfigPath(root), filepath.Join(root, ".pylon", "config.yml")},
-		{"DBPath", DBPath(root), filepath.Join(root, ".pylon", "pylon.db")},
 		{"RuntimeDir", RuntimeDir(root), filepath.Join(root, ".pylon", "runtime")},
 		{"CommandsDir", CommandsDir(root), filepath.Join(root, ".pylon", "commands")},
 		{"ScriptsDir", ScriptsDir(root), filepath.Join(root, ".pylon", "scripts", "bash")},

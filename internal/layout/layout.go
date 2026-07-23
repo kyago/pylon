@@ -15,11 +15,6 @@ func ConfigPath(root string) string {
 	return filepath.Join(PylonDir(root), "config.yml")
 }
 
-// DBPath returns the SQLite store path (.pylon/pylon.db).
-func DBPath(root string) string {
-	return filepath.Join(PylonDir(root), "pylon.db")
-}
-
 // RuntimeDir returns the pipeline runtime state directory (.pylon/runtime).
 func RuntimeDir(root string) string {
 	return filepath.Join(PylonDir(root), "runtime")

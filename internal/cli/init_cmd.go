@@ -113,10 +113,6 @@ runtime:
   max_turns: 50
   permission_mode: acceptEdits
 
-history:
-  remote: ""
-  sync_on_checkpoint: true
-
 git:
   pr:
 %s

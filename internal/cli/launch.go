@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
-	"github.com/kyago/pylon/internal/store"
 )
 
 // runLaunch is the main entry point when `pylon` is invoked without subcommands.
@@ -89,33 +88,6 @@ func openWorkspace() (string, *config.Config, error) {
 		return "", nil, fmt.Errorf("failed to load config: %w", err)
 	}
 	return root, cfg, nil
-}
-
-// openWorkspaceStore is a shared helper that finds the workspace root, loads config,
-// and opens the SQLite store. Caller must close the returned Store.
-func openWorkspaceStore() (string, *config.Config, *store.Store, error) {
-	root, err := resolveRoot()
-	if err != nil {
-		return "", nil, nil, err
-	}
-
-	cfg, err := config.LoadConfig(layout.ConfigPath(root))
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to load config: %w", err)
-	}
-
-	dbPath := layout.DBPath(root)
-	s, err := store.NewStore(dbPath)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to open store: %w", err)
-	}
-
-	if err := s.Migrate(); err != nil {
-		s.Close()
-		return "", nil, nil, fmt.Errorf("failed to migrate: %w", err)
-	}
-
-	return root, cfg, s, nil
 }
 
 // selectPermissionMode presents an interactive selector for Claude Code permission mode.

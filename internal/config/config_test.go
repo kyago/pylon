@@ -37,7 +37,6 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		{"git.worktree.auto_cleanup", cfg.Git.Worktree.AutoCleanup, true},
 		{"git.pr.draft", cfg.Git.PR.Draft, false},
 		{"wiki.auto_update", cfg.Wiki.AutoUpdate, true},
-		{"memory.compaction_threshold", cfg.Memory.CompactionThreshold, 0.7},
 		{"memory.proactive_injection", cfg.Memory.ProactiveInjection, true},
 		{"memory.proactive_max_tokens", cfg.Memory.ProactiveMaxTokens, 2000},
 	}
@@ -111,9 +110,7 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 		{"git.worktree.auto_cleanup (default)", cfg.Git.Worktree.AutoCleanup, true},
 		{"wiki.auto_update (default)", cfg.Wiki.AutoUpdate, true},
 		{"memory.proactive_injection (default)", cfg.Memory.ProactiveInjection, true},
-		{"memory.compaction_threshold (default)", cfg.Memory.CompactionThreshold, 0.7},
 		{"memory.proactive_max_tokens (default)", cfg.Memory.ProactiveMaxTokens, 2000},
-		{"history.sync_on_checkpoint (default)", cfg.History.SyncOnCheckpoint, true},
 	}
 
 	for _, tt := range defaults {
@@ -138,25 +135,8 @@ conversation:
 	if err != nil {
 		t.Fatalf("removed fields must be ignored, got error: %v", err)
 	}
-	if cfg.Memory.CompactionThreshold != 0.7 {
-		t.Fatalf("defaults must still apply: %v", cfg.Memory.CompactionThreshold)
-	}
-}
-
-func TestParseConfig_HistoryRemote(t *testing.T) {
-	cfg, err := ParseConfig([]byte(`version: "0.1"
-history:
-  remote: https://history.example.com/pylon
-  sync_on_checkpoint: false
-`))
-	if err != nil {
-		t.Fatalf("ParseConfig failed: %v", err)
-	}
-	if cfg.History.Remote != "https://history.example.com/pylon" {
-		t.Fatalf("history.remote = %q", cfg.History.Remote)
-	}
-	if cfg.History.SyncOnCheckpoint {
-		t.Fatal("history.sync_on_checkpoint should preserve explicit false")
+	if cfg.Memory.ProactiveMaxTokens != 2000 {
+		t.Fatalf("defaults must still apply: %v", cfg.Memory.ProactiveMaxTokens)
 	}
 }
 
@@ -287,7 +267,6 @@ git:
   branch_prefix: feature
   default_base: develop
 memory:
-  compaction_threshold: 0.8
   proactive_max_tokens: 4000
 conversation:
   retention_days: 30
@@ -312,7 +291,6 @@ conversation:
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "bypassPermissions"},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "feature"},
 		{"git.default_base", cfg.Git.DefaultBase, "develop"},
-		{"memory.compaction_threshold", cfg.Memory.CompactionThreshold, 0.8},
 		{"memory.proactive_max_tokens", cfg.Memory.ProactiveMaxTokens, 4000},
 	}
 
@@ -419,7 +397,6 @@ wiki:
     - task_complete
     - pr_merged
 memory:
-  compaction_threshold: 0.7
   proactive_injection: true
   proactive_max_tokens: 2000
   session_archive: true
