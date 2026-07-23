@@ -105,21 +105,19 @@ func mergeHooks(existing map[string]any, pylonHooks map[string][]settingsHookEnt
 	}
 
 	// For each hook event type in existing, preserve non-pylon entries
-	if existingHooks != nil {
-		for eventType, entries := range existingHooks {
-			var preserved []any
-			if arr, ok := entries.([]any); ok {
-				for _, entry := range arr {
-					if entryMap, ok := entry.(map[string]any); ok {
-						if !isPylonHookGroup(entryMap) {
-							preserved = append(preserved, entry)
-						}
+	for eventType, entries := range existingHooks {
+		var preserved []any
+		if arr, ok := entries.([]any); ok {
+			for _, entry := range arr {
+				if entryMap, ok := entry.(map[string]any); ok {
+					if !isPylonHookGroup(entryMap) {
+						preserved = append(preserved, entry)
 					}
 				}
 			}
-			if len(preserved) > 0 {
-				result[eventType] = preserved
-			}
+		}
+		if len(preserved) > 0 {
+			result[eventType] = preserved
 		}
 	}
 

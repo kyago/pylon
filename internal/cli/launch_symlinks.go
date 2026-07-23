@@ -10,151 +10,118 @@ import (
 	"github.com/kyago/pylon/internal/layout"
 )
 
-// generateClaudeAgentsWithSkills generates .claude/agents/ files with skill injection.
-// For agents with skills: generates a file with skill content appended to the body.
-// For agents without skills: creates a symlink to .pylon/agents/ (default behavior).
-// Respects SkillsConfig flags: Enabled, PreloadToAgents, ProgressiveDisclosure.
 func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
-	pylonDir := layout.PylonDir(root)
-	pylonAgentsDir := filepath.Join(pylonDir, "agents")
+	pylonAgentsDir := filepath.Join(layout.PylonDir(root), "agents")
 	claudeAgentsDir := layout.ClaudeAgentsDir(root)
-	skillsDir := filepath.Join(pylonDir, "skills")
-
-	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
+	if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(pylonAgentsDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 
-	entries, err := os.ReadDir(pylonAgentsDir)
+	skillMap, err := loadAgentSkillMap(cfg, filepath.Join(layout.PylonDir(root), "skills"))
 	if err != nil {
-		return nil // no agents directory, nothing to do
+		return err
 	}
-
-	// Preload skill map for efficient lookup
-	skillMap := make(map[string]*config.SkillConfig)
-	if cfg.Skills.Enabled && cfg.Skills.PreloadToAgents {
-		skills, err := config.DiscoverSkills(skillsDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "경고: 스킬 로드 실패: %v\n", err)
-		}
-		for _, s := range skills {
-			skillMap[s.Name] = s
-		}
-	}
-
-	// Track which agent files are expected so we can clean up stale entries
-	expectedAgents := make(map[string]bool)
-
+	expected := make(map[string]bool)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
-
-		expectedAgents[entry.Name()] = true
-		agentPath := filepath.Join(pylonAgentsDir, entry.Name())
-		linkPath := filepath.Join(claudeAgentsDir, entry.Name())
-
-		// Parse agent to check for skills
-		agent, err := config.ParseAgentFile(agentPath)
-		if err != nil {
-			// Unparseable agent — fall back to symlink
-			ensureSymlink(linkPath, layout.AgentLinkTarget(entry.Name()))
-			continue
-		}
-
-		// If skills disabled or agent has no skills, use symlink
-		if !cfg.Skills.Enabled || !cfg.Skills.PreloadToAgents || len(agent.Skills) == 0 {
-			ensureSymlink(linkPath, layout.AgentLinkTarget(entry.Name()))
-			continue
-		}
-
-		// Agent has skills — generate file with skill content injected
-		content, err := os.ReadFile(agentPath)
-		if err != nil {
-			continue
-		}
-
-		injected := buildSkillInjection(agent.Skills, skillMap, cfg.Skills.ProgressiveDisclosure)
-		if injected == "" {
-			// No matching skills found, use symlink
-			ensureSymlink(linkPath, layout.AgentLinkTarget(entry.Name()))
-			continue
-		}
-
-		// Append skill section to agent content
-		combined := string(content) + "\n\n" + injected
-
-		// linkPath의 이름은 .pylon/agents/ 기반이므로 pylon 관리 에이전트다.
-		// 심링크는 제거하고 최신 주입 내용으로 재생성한다. 일반 파일은 pylon이
-		// 생성한 주입 파일(주입 마커 포함)만 갱신하고, 마커가 없는(사용자가 직접
-		// 작성한) 파일은 보존한다. 이미 최신 내용이면 다시 쓰지 않는다.
-		//
-		// 계약: 주입 마커를 포함한 .claude/agents/ 파일은 pylon 소유로 간주되며,
-		// 사용자가 이 파일을 직접 수정하더라도(마커가 남아 있는 한) update 시
-		// 최신 주입 내용으로 덮어써진다. 에이전트 커스터마이징은 .claude/agents/가
-		// 아니라 .pylon/agents/ 또는 .pylon/skills/에서 해야 한다. 마커가 없는
-		// 파일(사용자가 처음부터 작성한 에이전트)은 절대 덮어쓰지 않는다.
-		if info, err := os.Lstat(linkPath); err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				os.Remove(linkPath)
-			} else {
-				existing, rerr := os.ReadFile(linkPath)
-				if rerr != nil || !strings.Contains(string(existing), skillInjectionMarker) {
-					continue // 사용자 작성 파일(주입 마커 없음) — 보존
-				}
-				if string(existing) == combined {
-					continue // 이미 최신 주입 내용 — 갱신 불필요
-				}
-			}
-		}
-		if err := os.WriteFile(linkPath, []byte(combined), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "경고: %s 에이전트 파일 생성 실패: %v\n", entry.Name(), err)
+		expected[entry.Name()] = true
+		if err := materializeClaudeAgent(
+			filepath.Join(pylonAgentsDir, entry.Name()),
+			filepath.Join(claudeAgentsDir, entry.Name()),
+			layout.AgentLinkTarget(entry.Name()), cfg, skillMap,
+		); err != nil {
+			return fmt.Errorf("%s 에이전트 동기화 실패: %w", entry.Name(), err)
 		}
 	}
+	return removeStaleAgentLinks(claudeAgentsDir, expected)
+}
 
-	// Clean up stale entries in .claude/agents/ that no longer exist in .pylon/agents/.
-	// Only symlinks are removed — pylon-generated regular files (from skill injection) are
-	// left in place because they cannot be reliably distinguished from user-created files
-	// without a manifest. This is a known limitation; a manifest-based approach can be added later.
-	//
-	// Related known gap: if an agent that still exists in .pylon/agents/ loses all of its
-	// skills between versions, it routes to the ensureSymlink path above, which does not
-	// touch existing regular files — so a previously injected (marker-bearing) regular file
-	// is left with stale content until manually removed. Not data loss; same manifest limitation.
-	claudeEntries, err := os.ReadDir(claudeAgentsDir)
+func loadAgentSkillMap(cfg *config.Config, skillsDir string) (map[string]*config.SkillConfig, error) {
+	skillMap := make(map[string]*config.SkillConfig)
+	if !cfg.Skills.Enabled || !cfg.Skills.PreloadToAgents {
+		return skillMap, nil
+	}
+	skills, err := config.DiscoverSkills(skillsDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "경고: .claude/agents/ 읽기 실패: %v\n", err)
+		return nil, fmt.Errorf("스킬 로드 실패: %w", err)
 	}
-	for _, ce := range claudeEntries {
-		if ce.IsDir() || !strings.HasSuffix(ce.Name(), ".md") {
-			continue
+	for _, skill := range skills {
+		skillMap[skill.Name] = skill
+	}
+	return skillMap, nil
+}
+
+func materializeClaudeAgent(agentPath, linkPath, target string, cfg *config.Config, skillMap map[string]*config.SkillConfig) error {
+	agent, err := config.ParseAgentFile(agentPath)
+	if err != nil || !cfg.Skills.Enabled || !cfg.Skills.PreloadToAgents || len(agent.Skills) == 0 {
+		return ensureSymlink(linkPath, target)
+	}
+	content, err := os.ReadFile(agentPath)
+	if err != nil {
+		return err
+	}
+	injected := buildSkillInjection(agent.Skills, skillMap, cfg.Skills.ProgressiveDisclosure)
+	if injected == "" {
+		return ensureSymlink(linkPath, target)
+	}
+	return writeInjectedAgent(linkPath, string(content)+"\n\n"+injected)
+}
+
+func writeInjectedAgent(path, content string) error {
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil && info.Mode()&os.ModeSymlink != 0:
+		if err := os.Remove(path); err != nil {
+			return err
 		}
-		if expectedAgents[ce.Name()] {
-			continue
-		}
-		stale := filepath.Join(claudeAgentsDir, ce.Name())
-		info, err := os.Lstat(stale)
+	case err == nil:
+		existing, err := os.ReadFile(path)
 		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(existing), skillInjectionMarker) || string(existing) == content {
+			return nil
+		}
+	case !os.IsNotExist(err):
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func removeStaleAgentLinks(claudeAgentsDir string, expected map[string]bool) error {
+	entries, err := os.ReadDir(claudeAgentsDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") || expected[entry.Name()] {
 			continue
+		}
+		path := filepath.Join(claudeAgentsDir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			if err := os.Remove(stale); err != nil {
-				fmt.Fprintf(os.Stderr, "경고: 스테일 심링크 제거 실패 %s: %v\n", ce.Name(), err)
+			if err := os.Remove(path); err != nil {
+				return err
 			}
 		}
 	}
-
 	return nil
 }
 
-// skillInjectionMarker is the header that marks a .claude/agents/ file as
-// pylon-generated with injected skill content. It is used to distinguish
-// pylon-managed injected files (safe to refresh on upgrade) from files a user
-// authored by hand (preserved).
 const skillInjectionMarker = "## 주입된 스킬"
 
-// buildSkillInjection generates the skill content to inject into an agent file.
-// If progressiveDisclosure is true, only metadata (name + description) is injected.
-// If false, the full skill body is injected.
 func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillConfig, progressiveDisclosure bool) string {
 	var b strings.Builder
 	injected := false
@@ -196,39 +163,39 @@ func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillC
 // syncClaudeAgentLinks ensures .claude/agents/ has symlinks for all .pylon/agents/*.md files.
 func syncClaudeAgentLinks(workDir, pylonDir string) error {
 	claudeAgentsDir := layout.ClaudeAgentsDir(workDir)
-	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
+	if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {
 		return err
 	}
-
-	pylonAgentsDir := filepath.Join(pylonDir, "agents")
-	entries, err := os.ReadDir(pylonAgentsDir)
+	entries, err := os.ReadDir(filepath.Join(pylonDir, "agents"))
 	if err != nil {
 		return err
 	}
-
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
-		// 기존 심링크는 제거 후 재생성, 일반 파일은 보존 (ensureSymlink 계약)
-		ensureSymlink(filepath.Join(claudeAgentsDir, entry.Name()), layout.AgentLinkTarget(entry.Name()))
+		if err := ensureSymlink(filepath.Join(claudeAgentsDir, entry.Name()), layout.AgentLinkTarget(entry.Name())); err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 
-// ensureSymlink creates a symlink at linkPath pointing to target.
-// If a symlink already exists, it is removed and recreated.
-// Regular files are left untouched.
-func ensureSymlink(linkPath, target string) {
-	if info, err := os.Lstat(linkPath); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			os.Remove(linkPath)
-		} else {
-			return // regular file, don't touch
+// ensureSymlink creates a managed symlink while preserving regular user files.
+func ensureSymlink(linkPath, target string) error {
+	info, err := os.Lstat(linkPath)
+	switch {
+	case err == nil && info.Mode()&os.ModeSymlink != 0:
+		if err := os.Remove(linkPath); err != nil {
+			return err
 		}
+	case err == nil:
+		return nil
+	case !os.IsNotExist(err):
+		return err
 	}
 	if err := os.Symlink(target, linkPath); err != nil && !os.IsExist(err) {
-		fmt.Fprintf(os.Stderr, "경고: 심링크 생성 실패 %s: %v\n", filepath.Base(linkPath), err)
+		return err
 	}
+	return nil
 }

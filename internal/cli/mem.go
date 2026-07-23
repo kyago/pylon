@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -182,13 +181,12 @@ func confirmDeletion(count int64) bool {
 
 func printPruneResult(action string, count int64, dryRun bool) {
 	if flagJSON {
-		data, _ := json.Marshal(map[string]any{
+		_ = printJSON(map[string]any{
 			"status":  "ok",
 			"action":  action,
 			"count":   count,
 			"dry_run": dryRun,
 		})
-		fmt.Println(string(data))
 	} else if dryRun {
 		fmt.Printf("%d건이 삭제 대상입니다 (dry-run, 실제 삭제되지 않음)\n", count)
 	} else {
@@ -313,8 +311,7 @@ func runMemSearch(project, query string, limit int) error {
 				Rank:       r.Rank,
 			}
 		}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
+		return printJSONIndent(out)
 	} else {
 		for _, r := range results {
 			fmt.Printf("[%s/%s] (rank: %.2f, confidence: %.1f)\n", r.Category, r.Key, r.Rank, r.Confidence)
@@ -346,13 +343,12 @@ func runMemStore(project, key, content, category, author string, confidence floa
 	}
 
 	if flagJSON {
-		data, _ := json.Marshal(map[string]string{
+		return printJSON(map[string]string{
 			"id":      entry.ID,
 			"project": project,
 			"key":     key,
 			"status":  "ok",
 		})
-		fmt.Println(string(data))
 	} else {
 		fmt.Printf("✓ 메모리 저장: %s/%s/%s\n", project, category, key)
 	}
@@ -405,8 +401,7 @@ func runMemList(project, category string) error {
 				Confidence: e.Confidence,
 			}
 		}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
+		return printJSONIndent(out)
 	} else {
 		fmt.Printf("%-15s %-15s %-40s %s\n", "CATEGORY", "KEY", "CONTENT", "AUTHOR")
 		for _, e := range entries {

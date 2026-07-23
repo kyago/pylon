@@ -385,6 +385,16 @@ func withStdin(t *testing.T, input string, fn func()) {
 	fn()
 }
 
+func TestProjectNextSteps_UsesV2PipelineCommand(t *testing.T) {
+	message := projectNextSteps("/workspace/app/.pylon/context.md", "/workspace/app/.pylon/agents")
+	if strings.Contains(message, "pylon request") {
+		t.Fatalf("obsolete v1 command found: %s", message)
+	}
+	if !strings.Contains(message, `/pl:pipeline "<requirement>"`) {
+		t.Fatalf("v2 pipeline command missing: %s", message)
+	}
+}
+
 func TestRunAddProject_UsesPlainClone(t *testing.T) {
 	requireGit(t)
 
@@ -443,4 +453,3 @@ func TestRunAddProject_UsesPlainClone(t *testing.T) {
 		t.Errorf("expected sub .pylon/context.md, got %v", err)
 	}
 }
-

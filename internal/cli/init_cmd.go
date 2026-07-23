@@ -202,7 +202,7 @@ git:
 		return fmt.Errorf("failed to load history config: %w", err)
 	}
 	if err := history.NewManager(workDir, cfg.History, s, nil).Initialize(); err != nil {
-		return fmt.Errorf("Fossil 작업 이력 저장소 초기화 실패: %w", err)
+		return fmt.Errorf("fossil 작업 이력 저장소 초기화 실패: %w", err)
 	}
 
 	projects, err := config.DiscoverProjects(workDir)

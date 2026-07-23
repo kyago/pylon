@@ -140,8 +140,3 @@ func (s *Store) getAppliedMigrations() (map[string]bool, error) {
 func (s *Store) Close() error {
 	return s.db.Close()
 }
-
-// DB returns the underlying *sql.DB for advanced queries.
-func (s *Store) DB() *sql.DB {
-	return s.db
-}

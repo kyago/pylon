@@ -75,6 +75,7 @@ func init() {
 	rootCmd.AddCommand(newUpdateCmd())
 	rootCmd.AddCommand(newAddAgentCmd())
 	rootCmd.AddCommand(newAddSkillCmd())
+	rootCmd.AddCommand(newInternalCmd())
 }
 
 // Execute runs the root command.
