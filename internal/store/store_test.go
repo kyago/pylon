@@ -23,7 +23,7 @@ func setupTestStore(t *testing.T) *Store {
 
 func TestNewStore_InMemory(t *testing.T) {
 	s := setupTestStore(t)
-	if s.DB() == nil {
+	if s.db == nil {
 		t.Error("expected non-nil db")
 	}
 }
@@ -38,10 +38,10 @@ func TestNewStore_PragmasApplyToAllPooledConnections(t *testing.T) {
 
 	// 유휴 커넥션 재사용을 막아 이후 쿼리가 새 커넥션에서 실행되도록 강제한다.
 	// PRAGMA가 DSN이 아닌 개별 커넥션에만 적용되면 새 커넥션에서는 풀린다.
-	s.DB().SetMaxIdleConns(0)
+	s.db.SetMaxIdleConns(0)
 
 	var fk int
-	if err := s.DB().QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
+	if err := s.db.QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
 		t.Fatalf("failed to query foreign_keys: %v", err)
 	}
 	if fk != 1 {
@@ -49,7 +49,7 @@ func TestNewStore_PragmasApplyToAllPooledConnections(t *testing.T) {
 	}
 
 	var bt int
-	if err := s.DB().QueryRow("PRAGMA busy_timeout").Scan(&bt); err != nil {
+	if err := s.db.QueryRow("PRAGMA busy_timeout").Scan(&bt); err != nil {
 		t.Fatalf("failed to query busy_timeout: %v", err)
 	}
 	if bt <= 0 {
@@ -57,7 +57,7 @@ func TestNewStore_PragmasApplyToAllPooledConnections(t *testing.T) {
 	}
 
 	var jm string
-	if err := s.DB().QueryRow("PRAGMA journal_mode").Scan(&jm); err != nil {
+	if err := s.db.QueryRow("PRAGMA journal_mode").Scan(&jm); err != nil {
 		t.Fatalf("failed to query journal_mode: %v", err)
 	}
 	if jm != "wal" {
@@ -71,7 +71,7 @@ func TestMigrate_DropsOrphanConversationsTable(t *testing.T) {
 	// conversations 테이블은 v2에서 코드 경로가 제거된 고아 테이블이므로
 	// 마이그레이션 완료 후 존재해서는 안 된다.
 	var count int
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversations'`,
 	).Scan(&count)
 	if err != nil {
@@ -116,7 +116,7 @@ func TestMigrate_FileNameOrder(t *testing.T) {
 
 	// 실제 마이그레이션 실행 후 schema_migrations의 순서 확인
 	s := setupTestStore(t)
-	rows, err := s.DB().Query(`SELECT version FROM schema_migrations ORDER BY rowid`)
+	rows, err := s.db.Query(`SELECT version FROM schema_migrations ORDER BY rowid`)
 	if err != nil {
 		t.Fatalf("failed to query schema_migrations: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestMigrate_SkipsAlreadyApplied(t *testing.T) {
 
 	// 실행된 마이그레이션 수 확인
 	var countBefore int
-	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&countBefore); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&countBefore); err != nil {
 		t.Fatalf("failed to count migrations: %v", err)
 	}
 
@@ -168,7 +168,7 @@ func TestMigrate_SkipsAlreadyApplied(t *testing.T) {
 	}
 
 	var countAfter int
-	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&countAfter); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&countAfter); err != nil {
 		t.Fatalf("failed to count migrations: %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestMigrate_RecordsAppliedVersions(t *testing.T) {
 	s := setupTestStore(t)
 
 	// schema_migrations 테이블에 실행 기록이 있는지 확인
-	rows, err := s.DB().Query(`SELECT version, applied_at FROM schema_migrations ORDER BY version`)
+	rows, err := s.db.Query(`SELECT version, applied_at FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		t.Fatalf("failed to query schema_migrations: %v", err)
 	}
@@ -271,18 +271,28 @@ func TestProjectMemory_GetByCategory(t *testing.T) {
 	}
 }
 
-func TestProjectMemory_IncrementAccess(t *testing.T) {
+func TestProjectMemory_SearchIncrementsAccessForReturnedProject(t *testing.T) {
 	s := setupTestStore(t)
 
-	entry := &MemoryEntry{ProjectID: "p1", Category: "learning", Key: "k1", Content: "c1"}
-	s.InsertMemory(entry)
-
-	s.IncrementAccessCount(entry.ID)
-	s.IncrementAccessCount(entry.ID)
+	entry := &MemoryEntry{ProjectID: "p1", Category: "learning", Key: "k1", Content: "shared searchable content"}
+	other := &MemoryEntry{ProjectID: "p2", Category: "learning", Key: "k2", Content: "shared searchable content"}
+	if err := s.InsertMemory(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertMemory(other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SearchMemory("p1", "searchable", 10); err != nil {
+		t.Fatal(err)
+	}
 
 	entries, _ := s.GetMemoryByCategory("p1", "learning")
-	if len(entries) > 0 && entries[0].AccessCount != 2 {
-		t.Errorf("expected access count 2, got %d", entries[0].AccessCount)
+	if len(entries) > 0 && entries[0].AccessCount != 1 {
+		t.Errorf("expected access count 1, got %d", entries[0].AccessCount)
+	}
+	otherEntries, _ := s.GetMemoryByCategory("p2", "learning")
+	if len(otherEntries) > 0 && otherEntries[0].AccessCount != 0 {
+		t.Errorf("expected other project access count 0, got %d", otherEntries[0].AccessCount)
 	}
 }
 
@@ -302,7 +312,7 @@ func TestProjectMemory_FTSTrigger_UpdateSync(t *testing.T) {
 	}
 
 	// UPDATE를 직접 실행하여 트리거 동작을 검증
-	_, err := s.DB().Exec(
+	_, err := s.db.Exec(
 		`UPDATE project_memory SET content = ?, key = ? WHERE id = ?`,
 		"updated content about authorization", "updated-key", entry.ID,
 	)
@@ -354,7 +364,7 @@ func TestProjectMemory_FTSTrigger_DeleteSync(t *testing.T) {
 	}
 
 	// DELETE를 직접 실행하여 트리거 동작을 검증
-	_, err = s.DB().Exec(`DELETE FROM project_memory WHERE id = ?`, entry.ID)
+	_, err = s.db.Exec(`DELETE FROM project_memory WHERE id = ?`, entry.ID)
 	if err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}
@@ -550,4 +560,3 @@ func TestSearchMemory_HyphenatedKeyMatch(t *testing.T) {
 		t.Errorf("expected 1 result for hyphenated key search, got %d", len(results))
 	}
 }
-

@@ -22,6 +22,13 @@ func TestBuildSkillInjection_EmptySkills(t *testing.T) {
 	}
 }
 
+func TestEnsureSymlink_ReturnsFilesystemError(t *testing.T) {
+	linkPath := filepath.Join(t.TempDir(), "missing", "agent.md")
+	if err := ensureSymlink(linkPath, "target.md"); err == nil {
+		t.Fatal("expected symlink creation error")
+	}
+}
+
 func TestBuildSkillInjection_NoMatchingSkill(t *testing.T) {
 	skillMap := map[string]*config.SkillConfig{
 		"other-skill": {Name: "other-skill", Description: "Other", Body: "body"},

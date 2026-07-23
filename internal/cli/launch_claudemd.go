@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,9 +23,9 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	// Workspace info
 	b.WriteString("## 워크스페이스\n\n")
 	b.WriteString(fmt.Sprintf("- **루트**: `%s`\n", root))
-	b.WriteString(fmt.Sprintf("- **설정**: `.pylon/config.yml`\n"))
-	b.WriteString(fmt.Sprintf("- **도메인 지식**: `.pylon/domain/`\n"))
-	b.WriteString(fmt.Sprintf("- **에이전트 정의**: `.pylon/agents/`\n"))
+	b.WriteString("- **설정**: `.pylon/config.yml`\n")
+	b.WriteString("- **도메인 지식**: `.pylon/domain/`\n")
+	b.WriteString("- **에이전트 정의**: `.pylon/agents/`\n")
 
 	// Projects
 	if len(projects) > 0 {
@@ -188,18 +187,4 @@ func discoverAgentsByDomain(pylonDir string) map[string][]config.AgentConfig {
 		result[domain] = append(result[domain], *agent)
 	}
 	return result
-}
-
-// formatProjectsJSON returns project info as JSON for agent consumption.
-func formatProjectsJSON(projects []config.ProjectInfo) string {
-	type projectOut struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-	}
-	out := make([]projectOut, len(projects))
-	for i, p := range projects {
-		out[i] = projectOut{Name: p.Name, Path: p.Path}
-	}
-	data, _ := json.Marshal(out)
-	return string(data)
 }

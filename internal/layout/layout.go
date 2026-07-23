@@ -25,11 +25,6 @@ func RuntimeDir(root string) string {
 	return filepath.Join(PylonDir(root), "runtime")
 }
 
-// AgentsDir returns the agent definition directory (.pylon/agents).
-func AgentsDir(root string) string {
-	return filepath.Join(PylonDir(root), "agents")
-}
-
 // CommandsDir returns the pipeline command directory (.pylon/commands).
 func CommandsDir(root string) string {
 	return filepath.Join(PylonDir(root), "commands")

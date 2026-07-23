@@ -16,16 +16,17 @@ type VerifyStep struct {
 // VerifyConfig holds the parsed verify.yml configuration.
 // Spec Reference: Section 7 "pylon request" step 9 (cross-validation)
 type VerifyConfig struct {
-	Build *VerifyStep `yaml:"build"`
-	Test  *VerifyStep `yaml:"test"`
-	Lint  *VerifyStep `yaml:"lint"`
+	Build    *VerifyStep       `yaml:"build"`
+	Test     *VerifyStep       `yaml:"test"`
+	Lint     *VerifyStep       `yaml:"lint"`
+	Commands []NamedVerifyStep `yaml:"commands"`
 }
 
 // NamedVerifyStep is a verify step with its category name.
 type NamedVerifyStep struct {
-	Name    string
-	Command string
-	Timeout string
+	Name    string `yaml:"name"`
+	Command string `yaml:"command"`
+	Timeout string `yaml:"timeout"`
 }
 
 // LoadVerifyConfig reads and parses a verify.yml file.
@@ -47,6 +48,20 @@ func LoadVerifyConfig(path string) (*VerifyConfig, error) {
 // Missing categories are skipped. Empty commands are skipped.
 // Default timeout "60s" is applied when not specified.
 func (vc *VerifyConfig) OrderedSteps() []NamedVerifyStep {
+	if len(vc.Commands) > 0 {
+		steps := make([]NamedVerifyStep, 0, len(vc.Commands))
+		for _, step := range vc.Commands {
+			if step.Command == "" {
+				continue
+			}
+			if step.Timeout == "" {
+				step.Timeout = "60s"
+			}
+			steps = append(steps, step)
+		}
+		return steps
+	}
+
 	var steps []NamedVerifyStep
 
 	sources := []struct {

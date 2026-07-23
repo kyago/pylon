@@ -381,8 +381,8 @@ func extractFromZip(archivePath string) (string, error) {
 // On Unix, it uses atomic rename. On Windows, self-update is not supported.
 func replaceBinary(dst, src string) error {
 	if runtime.GOOS == "windows" {
-		return fmt.Errorf("Windows에서는 실행 중인 바이너리를 자동 교체할 수 없습니다. " +
-			"GitHub Releases에서 바이너리를 수동으로 다운로드하세요: " +
+		return fmt.Errorf("windows에서는 실행 중인 바이너리를 자동 교체할 수 없습니다. " +
+			"github releases에서 바이너리를 수동으로 다운로드하세요: " +
 			"https://github.com/" + githubRepo + "/releases")
 	}
 

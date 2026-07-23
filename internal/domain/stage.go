@@ -1,9 +1,7 @@
 // Package domain defines shared domain types used across multiple packages.
-// Stage constants are the single source of truth for pipeline stages,
-// eliminating manual synchronization between orchestrator and store.
 package domain
 
-// Stage represents a pipeline execution stage.
+// Stage represents a pipeline execution stage inferred from runtime artifacts.
 type Stage string
 
 const (
@@ -11,111 +9,19 @@ const (
 	StagePOConversation    Stage = "po_conversation"
 	StageArchitectAnalysis Stage = "architect_analysis"
 	StagePMTaskBreakdown   Stage = "pm_task_breakdown"
-	StageTaskReview        Stage = "task_review"
 	StageAgentExecuting    Stage = "agent_executing"
 	StageVerification      Stage = "verification"
 	StagePRCreation        Stage = "pr_creation"
-	StagePOValidation      Stage = "po_validation"
-	StageWikiUpdate        Stage = "wiki_update"
-	StageCompleted         Stage = "completed"
-	StageFailed            Stage = "failed"
-
-	// Generic stages for non-software domains (Harness architecture patterns)
-	StageFanOut         Stage = "fan_out"          // Parallel branch (fan-out/fan-in pattern)
-	StageFanIn          Stage = "fan_in"           // Parallel merge
-	StageExpertSelect   Stage = "expert_select"    // Expert pool selection
-	StageGenerate       Stage = "generate"         // Content/report generation
-	StageValidate       Stage = "validate"         // Validation (generate-verify pattern)
-	StageSupervisorCheck Stage = "supervisor_check" // Supervisor checkpoint
 )
 
-// PipelineStatus represents the operational status of a pipeline (orthogonal to Stage).
-type PipelineStatus string
-
-const (
-	StatusRunning   PipelineStatus = "running"
-	StatusPaused    PipelineStatus = "paused"
-	StatusCompleted PipelineStatus = "completed"
-	StatusFailed    PipelineStatus = "failed"
-)
-
-// AllStages returns all valid pipeline stages.
-func AllStages() []Stage {
-	return []Stage{
-		StageInit,
-		StagePOConversation,
-		StageArchitectAnalysis,
-		StagePMTaskBreakdown,
-		StageTaskReview,
-		StageAgentExecuting,
-		StageVerification,
-		StagePRCreation,
-		StagePOValidation,
-		StageWikiUpdate,
-		StageCompleted,
-		StageFailed,
-		// Generic stages for non-software domains
-		StageFanOut,
-		StageFanIn,
-		StageExpertSelect,
-		StageGenerate,
-		StageValidate,
-		StageSupervisorCheck,
-	}
-}
-
-// ArtifactToStage maps a pipeline artifact filename to its corresponding stage.
-// In v2, artifact existence in .pylon/runtime/{pipeline-id}/ indicates stage completion.
-var ArtifactToStage = map[string]Stage{
-	"requirement.md":          StageInit,
-	"requirement-analysis.md": StagePOConversation,
-	"architecture.md":         StageArchitectAnalysis,
-	"tasks.json":              StagePMTaskBreakdown,
-	"execution-log.json":      StageAgentExecuting,
-	"verification.json":       StageVerification,
-	"pr.json":                 StagePRCreation,
-}
-
-// ArtifactStageEntry is an ordered artifact-to-stage mapping entry.
-// Entries should be ordered from latest pipeline stage to earliest (reverse pipeline order).
-type ArtifactStageEntry struct {
-	File  string
-	Stage Stage
-}
-
-// StageFromArtifactsWithMap determines the current stage based on which artifacts exist,
-// using a custom ordered artifact-to-stage mapping. Entries must be ordered from latest
-// to earliest pipeline stage (same as the orderedArtifacts pattern in StageFromArtifacts).
-// If entries is nil, falls back to the default ArtifactToStage map (backward compatible).
-func StageFromArtifactsWithMap(existingFiles []string, entries []ArtifactStageEntry) Stage {
-	fileSet := make(map[string]bool, len(existingFiles))
-	for _, f := range existingFiles {
-		fileSet[f] = true
-	}
-
-	if entries == nil {
-		// Fallback to default map via StageFromArtifacts behavior
-		return StageFromArtifacts(existingFiles)
-	}
-
-	// Entries are ordered latest-first; first match = highest completed stage
-	for _, e := range entries {
-		if fileSet[e.File] {
-			return e.Stage
-		}
-	}
-	return StageInit
-}
-
-// StageFromArtifacts determines the current stage based on which artifacts exist.
-// Returns the highest completed stage.
+// StageFromArtifacts returns the highest completed stage represented by the
+// runtime artifact filenames.
 func StageFromArtifacts(existingFiles []string) Stage {
 	fileSet := make(map[string]bool, len(existingFiles))
-	for _, f := range existingFiles {
-		fileSet[f] = true
+	for _, file := range existingFiles {
+		fileSet[file] = true
 	}
 
-	// Check in reverse pipeline order
 	orderedArtifacts := []struct {
 		file  string
 		stage Stage
@@ -129,9 +35,9 @@ func StageFromArtifacts(existingFiles []string) Stage {
 		{"requirement.md", StageInit},
 	}
 
-	for _, a := range orderedArtifacts {
-		if fileSet[a.file] {
-			return a.stage
+	for _, artifact := range orderedArtifacts {
+		if fileSet[artifact.file] {
+			return artifact.stage
 		}
 	}
 	return StageInit

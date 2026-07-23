@@ -84,10 +84,10 @@ func runLaunch() error {
 
 func prepareHistory(root string, cfg config.HistoryConfig) error {
 	if _, err := history.VerifyFossil(); err != nil {
-		return fmt.Errorf("Fossil 확인 실패 — 'pylon doctor'로 설치 상태를 확인하세요: %w", err)
+		return fmt.Errorf("fossil 확인 실패 — 'pylon doctor'로 설치 상태를 확인하세요: %w", err)
 	}
 	if err := history.NewManager(root, cfg, nil, nil).Initialize(); err != nil {
-		return fmt.Errorf("Fossil 작업 이력 저장소 초기화 실패: %w", err)
+		return fmt.Errorf("fossil 작업 이력 저장소 초기화 실패: %w", err)
 	}
 	return nil
 }

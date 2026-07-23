@@ -138,6 +138,7 @@ func (s *Store) SearchMemory(projectID, query string, limit int) ([]MemorySearch
 	defer rows.Close()
 
 	var results []MemorySearchResult
+	var resultIDs []string
 	for rows.Next() {
 		var r MemorySearchResult
 		var metadata, author sql.NullString
@@ -150,8 +151,36 @@ func (s *Store) SearchMemory(projectID, query string, limit int) ([]MemorySearch
 		r.Metadata = metadata.String
 		r.Author = author.String
 		results = append(results, r)
+		resultIDs = append(resultIDs, r.ID)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.incrementAccessCounts(resultIDs); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func (s *Store) incrementAccessCounts(memoryIDs []string) error {
+	if len(memoryIDs) == 0 {
+		return nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(memoryIDs)), ",")
+	args := make([]any, len(memoryIDs))
+	for i, memoryID := range memoryIDs {
+		args[i] = memoryID
+	}
+	if _, err := s.db.Exec(
+		`UPDATE project_memory SET access_count = access_count + 1 WHERE id IN (`+placeholders+`)`,
+		args...,
+	); err != nil {
+		return fmt.Errorf("failed to increment access count: %w", err)
+	}
+	return nil
 }
 
 // GetMemoryByCategory returns all entries for a project and category.
@@ -166,23 +195,7 @@ func (s *Store) GetMemoryByCategory(projectID, category string) ([]MemoryEntry, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get memory by category: %w", err)
 	}
-	defer rows.Close()
-
-	var entries []MemoryEntry
-	for rows.Next() {
-		var e MemoryEntry
-		var metadata, author sql.NullString
-		if err := rows.Scan(
-			&e.ID, &e.ProjectID, &e.Category, &e.Key, &e.Content, &metadata,
-			&author, &e.Confidence, &e.AccessCount, &e.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		e.Metadata = metadata.String
-		e.Author = author.String
-		entries = append(entries, e)
-	}
-	return entries, rows.Err()
+	return scanMemoryEntries(rows)
 }
 
 // ListProjectMemory returns all memory entries for a given project.
@@ -197,6 +210,10 @@ func (s *Store) ListProjectMemory(projectID string) ([]MemoryEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list project memory: %w", err)
 	}
+	return scanMemoryEntries(rows)
+}
+
+func scanMemoryEntries(rows *sql.Rows) ([]MemoryEntry, error) {
 	defer rows.Close()
 
 	var entries []MemoryEntry
@@ -302,15 +319,6 @@ func (s *Store) DedupMemoryChanges(projectID string, dryRun bool) (int64, error)
 func (s *Store) Vacuum() error {
 	if _, err := s.db.Exec(`VACUUM`); err != nil {
 		return fmt.Errorf("failed to vacuum database: %w", err)
-	}
-	return nil
-}
-
-// IncrementAccessCount bumps the access count for a memory entry.
-func (s *Store) IncrementAccessCount(memoryID string) error {
-	_, err := s.db.Exec(`UPDATE project_memory SET access_count = access_count + 1 WHERE id = ?`, memoryID)
-	if err != nil {
-		return fmt.Errorf("failed to increment access count: %w", err)
 	}
 	return nil
 }
