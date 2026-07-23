@@ -163,6 +163,7 @@ git:
 		".pylon/runtime/",
 		".pylon/conversations/",
 		".pylon/history/",
+		// .pylon/memory/ 는 의도적으로 제외 — 메모리는 git으로 추적/리뷰한다 (D1).
 		"",
 		"# Claude CLI agent symlinks (managed by pylon)",
 		".claude/agents/",
@@ -178,6 +179,17 @@ git:
 
 	if _, err := f.WriteString("\n" + gitignoreContent); err != nil {
 		return fmt.Errorf("failed to write .gitignore: %w", err)
+	}
+
+	// 메모리 저장소 루트를 미리 만들어 git 추적을 시작한다 (D1).
+	if err := os.MkdirAll(layout.MemoryDir(workDir), 0755); err != nil {
+		return fmt.Errorf("memory 디렉토리 생성 실패: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(layout.MemoryDir(workDir), ".gitkeep"), nil, 0644); err != nil {
+		return fmt.Errorf(".gitkeep 생성 실패: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
+		fmt.Println("ℹ 워크스페이스가 git 저장소가 아닙니다 — 프로젝트 메모리(.pylon/memory/)의 버전 관리를 위해 'git init'을 권장합니다")
 	}
 
 	// Step 6: Discover projects and ensure .pylon/ is git-excluded per project
@@ -207,6 +219,7 @@ git:
 	fmt.Println("  .pylon/commands/           - pipeline slash commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
 	fmt.Println("  .pylon/history/            - pipeline work history (file-based)")
+	fmt.Println("  .pylon/memory/             - project memory (git-tracked)")
 	fmt.Println("  .pylon/conversations/      - conversation history")
 	fmt.Println("  .pylon/tasks/              - confirmed task specs")
 	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/agents/)")
