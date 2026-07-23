@@ -25,6 +25,21 @@ func RuntimeDir(root string) string {
 	return filepath.Join(PylonDir(root), "runtime")
 }
 
+// MemoryDir returns the markdown memory store root (.pylon/memory).
+func MemoryDir(root string) string {
+	return filepath.Join(PylonDir(root), "memory")
+}
+
+// ProjectMemoryDir returns one project's memory directory (.pylon/memory/<project>).
+func ProjectMemoryDir(root, project string) string {
+	return filepath.Join(MemoryDir(root), project)
+}
+
+// HistoryDir returns the file-based work history root (.pylon/history).
+func HistoryDir(root string) string {
+	return filepath.Join(PylonDir(root), "history")
+}
+
 // CommandsDir returns the pipeline command directory (.pylon/commands).
 func CommandsDir(root string) string {
 	return filepath.Join(PylonDir(root), "commands")

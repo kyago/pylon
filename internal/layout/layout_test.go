@@ -29,3 +29,15 @@ func TestLayoutPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryAndHistoryDirs(t *testing.T) {
+	if got := MemoryDir("/ws"); got != filepath.Join("/ws", ".pylon", "memory") {
+		t.Errorf("MemoryDir = %q", got)
+	}
+	if got := ProjectMemoryDir("/ws", "app"); got != filepath.Join("/ws", ".pylon", "memory", "app") {
+		t.Errorf("ProjectMemoryDir = %q", got)
+	}
+	if got := HistoryDir("/ws"); got != filepath.Join("/ws", ".pylon", "history") {
+		t.Errorf("HistoryDir = %q", got)
+	}
+}
