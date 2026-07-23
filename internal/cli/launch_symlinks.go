@@ -161,8 +161,6 @@ func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillC
 }
 
 // syncClaudeAgentLinks ensures .claude/agents/ has symlinks for all .pylon/agents/*.md files.
-
-// syncClaudeAgentLinks ensures .claude/agents/ has symlinks for all .pylon/agents/*.md files.
 func syncClaudeAgentLinks(workDir, pylonDir string) error {
 	claudeAgentsDir := layout.ClaudeAgentsDir(workDir)
 	if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {

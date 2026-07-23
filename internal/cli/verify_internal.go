@@ -114,6 +114,8 @@ func executeVerification(workDir string, steps []config.NamedVerifyStep, now fun
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		command := exec.CommandContext(ctx, "bash", "-lc", step.Command)
 		command.Dir = workDir
+		// 살아남은 자식 프로세스가 출력 파이프를 물고 있어도 타임아웃 후 무한정 대기하지 않도록 한다.
+		command.WaitDelay = 2 * time.Second
 		output, runErr := command.CombinedOutput()
 		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()

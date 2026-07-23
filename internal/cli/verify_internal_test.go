@@ -51,6 +51,21 @@ func TestExecuteVerification_ReportsTimeout(t *testing.T) {
 	}
 }
 
+func TestExecuteVerification_TimeoutNotBlockedByOrphanChild(t *testing.T) {
+	steps := []config.NamedVerifyStep{{Name: "orphan", Command: "sleep 8 & sleep 8", Timeout: "100ms"}}
+	start := time.Now()
+	result, err := executeVerification(t.TempDir(), steps, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("verification blocked by orphan child for %v", elapsed)
+	}
+	if result.OK || len(result.Checks) != 1 || result.Checks[0].OK {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
 func TestLoadVerificationSteps_DefaultsAndSkip(t *testing.T) {
 	goProject := t.TempDir()
 	if err := os.WriteFile(filepath.Join(goProject, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
