@@ -8,10 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/history"
 	"github.com/kyago/pylon/internal/layout"
-	"github.com/kyago/pylon/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -58,16 +56,8 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		// deleted without losing history. Best effort: on failure we fall back
 		// to preserving the runtime directory.
 		checkpointed := false
-		if cfg, cfgErr := config.LoadConfig(layout.ConfigPath(root)); cfgErr == nil {
-			if s, storeErr := store.NewStore(layout.DBPath(root)); storeErr == nil {
-				if s.Migrate() == nil {
-					mgr := history.NewManager(root, cfg.History, s, nil)
-					if _, cpErr := mgr.Checkpoint(pipelineID, history.PhaseCancelled); cpErr == nil {
-						checkpointed = true
-					}
-				}
-				s.Close()
-			}
+		if _, cpErr := history.NewManager(root).Checkpoint(pipelineID, history.PhaseCancelled); cpErr == nil {
+			checkpointed = true
 		}
 
 		// Run cleanup script if available

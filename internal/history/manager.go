@@ -1,16 +1,20 @@
-// Package history manages Fossil-backed, curated workspace history.
+// Package history manages the file-based, curated workspace history.
+// 체크포인트 1건 = .pylon/history/pipelines/<pipeline-id>/<phase>/ 디렉토리.
 package history
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/fsutil"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 type Phase string
@@ -34,220 +38,268 @@ func isTerminalPhase(phase Phase) bool {
 	return phase == PhaseCompleted || phase == PhaseCancelled || phase == PhaseFailed
 }
 
-type CommandRunner interface {
-	Run(dir string, args ...string) (string, error)
-}
-
-type fossilRunner struct{}
-
-func (fossilRunner) Run(dir string, args ...string) (string, error) {
-	cmd := exec.Command("fossil", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("fossil %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))
-	}
-	return string(out), nil
-}
-
+// Manager records curated pipeline history as directory snapshots.
 type Manager struct {
-	Root   string
-	Config config.HistoryConfig
-	Store  *store.Store
-	Runner CommandRunner
-	Now    func() time.Time
+	Root string
+	Now  func() time.Time
+}
+
+func NewManager(root string) *Manager {
+	return &Manager{Root: root, Now: time.Now}
+}
+
+func (m *Manager) historyDir() string   { return layout.HistoryDir(m.Root) }
+func (m *Manager) pipelinesDir() string { return filepath.Join(m.historyDir(), "pipelines") }
+
+func (m *Manager) phaseDir(pipelineID string, phase Phase) string {
+	return filepath.Join(m.pipelinesDir(), pipelineID, string(phase))
 }
 
 type Manifest struct {
-	SchemaVersion    int               `json:"schema_version"`
+	SchemaVersion    int               `json:"schema_version"` // 파일 기반 포맷은 2
 	PipelineID       string            `json:"pipeline_id"`
 	Phase            Phase             `json:"phase"`
 	RecordedAt       time.Time         `json:"recorded_at"`
 	Status           string            `json:"status"`
+	Digest           string            `json:"digest"`
 	AffectedProjects []string          `json:"affected_projects"`
 	Artifacts        map[string]string `json:"artifacts"`
 }
 
 type CheckpointResult struct {
-	PipelineID  string `json:"pipeline_id"`
-	Phase       Phase  `json:"phase"`
-	Checkin     string `json:"checkin"`
-	Duplicate   bool   `json:"duplicate"`
-	PendingSync bool   `json:"pending_sync"`
+	PipelineID string `json:"pipeline_id"`
+	Phase      Phase  `json:"phase"`
+	Ref        string `json:"ref"`
+	Digest     string `json:"digest"`
+	Duplicate  bool   `json:"duplicate"`
 }
 
-type checkpointState struct {
-	Digest      string `json:"digest"`
-	Checkin     string `json:"checkin"`
-	PendingSync bool   `json:"pending_sync"`
-}
-
-type historyState struct {
-	// Checkpoints is an external deduplication cache. Fossil remains the durable
-	// history; deleting state.json only causes an otherwise identical checkpoint
-	// to be committed again.
-	Checkpoints map[string]map[Phase]checkpointState `json:"checkpoints"`
-}
-
-func NewManager(root string, cfg config.HistoryConfig, s *store.Store, runner CommandRunner) *Manager {
-	if runner == nil {
-		runner = fossilRunner{}
+// Checkpoint captures a curated snapshot of a pipeline's runtime directory.
+func (m *Manager) Checkpoint(pipelineID string, phase Phase) (CheckpointResult, error) {
+	result := CheckpointResult{PipelineID: pipelineID, Phase: phase}
+	if err := validatePipelineID(pipelineID); err != nil {
+		return result, err
 	}
-	return &Manager{Root: root, Config: cfg, Store: s, Runner: runner, Now: time.Now}
-}
+	if !validPhases[phase] {
+		return result, fmt.Errorf("지원하지 않는 history phase: %s", phase)
+	}
+	if err := os.MkdirAll(m.pipelinesDir(), 0755); err != nil {
+		return result, err
+	}
 
-func VerifyFossil() (string, error) {
-	path, err := exec.LookPath("fossil")
+	unlock, err := fsutil.AcquireLock(filepath.Join(m.historyDir(), ".checkpoint.lock"), 10*time.Second)
 	if err != nil {
-		return "", fmt.Errorf("fossil 실행 파일을 찾을 수 없습니다: %w", err)
+		return result, err
 	}
-	out, err := exec.Command(path, "version").CombinedOutput()
+	defer unlock()
+
+	sourceDir := filepath.Join(layout.RuntimeDir(m.Root), pipelineID)
+	if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
+		return result, fmt.Errorf("파이프라인 디렉토리를 찾을 수 없습니다: %s", sourceDir)
+	}
+
+	tempDir, err := os.MkdirTemp(m.pipelinesDir(), "."+pipelineID+"-")
 	if err != nil {
-		return "", fmt.Errorf("fossil version 확인 실패: %w", err)
+		return result, err
 	}
-	fields := strings.Fields(string(out))
-	for i, field := range fields {
-		if field == "version" && i+1 < len(fields) {
-			return strings.TrimRight(fields[i+1], ",;"), nil
+	defer os.RemoveAll(tempDir)
+
+	projects, status, err := m.stageCheckpoint(sourceDir, tempDir, phase)
+	if err != nil {
+		return result, err
+	}
+	digest, artifacts, err := digestTree(tempDir)
+	if err != nil {
+		return result, err
+	}
+	result.Ref = pipelineID + "/" + string(phase)
+	result.Digest = digest
+
+	target := m.phaseDir(pipelineID, phase)
+	prev, err := readManifest(target)
+	if err != nil {
+		return result, err
+	}
+	if prev != nil && prev.Digest == digest {
+		result.Duplicate = true
+		return result, nil
+	}
+
+	manifest := Manifest{
+		SchemaVersion: 2, PipelineID: pipelineID, Phase: phase,
+		RecordedAt: m.Now().UTC(), Status: status, Digest: digest,
+		AffectedProjects: projects, Artifacts: artifacts,
+	}
+	if err := fsutil.WriteJSONAtomic(filepath.Join(tempDir, "manifest.json"), manifest); err != nil {
+		return result, err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return result, err
+	}
+	if err := os.RemoveAll(target); err != nil {
+		return result, err
+	}
+	if err := os.Rename(tempDir, target); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func readManifest(dir string) (*Manifest, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var m Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("manifest 파싱 실패 (%s): %w", dir, err)
+	}
+	return &m, nil
+}
+
+// exportMemory copies the affected projects' markdown memory into the snapshot.
+func (m *Manager) exportMemory(destDir string, projects []string) error {
+	for _, project := range projects {
+		projectID := filepath.Base(project)
+		if project == "." {
+			projectID = filepath.Base(m.Root)
 		}
-	}
-	return "", fmt.Errorf("fossil version 출력을 해석할 수 없습니다: %s", strings.TrimSpace(string(out)))
-}
-
-func (m *Manager) historyDir() string {
-	return filepath.Join(m.Root, ".pylon", "history")
-}
-
-func (m *Manager) repositoryPath() string {
-	return filepath.Join(m.historyDir(), "pylon-history.fossil")
-}
-
-func (m *Manager) checkoutDir() string {
-	return filepath.Join(m.historyDir(), "checkout")
-}
-
-func (m *Manager) Initialize() error {
-	if err := os.MkdirAll(m.historyDir(), 0700); err != nil {
-		return fmt.Errorf("history directory 생성 실패: %w", err)
-	}
-	if _, err := os.Stat(m.repositoryPath()); os.IsNotExist(err) {
-		if _, err := m.Runner.Run(m.Root, "init", m.repositoryPath()); err != nil {
-			return fmt.Errorf("fossil 저장소 초기화 실패: %w", err)
+		src := layout.ProjectMemoryDir(m.Root, projectID)
+		if info, err := os.Stat(src); err != nil || !info.IsDir() {
+			continue
 		}
-	} else if err != nil {
-		return err
-	}
-
-	if !m.checkoutInitialized() {
-		if err := os.MkdirAll(m.checkoutDir(), 0700); err != nil {
+		if err := fsutil.CopyDir(src, filepath.Join(destDir, "memory", projectID)); err != nil {
 			return err
 		}
-		args := []string{"open", m.repositoryPath(), "--workdir", m.checkoutDir(), "--nosync", "--force"}
-		if _, err := m.Runner.Run(m.Root, args...); err != nil {
-			return fmt.Errorf("fossil checkout 초기화 실패: %w", err)
-		}
-	}
-
-	statePath := filepath.Join(m.historyDir(), "state.json")
-	if _, err := os.Stat(statePath); os.IsNotExist(err) {
-		return writeJSONAtomic(statePath, historyState{Checkpoints: make(map[string]map[Phase]checkpointState)})
 	}
 	return nil
 }
 
-func (m *Manager) IsInitialized() bool {
-	_, repoErr := os.Stat(m.repositoryPath())
-	return repoErr == nil && m.checkoutInitialized()
+type LogEntry struct {
+	Ref        string    `json:"ref"`
+	PipelineID string    `json:"pipeline_id"`
+	Phase      Phase     `json:"phase"`
+	RecordedAt time.Time `json:"recorded_at"`
+	Status     string    `json:"status"`
 }
 
-func (m *Manager) checkoutInitialized() bool {
-	for _, name := range []string{".fslckout", "_FOSSIL_", ".fos"} {
-		if _, err := os.Stat(filepath.Join(m.checkoutDir(), name)); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *Manager) Log(pipelineID string, limit int) (string, error) {
-	if !m.IsInitialized() {
-		return "", fmt.Errorf("history 저장소가 초기화되지 않았습니다 — 'pylon history init'을 실행하세요")
-	}
+// Log returns checkpoints sorted by recording time, newest first.
+func (m *Manager) Log(pipelineID string, limit int) ([]LogEntry, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	fossilLimit := limit
+	pattern := filepath.Join(m.pipelinesDir(), "*", "*", "manifest.json")
 	if pipelineID != "" {
-		fossilLimit = 0
+		if err := validatePipelineID(pipelineID); err != nil {
+			return nil, err
+		}
+		pattern = filepath.Join(m.pipelinesDir(), pipelineID, "*", "manifest.json")
 	}
-	out, err := m.Runner.Run(m.Root, "timeline", "--oneline", "-n", fmt.Sprintf("%d", fossilLimit), "-t", "ci", "-R", m.repositoryPath())
+	paths, err := filepath.Glob(pattern)
 	if err != nil {
-		return strings.TrimSpace(out), err
+		return nil, err
 	}
-	var timelineLines []string
-	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(line), "+++") {
-			timelineLines = append(timelineLines, line)
+	var entries []LogEntry
+	for _, path := range paths {
+		manifest, err := readManifest(filepath.Dir(path))
+		if err != nil {
+			return nil, err
 		}
-	}
-	if pipelineID == "" {
-		return strings.TrimSpace(strings.Join(timelineLines, "\n")), nil
-	}
-	marker := fmt.Sprintf("파이프라인 %s:", pipelineID)
-	var filtered []string
-	for _, line := range timelineLines {
-		if strings.Contains(line, marker) {
-			filtered = append(filtered, line)
-			if len(filtered) == limit {
-				break
-			}
+		if manifest == nil {
+			continue
 		}
+		entries = append(entries, LogEntry{
+			Ref:        manifest.PipelineID + "/" + string(manifest.Phase),
+			PipelineID: manifest.PipelineID,
+			Phase:      manifest.Phase,
+			RecordedAt: manifest.RecordedAt,
+			Status:     manifest.Status,
+		})
 	}
-	return strings.TrimSpace(strings.Join(filtered, "\n")), nil
+	sort.Slice(entries, func(i, j int) bool { return entries[i].RecordedAt.After(entries[j].RecordedAt) })
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+	return entries, nil
 }
 
-func (m *Manager) Show(checkin string) (string, error) {
-	if checkin == "" {
-		return "", fmt.Errorf("checkin이 필요합니다")
+// resolveRef parses "<pipeline-id>/<phase>" into an existing snapshot directory.
+func (m *Manager) resolveRef(ref string) (string, error) {
+	id, phase, ok := strings.Cut(ref, "/")
+	if !ok || id == "" || phase == "" {
+		return "", fmt.Errorf("ref 형식은 <pipeline-id>/<phase> 입니다: %q", ref)
 	}
-	if !m.IsInitialized() {
-		return "", fmt.Errorf("history 저장소가 초기화되지 않았습니다")
+	if err := validatePipelineID(id); err != nil {
+		return "", err
 	}
-	out, err := m.Runner.Run(m.Root, "info", checkin, "-R", m.repositoryPath())
-	return strings.TrimSpace(out), err
+	if !validPhases[Phase(phase)] {
+		return "", fmt.Errorf("지원하지 않는 phase: %s", phase)
+	}
+	dir := m.phaseDir(id, Phase(phase))
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("체크포인트를 찾을 수 없습니다: %s", ref)
+	}
+	return dir, nil
 }
 
+// Show returns the manifest and sorted artifact list for a checkpoint ref.
+func (m *Manager) Show(ref string) (*Manifest, []string, error) {
+	dir, err := m.resolveRef(ref)
+	if err != nil {
+		return nil, nil, err
+	}
+	manifest, err := readManifest(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if manifest == nil {
+		return nil, nil, fmt.Errorf("manifest.json이 없습니다: %s", ref)
+	}
+	files := make([]string, 0, len(manifest.Artifacts))
+	for name := range manifest.Artifacts {
+		files = append(files, name)
+	}
+	sort.Strings(files)
+	return manifest, files, nil
+}
+
+// Diff runs POSIX diff -ru between two checkpoint snapshots.
 func (m *Manager) Diff(from, to string) (string, error) {
-	if from == "" || to == "" {
-		return "", fmt.Errorf("from과 to checkin이 필요합니다")
+	fromDir, err := m.resolveRef(from)
+	if err != nil {
+		return "", err
 	}
-	if !m.IsInitialized() {
-		return "", fmt.Errorf("history 저장소가 초기화되지 않았습니다")
+	toDir, err := m.resolveRef(to)
+	if err != nil {
+		return "", err
 	}
-	out, err := m.Runner.Run(m.Root, "diff", "--from", from, "--to", to, "-R", m.repositoryPath())
-	return strings.TrimSpace(out), err
+	cmd := exec.Command("diff", "-ru", fromDir, toDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return string(out), nil // 종료 코드 1 = 차이 존재 (정상)
+		}
+		return string(out), fmt.Errorf("diff 실행 실패: %w", err)
+	}
+	return string(out), nil
 }
 
-func (m *Manager) Sync() error {
-	if m.Config.Remote == "" {
-		return fmt.Errorf("history.remote가 설정되지 않았습니다")
+// Export copies a checkpoint snapshot to a new directory.
+func (m *Manager) Export(ref, output string) error {
+	if output == "" {
+		return fmt.Errorf("output 경로가 필요합니다")
 	}
-	if !m.IsInitialized() {
-		return fmt.Errorf("history 저장소가 초기화되지 않았습니다")
-	}
-	if _, err := m.Runner.Run(m.Root, "sync", m.Config.Remote, "--once", "-R", m.repositoryPath()); err != nil {
-		return fmt.Errorf("fossil 동기화 실패: %w", err)
-	}
-	state, err := m.loadState()
+	dir, err := m.resolveRef(ref)
 	if err != nil {
 		return err
 	}
-	for pipelineID, phases := range state.Checkpoints {
-		for phase, checkpoint := range phases {
-			checkpoint.PendingSync = false
-			phases[phase] = checkpoint
-		}
-		state.Checkpoints[pipelineID] = phases
+	absOutput, err := filepath.Abs(output)
+	if err != nil {
+		return err
 	}
-	return m.saveState(state)
+	return fsutil.CopyDir(dir, absOutput)
 }

@@ -1,150 +1,17 @@
 package history
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
+
+	"github.com/kyago/pylon/internal/fsutil"
 )
 
-func (m *Manager) Checkpoint(pipelineID string, phase Phase) (CheckpointResult, error) {
-	result := CheckpointResult{PipelineID: pipelineID, Phase: phase}
-	if err := validatePipelineID(pipelineID); err != nil {
-		return result, err
-	}
-	if !validPhases[phase] {
-		return result, fmt.Errorf("지원하지 않는 history phase: %s", phase)
-	}
-	sourceDir, pipelinesDir, unlock, err := m.beginCheckpoint(pipelineID)
-	if err != nil {
-		return result, err
-	}
-	defer unlock()
-	tempDir, err := os.MkdirTemp(pipelinesDir, "."+pipelineID+"-")
-	if err != nil {
-		return result, err
-	}
-	defer os.RemoveAll(tempDir)
-
-	projects, status, err := m.stageCheckpoint(sourceDir, tempDir, phase)
-	if err != nil {
-		return result, err
-	}
-	digest, artifacts, err := digestTree(tempDir)
-	if err != nil {
-		return result, err
-	}
-
-	state, err := m.loadState()
-	if err != nil {
-		return result, err
-	}
-	if previous, ok := duplicateCheckpoint(state, pipelineID, phase, digest); ok {
-		result.Checkin = previous.Checkin
-		result.Duplicate = true
-		result.PendingSync = previous.PendingSync
-		return result, nil
-	}
-
-	manifest := Manifest{
-		SchemaVersion: 1, PipelineID: pipelineID, Phase: phase,
-		RecordedAt: m.Now().UTC(), Status: status,
-		AffectedProjects: projects, Artifacts: artifacts,
-	}
-	if err := writeJSONAtomic(filepath.Join(tempDir, "manifest.json"), manifest); err != nil {
-		return result, err
-	}
-
-	targetDir := filepath.Join(pipelinesDir, pipelineID)
-	if err := os.RemoveAll(targetDir); err != nil {
-		return result, err
-	}
-	if err := os.Rename(tempDir, targetDir); err != nil {
-		return result, err
-	}
-
-	result.Checkin, err = m.commitCheckpoint(pipelineID, phase)
-	if err != nil {
-		return result, err
-	}
-	result.PendingSync = m.checkpointPendingSync()
-	if state.Checkpoints[pipelineID] == nil {
-		state.Checkpoints[pipelineID] = make(map[Phase]checkpointState)
-	}
-	state.Checkpoints[pipelineID][phase] = checkpointState{Digest: digest, Checkin: result.Checkin, PendingSync: result.PendingSync}
-	if err := m.saveState(state); err != nil {
-		return result, err
-	}
-	return result, nil
-}
-
-func (m *Manager) beginCheckpoint(pipelineID string) (string, string, func(), error) {
-	if err := os.MkdirAll(m.historyDir(), 0o700); err != nil {
-		return "", "", nil, err
-	}
-	unlock, err := acquireLock(filepath.Join(m.historyDir(), ".checkpoint.lock"), 10*time.Second)
-	if err != nil {
-		return "", "", nil, err
-	}
-	if err := m.Initialize(); err != nil {
-		unlock()
-		return "", "", nil, err
-	}
-	sourceDir := filepath.Join(m.Root, ".pylon", "runtime", pipelineID)
-	if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
-		unlock()
-		return "", "", nil, fmt.Errorf("파이프라인 디렉토리를 찾을 수 없습니다: %s", sourceDir)
-	}
-	pipelinesDir := filepath.Join(m.checkoutDir(), "pipelines")
-	if err := os.MkdirAll(pipelinesDir, 0o755); err != nil {
-		unlock()
-		return "", "", nil, err
-	}
-	return sourceDir, pipelinesDir, unlock, nil
-}
-
-func duplicateCheckpoint(state historyState, pipelineID string, phase Phase, digest string) (checkpointState, bool) {
-	previous, ok := state.Checkpoints[pipelineID][phase]
-	return previous, ok && previous.Digest == digest
-}
-
-func (m *Manager) commitCheckpoint(pipelineID string, phase Phase) (string, error) {
-	if _, err := m.Runner.Run(m.checkoutDir(), "addremove"); err != nil {
-		return "", fmt.Errorf("fossil 변경 감지 실패: %w", err)
-	}
-	message := fmt.Sprintf("파이프라인 %s: %s", pipelineID, phaseLabel(phase))
-	out, err := m.Runner.Run(m.checkoutDir(), "commit", "--nosync", "--no-prompt", "--no-warnings", "--no-verify-comment", "-m", message)
-	if err != nil {
-		return "", fmt.Errorf("fossil 체크인 실패: %w", err)
-	}
-	if checkin := parseCheckin(out); checkin != "" {
-		return checkin, nil
-	}
-	info, err := m.Runner.Run(m.checkoutDir(), "info", "current")
-	if err != nil {
-		return "", fmt.Errorf("fossil 체크인 식별 실패: %w", err)
-	}
-	if checkin := parseCheckin(info); checkin != "" {
-		return checkin, nil
-	}
-	return "", fmt.Errorf("fossil 체크인 식별자를 찾을 수 없습니다")
-}
-
-func (m *Manager) checkpointPendingSync() bool {
-	if m.Config.Remote == "" {
-		return false
-	}
-	if m.Config.SyncOnCheckpoint {
-		if _, err := m.Runner.Run(m.Root, "sync", m.Config.Remote, "--once", "-R", m.repositoryPath()); err == nil {
-			return false
-		}
-	}
-	return true
-}
-
+// stageCheckpoint copies and curates a pipeline's runtime artifacts into destDir,
+// returning the affected projects and the pipeline status.
 func (m *Manager) stageCheckpoint(sourceDir, destDir string, phase Phase) ([]string, string, error) {
 	planned := []string{"requirement.md", "requirement-analysis.md", "architecture.md", "routing-decision.json", "tasks.json"}
 	for _, name := range planned {
@@ -215,7 +82,7 @@ func summarizeResultFiles(sourceDir, name, dest string, allowed map[string]bool)
 			"result":   curateJSON(value, allowed),
 		})
 	}
-	return writeJSONAtomic(dest, map[string]any{"records": records})
+	return fsutil.WriteJSONAtomic(dest, map[string]any{"records": records})
 }
 
 var executionKeys = map[string]bool{
@@ -244,7 +111,7 @@ func summarizeJSONFile(source, dest string, allowed map[string]bool) error {
 	if err := json.Unmarshal(data, &value); err != nil {
 		return fmt.Errorf("%s JSON 파싱 실패: %w", source, err)
 	}
-	return writeJSONAtomic(dest, curateJSON(value, allowed))
+	return fsutil.WriteJSONAtomic(dest, curateJSON(value, allowed))
 }
 
 func curateJSON(value any, allowed map[string]bool) any {
@@ -317,38 +184,4 @@ func collectStringField(value any, field string, result map[string]bool) {
 			collectStringField(child, field, result)
 		}
 	}
-}
-
-func (m *Manager) exportMemory(destDir string, projects []string) error {
-	if m.Store == nil {
-		return nil
-	}
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	for _, project := range projects {
-		projectID := filepath.Base(project)
-		if project == "." {
-			projectID = filepath.Base(m.Root)
-		}
-		for _, category := range []string{"learning", "decision", "architecture", "pattern"} {
-			entries, err := m.Store.GetMemoryByCategory(projectID, category)
-			if err != nil {
-				return err
-			}
-			for _, entry := range entries {
-				record := map[string]any{
-					"id": entry.ID, "project": entry.ProjectID, "category": entry.Category,
-					"key": entry.Key, "content": entry.Content, "author": entry.Author,
-					"confidence": entry.Confidence, "created_at": entry.CreatedAt,
-				}
-				if err := encoder.Encode(record); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	if buf.Len() == 0 {
-		return nil
-	}
-	return os.WriteFile(filepath.Join(destDir, "memory.jsonl"), buf.Bytes(), 0600)
 }

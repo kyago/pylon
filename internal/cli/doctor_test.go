@@ -568,16 +568,16 @@ func TestResolveGitExcludePath_NotGitRepo(t *testing.T) {
 }
 
 func TestInstallHint_BrewFormulaWithBrew(t *testing.T) {
-	c := Check{Name: "fossil", InstallURL: "https://fossil-scm.org/home/uv/download.html", BrewFormula: "fossil"}
+	c := Check{Name: "sampletool", InstallURL: "https://example.com/install", BrewFormula: "sampletool"}
 	got := installHint(c, true)
-	want := "brew install fossil (또는 https://fossil-scm.org/home/uv/download.html)"
+	want := "brew install sampletool (또는 https://example.com/install)"
 	if got != want {
 		t.Errorf("installHint = %q, want %q", got, want)
 	}
 }
 
 func TestInstallHint_BrewFormulaWithoutBrew(t *testing.T) {
-	c := Check{Name: "fossil", InstallURL: "https://fossil-scm.org/home/uv/download.html", BrewFormula: "fossil"}
+	c := Check{Name: "sampletool", InstallURL: "https://example.com/install", BrewFormula: "sampletool"}
 	if got := installHint(c, false); got != c.InstallURL {
 		t.Errorf("installHint = %q, want %q", got, c.InstallURL)
 	}
