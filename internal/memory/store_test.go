@@ -391,3 +391,78 @@ func TestPruneExpiredNilPolicy(t *testing.T) {
 		t.Fatalf("nil 정책은 (0, nil)이어야 한다: n=%d, err=%v", n, err)
 	}
 }
+
+// 주입 출력은 confidence 우선, 동률이면 최신 우선으로 정렬된다 —
+// 예산 절단 시 카테고리 알파벳순이 아니라 중요도 낮은 항목부터 떨어진다.
+func TestInjectionMarkdownRanksByConfidenceThenRecency(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "낮은 확신 항목",
+		Content: "확신도가 낮아 주입 순위에서 뒤로 밀려야 하는 항목", Confidence: 0.5,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "z-category", Key: "높은 확신 항목",
+		Content: "카테고리 알파벳순으로는 마지막이지만 확신도가 높아 먼저 나와야 한다", Confidence: 0.9,
+		CreatedAt: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)})
+
+	out, err := s.InjectionMarkdown("app", 0)
+	if err != nil {
+		t.Fatalf("InjectionMarkdown 실패: %v", err)
+	}
+	hi := strings.Index(out, "높은 확신 항목")
+	lo := strings.Index(out, "낮은 확신 항목")
+	if hi < 0 || lo < 0 {
+		t.Fatalf("두 항목 모두 포함되어야 한다:\n%s", out)
+	}
+	if hi > lo {
+		t.Errorf("높은 확신 항목이 먼저 나와야 한다:\n%s", out)
+	}
+	if !strings.Contains(out, "#### app") {
+		t.Errorf("프로젝트 헤더가 있어야 한다:\n%s", out)
+	}
+}
+
+// 예산 절단은 줄 단위이며, 절단 시 "…(생략)"을 표기한다.
+func TestInjectionMarkdownTruncatesWholeLines(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "우선 항목",
+		Content: "확신도가 높아 절단 후에도 살아남아야 하는 항목", Confidence: 0.9})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "후순위 항목",
+		Content: "확신도가 낮아 좁은 예산에서는 잘려 나가야 하는 항목", Confidence: 0.3})
+
+	full, err := s.InjectionMarkdown("app", 0)
+	if err != nil {
+		t.Fatalf("전체 출력 실패: %v", err)
+	}
+	// 한 줄만 담길 만큼의 예산: 헤더 + 첫 줄 + 생략 표기
+	capped, err := s.InjectionMarkdown("app", len(full)-10)
+	if err != nil {
+		t.Fatalf("절단 출력 실패: %v", err)
+	}
+	if !strings.Contains(capped, "우선 항목") {
+		t.Errorf("우선 항목은 살아남아야 한다:\n%s", capped)
+	}
+	if strings.Contains(capped, "후순위 항목") {
+		t.Errorf("후순위 항목은 잘려야 한다:\n%s", capped)
+	}
+	if !strings.Contains(capped, "…(생략)") {
+		t.Errorf("절단 표기가 있어야 한다:\n%s", capped)
+	}
+}
+
+// 예산이 한 줄도 못 담으면 빈 문자열을 반환해 다음 프로젝트에 예산을 양보한다.
+func TestInjectionMarkdownTinyBudgetYields(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "항목",
+		Content: "예산이 너무 작으면 아예 출력하지 않는 편이 낫다", Confidence: 0.8})
+	out, err := s.InjectionMarkdown("app", 20)
+	if err != nil || out != "" {
+		t.Fatalf("초소형 예산은 빈 출력이어야 한다: %q, err=%v", out, err)
+	}
+}
+
+// 존재하지 않는 프로젝트는 빈 문자열을 반환한다.
+func TestInjectionMarkdownGhostProject(t *testing.T) {
+	s := newTestStore(t)
+	if out, err := s.InjectionMarkdown("ghost", 100); err != nil || out != "" {
+		t.Fatalf("빈 프로젝트: %q, err=%v", out, err)
+	}
+}
