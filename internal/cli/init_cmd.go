@@ -11,9 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/history"
 	"github.com/kyago/pylon/internal/layout"
-	"github.com/kyago/pylon/internal/store"
 )
 
 //go:embed agents/*.md
@@ -115,10 +113,6 @@ runtime:
   max_turns: 50
   permission_mode: acceptEdits
 
-history:
-  remote: ""
-  sync_on_checkpoint: true
-
 git:
   pr:
 %s
@@ -169,6 +163,7 @@ git:
 		".pylon/runtime/",
 		".pylon/conversations/",
 		".pylon/history/",
+		// .pylon/memory/ 는 의도적으로 제외 — 메모리는 git으로 추적/리뷰한다 (D1).
 		"",
 		"# Claude CLI agent symlinks (managed by pylon)",
 		".claude/agents/",
@@ -186,45 +181,29 @@ git:
 		return fmt.Errorf("failed to write .gitignore: %w", err)
 	}
 
-	// Step 6: Initialize DB and sync discovered projects
-	dbPath := filepath.Join(pylonDir, "pylon.db")
-	s, err := store.NewStore(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open store: %w", err)
+	// 메모리 저장소 루트를 미리 만들어 git 추적을 시작한다 (D1).
+	if err := os.MkdirAll(layout.MemoryDir(workDir), 0755); err != nil {
+		return fmt.Errorf("memory 디렉토리 생성 실패: %w", err)
 	}
-	defer s.Close()
-
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("failed to migrate: %w", err)
+	if err := os.WriteFile(filepath.Join(layout.MemoryDir(workDir), ".gitkeep"), nil, 0644); err != nil {
+		return fmt.Errorf(".gitkeep 생성 실패: %w", err)
 	}
-	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
-	if err != nil {
-		return fmt.Errorf("failed to load history config: %w", err)
-	}
-	if err := history.NewManager(workDir, cfg.History, s, nil).Initialize(); err != nil {
-		return fmt.Errorf("Fossil 작업 이력 저장소 초기화 실패: %w", err)
+	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
+		fmt.Println("ℹ 워크스페이스가 git 저장소가 아닙니다 — 프로젝트 메모리(.pylon/memory/)의 버전 관리를 위해 'git init'을 권장합니다")
 	}
 
+	// Step 6: Discover projects and ensure .pylon/ is git-excluded per project
 	projects, err := config.DiscoverProjects(workDir)
 	if err != nil {
 		fmt.Printf("⚠ 프로젝트 탐색 실패: %v\n", err)
 	}
 	for _, p := range projects {
-		if err := s.UpsertProject(&store.ProjectRecord{
-			ProjectID: p.Name,
-			Path:      p.Path,
-		}); err != nil {
-			fmt.Printf("⚠ %s 등록 실패: %v\n", p.Name, err)
-		}
 		// Ensure .pylon/ is excluded from project git tracking (skip non-git dirs)
 		if err := excludePylonFromRepo(p.Path); err != nil {
 			if !strings.Contains(err.Error(), "not a git repository") {
 				fmt.Printf("⚠ %s: .pylon/ exclude 설정 실패: %v\n", p.Name, err)
 			}
 		}
-	}
-	if len(projects) > 0 {
-		fmt.Printf("✓ %d project(s) registered in DB\n", len(projects))
 	}
 
 	fmt.Println()
@@ -239,7 +218,8 @@ git:
 	fmt.Println("  .pylon/scripts/bash/       - pipeline shell scripts")
 	fmt.Println("  .pylon/commands/           - pipeline slash commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
-	fmt.Println("  .pylon/history/            - Fossil work history")
+	fmt.Println("  .pylon/history/            - pipeline work history (file-based)")
+	fmt.Println("  .pylon/memory/             - project memory (git-tracked)")
 	fmt.Println("  .pylon/conversations/      - conversation history")
 	fmt.Println("  .pylon/tasks/              - confirmed task specs")
 	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/agents/)")

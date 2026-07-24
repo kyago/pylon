@@ -11,47 +11,24 @@ import (
 func newHistoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history",
-		Short: "Manage Fossil-backed workspace history",
+		Short: "Manage file-based workspace history",
 	}
 	cmd.AddCommand(
-		newHistoryInitCmd(),
 		newHistoryCheckpointCmd(),
 		newHistoryLogCmd(),
 		newHistoryShowCmd(),
 		newHistoryDiffCmd(),
-		newHistorySyncCmd(),
 		newHistoryExportCmd(),
 	)
 	return cmd
 }
 
 func withHistoryManager(run func(*history.Manager) error) error {
-	root, cfg, s, err := openWorkspaceStore()
+	root, _, err := openWorkspace()
 	if err != nil {
 		return err
 	}
-	defer s.Close()
-	return run(history.NewManager(root, cfg.History, s, nil))
-}
-
-func newHistoryInitCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "init",
-		Short: "Initialize the workspace Fossil history repository",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withHistoryManager(func(manager *history.Manager) error {
-				if err := manager.Initialize(); err != nil {
-					return err
-				}
-				if flagJSON {
-					fmt.Println(`{"status":"ok","initialized":true}`)
-				} else {
-					fmt.Println("✓ Fossil 작업 이력 저장소가 준비되었습니다")
-				}
-				return nil
-			})
-		},
-	}
+	return run(history.NewManager(root))
 }
 
 func newHistoryCheckpointCmd() *cobra.Command {
@@ -71,14 +48,11 @@ func newHistoryCheckpointCmd() *cobra.Command {
 				if flagJSON {
 					return printJSON(result)
 				}
-				label := "체크인 완료"
+				label := "체크포인트 기록 완료"
 				if result.Duplicate {
-					label = "동일 내용 — 기존 체크인 유지"
+					label = "동일 내용 — 기존 체크포인트 유지"
 				}
-				fmt.Printf("✓ %s (%s)\n", label, result.Checkin)
-				if result.PendingSync {
-					fmt.Println("⚠ 원격 동기화 대기 중 — 'pylon history sync'로 재시도하세요")
-				}
+				fmt.Printf("✓ %s (%s)\n", label, result.Ref)
 				return nil
 			})
 		},
@@ -93,40 +67,56 @@ func newHistoryLogCmd() *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "log",
-		Short: "Show Fossil check-in history",
+		Short: "Show checkpoint history",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHistoryManager(func(manager *history.Manager) error {
-				output, err := manager.Log(pipelineID, limit)
-				if err == nil {
-					if flagJSON {
-						return printJSON(map[string]string{"output": output})
-					}
-					fmt.Println(output)
+				entries, err := manager.Log(pipelineID, limit)
+				if err != nil {
+					return err
 				}
-				return err
+				if flagJSON {
+					return printJSON(entries)
+				}
+				if len(entries) == 0 {
+					fmt.Println("기록된 체크포인트가 없습니다")
+					return nil
+				}
+				for _, e := range entries {
+					fmt.Printf("%s  %-30s %-10s %s\n",
+						e.RecordedAt.Format("2006-01-02T15:04:05Z"), e.PipelineID, e.Phase, e.Status)
+				}
+				return nil
 			})
 		},
 	}
 	cmd.Flags().StringVar(&pipelineID, "pipeline", "", "filter by pipeline ID")
-	cmd.Flags().IntVar(&limit, "limit", 20, "maximum check-ins")
+	cmd.Flags().IntVar(&limit, "limit", 20, "maximum checkpoints")
 	return cmd
 }
 
 func newHistoryShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <checkin>",
-		Short: "Show a Fossil check-in",
+		Use:   "show <pipeline-id>/<phase>",
+		Short: "Show a checkpoint snapshot",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHistoryManager(func(manager *history.Manager) error {
-				output, err := manager.Show(args[0])
-				if err == nil {
-					if flagJSON {
-						return printJSON(map[string]string{"checkin": args[0], "output": output})
-					}
-					fmt.Println(output)
+				manifest, files, err := manager.Show(args[0])
+				if err != nil {
+					return err
 				}
-				return err
+				if flagJSON {
+					return printJSON(map[string]any{"manifest": manifest, "files": files})
+				}
+				fmt.Printf("ref:      %s/%s\n", manifest.PipelineID, manifest.Phase)
+				fmt.Printf("recorded: %s\n", manifest.RecordedAt.Format("2006-01-02T15:04:05Z"))
+				fmt.Printf("status:   %s\n", manifest.Status)
+				fmt.Printf("projects: %v\n", manifest.AffectedProjects)
+				fmt.Println("files:")
+				for _, f := range files {
+					fmt.Printf("  %s\n", f)
+				}
+				return nil
 			})
 		},
 	}
@@ -134,37 +124,19 @@ func newHistoryShowCmd() *cobra.Command {
 
 func newHistoryDiffCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "diff <from> <to>",
-		Short: "Diff two Fossil check-ins",
+		Use:   "diff <from-ref> <to-ref>",
+		Short: "Diff two checkpoint snapshots",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHistoryManager(func(manager *history.Manager) error {
 				output, err := manager.Diff(args[0], args[1])
-				if err == nil {
-					if flagJSON {
-						return printJSON(map[string]string{"from": args[0], "to": args[1], "output": output})
-					}
-					fmt.Println(output)
-				}
-				return err
-			})
-		},
-	}
-}
-
-func newHistorySyncCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "sync",
-		Short: "Synchronize history with the configured Fossil remote",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return withHistoryManager(func(manager *history.Manager) error {
-				if err := manager.Sync(); err != nil {
+				if err != nil {
 					return err
 				}
 				if flagJSON {
-					return printJSON(map[string]string{"status": "ok"})
+					return printJSON(map[string]string{"from": args[0], "to": args[1], "output": output})
 				}
-				fmt.Println("✓ Fossil 작업 이력 동기화 완료")
+				fmt.Println(output)
 				return nil
 			})
 		},
@@ -174,8 +146,8 @@ func newHistorySyncCmd() *cobra.Command {
 func newHistoryExportCmd() *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
-		Use:   "export <checkin>",
-		Short: "Export a historical snapshot without changing runtime files",
+		Use:   "export <pipeline-id>/<phase>",
+		Short: "Export a checkpoint snapshot to a new directory",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if output == "" {
@@ -199,6 +171,15 @@ func newHistoryExportCmd() *cobra.Command {
 
 func printJSON(value any) error {
 	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
+}
+
+func printJSONIndent(value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}

@@ -8,11 +8,10 @@ import (
 	"testing"
 )
 
-// fossil이 없거나 체크포인트가 실패해도 cancel 자체는 성공해야 하고,
-// 이때 runtime 디렉토리는 보존된다 (best-effort 원칙).
-func TestRunCancel_V2KeepsRuntimeWhenCheckpointFails(t *testing.T) {
+// 파일 기반 체크포인트는 외부 도구 없이 성공하므로 cancel은 취소 상태를 기록하고
+// cancelled 체크포인트 스냅샷을 남긴다.
+func TestRunCancel_V2RecordsCancelledCheckpoint(t *testing.T) {
 	root := setupTestWorkspace(t)
-	t.Setenv("PATH", "") // fossil 실행 차단 → 체크포인트 실패 유도
 
 	pipelineDir := filepath.Join(root, ".pylon", "runtime", "20260717-test")
 	if err := os.MkdirAll(pipelineDir, 0755); err != nil {
@@ -33,9 +32,6 @@ func TestRunCancel_V2KeepsRuntimeWhenCheckpointFails(t *testing.T) {
 		t.Fatalf("runCancel failed: %v", err)
 	}
 
-	if _, err := os.Stat(pipelineDir); err != nil {
-		t.Fatalf("runtime dir must be preserved when checkpoint fails: %v", err)
-	}
 	data, err := os.ReadFile(filepath.Join(pipelineDir, "status.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -46,6 +42,10 @@ func TestRunCancel_V2KeepsRuntimeWhenCheckpointFails(t *testing.T) {
 	}
 	if sj["status"] != "cancelled" {
 		t.Fatalf("status = %q, want cancelled", sj["status"])
+	}
+	manifest := filepath.Join(root, ".pylon", "history", "pipelines", "20260717-test", "cancelled", "manifest.json")
+	if _, err := os.Stat(manifest); err != nil {
+		t.Fatalf("cancelled 체크포인트 manifest가 있어야 한다: %v", err)
 	}
 }
 

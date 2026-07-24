@@ -10,9 +10,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/history"
 	"github.com/kyago/pylon/internal/layout"
-	"github.com/kyago/pylon/internal/store"
 )
 
 // runLaunch is the main entry point when `pylon` is invoked without subcommands.
@@ -29,9 +27,6 @@ func runLaunch() error {
 	cfg, err := config.LoadConfig(layout.ConfigPath(root))
 	if err != nil {
 		return fmt.Errorf("설정 로드 실패: %w", err)
-	}
-	if err := prepareHistory(root, cfg.History); err != nil {
-		return err
 	}
 
 	// Step 3: Discover projects
@@ -82,41 +77,17 @@ func runLaunch() error {
 	return syscall.Exec(claudePath, args, env)
 }
 
-func prepareHistory(root string, cfg config.HistoryConfig) error {
-	if _, err := history.VerifyFossil(); err != nil {
-		return fmt.Errorf("Fossil 확인 실패 — 'pylon doctor'로 설치 상태를 확인하세요: %w", err)
-	}
-	if err := history.NewManager(root, cfg, nil, nil).Initialize(); err != nil {
-		return fmt.Errorf("Fossil 작업 이력 저장소 초기화 실패: %w", err)
-	}
-	return nil
-}
-
-// openWorkspaceStore is a shared helper that finds the workspace root, loads config,
-// and opens the SQLite store. Caller must close the returned Store.
-func openWorkspaceStore() (string, *config.Config, *store.Store, error) {
+// openWorkspace finds the workspace root and loads config.
+func openWorkspace() (string, *config.Config, error) {
 	root, err := resolveRoot()
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, err
 	}
-
 	cfg, err := config.LoadConfig(layout.ConfigPath(root))
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to load config: %w", err)
+		return "", nil, fmt.Errorf("failed to load config: %w", err)
 	}
-
-	dbPath := layout.DBPath(root)
-	s, err := store.NewStore(dbPath)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to open store: %w", err)
-	}
-
-	if err := s.Migrate(); err != nil {
-		s.Close()
-		return "", nil, nil, fmt.Errorf("failed to migrate: %w", err)
-	}
-
-	return root, cfg, s, nil
+	return root, cfg, nil
 }
 
 // selectPermissionMode presents an interactive selector for Claude Code permission mode.

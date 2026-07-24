@@ -31,7 +31,7 @@ func newSyncMemoryCmd() *cobra.Command {
 		Long: `세션 학습 내용을 프로젝트 메모리에 동기화합니다.
 
 Claude Code Hook에서 자동 호출되어 세션 종료 시
-학습 내용을 project_memory(SQLite + BM25 FTS)에 저장합니다.
+학습 내용을 프로젝트 메모리(.pylon/memory/ 마크다운 파일)에 저장합니다.
 
 사용 예:
   pylon sync-memory --from-session --project myapp --agent architect`,
@@ -50,13 +50,13 @@ Claude Code Hook에서 자동 호출되어 세션 종료 시
 	}
 
 	cmd.Flags().BoolVar(&fromSession, "from-session", false, "세션 종료 시 전체 학습 내용 동기화")
-	cmd.Flags().BoolVar(&incremental, "incremental", false, "(deprecated) 저장하지 않음 — 파일 변경 이력은 Fossil history가 담당")
+	cmd.Flags().BoolVar(&incremental, "incremental", false, "(deprecated) 저장하지 않음 — 파일 변경 이력은 history 체크포인트가 담당")
 	cmd.Flags().StringVar(&project, "project", "", "대상 프로젝트 이름")
 	cmd.Flags().StringVar(&agent, "agent", "claude", "에이전트 이름")
 	cmd.Flags().StringVar(&content, "content", "", "학습 내용 (생략 시 stdin에서 읽음)")
 	cmd.Flags().StringVar(&filePath, "file", "", "(deprecated) 사용되지 않음")
-	_ = cmd.Flags().MarkDeprecated("incremental", "파일 변경 이력은 Fossil history가 담당합니다")
-	_ = cmd.Flags().MarkDeprecated("file", "파일 변경 이력은 Fossil history가 담당합니다")
+	_ = cmd.Flags().MarkDeprecated("incremental", "파일 변경 이력은 history 체크포인트가 담당합니다")
+	_ = cmd.Flags().MarkDeprecated("file", "파일 변경 이력은 history 체크포인트가 담당합니다")
 
 	return cmd
 }
@@ -64,11 +64,10 @@ Claude Code Hook에서 자동 호출되어 세션 종료 시
 // runSyncFromSession handles --from-session: stores session learnings into project memory.
 // Note: Stop hook fires after EVERY Claude response turn, NOT only at session end.
 func runSyncFromSession(project, agent, content string) error {
-	root, cfg, s, err := openWorkspaceStore()
+	root, _, err := openWorkspace()
 	if err != nil {
 		return err
 	}
-	defer s.Close()
 
 	// Resolve project name
 	project, err = resolveProject(root, project)
@@ -91,10 +90,10 @@ func runSyncFromSession(project, agent, content string) error {
 		return nil
 	}
 
-	// Use memory manager to store learnings
-	mgr := memory.NewManager(s, cfg.Memory)
+	// Store learnings into the markdown memory store
+	memStore := memory.NewStore(root)
 	taskID := fmt.Sprintf("session-%s", time.Now().Format("20060102-150405"))
-	if err := mgr.StoreLearnings(project, taskID, agent, learnings); err != nil {
+	if err := memStore.StoreLearnings(project, taskID, agent, learnings); err != nil {
 		return fmt.Errorf("학습 내용 저장 실패: %w", err)
 	}
 
@@ -116,15 +115,15 @@ func runSyncFromSession(project, agent, content string) error {
 }
 
 // runSyncIncremental is a deprecated no-op. File-change history is recorded
-// by Fossil history checkpoints (execution-summary.json의 changed_files);
-// storing raw changes in project_memory polluted BM25 search (issue #76).
+// by history checkpoints (execution-summary.json의 changed_files);
+// storing raw changes in project memory polluted token-matching search (issue #76).
 func runSyncIncremental() error {
 	// Drain piped stdin so PostToolUse hooks do not hit a broken pipe.
 	_ = readStdin()
 	if flagJSON {
-		fmt.Println(`{"status":"skip","reason":"change tracking moved to fossil history"}`)
+		fmt.Println(`{"status":"skip","reason":"change tracking moved to history checkpoints"}`)
 	} else {
-		fmt.Println("파일 변경 이력은 Fossil history가 담당합니다 — 저장을 건너뜁니다")
+		fmt.Println("파일 변경 이력은 history 체크포인트가 담당합니다 — 저장을 건너뜁니다")
 	}
 	return nil
 }

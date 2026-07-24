@@ -15,19 +15,24 @@ func ConfigPath(root string) string {
 	return filepath.Join(PylonDir(root), "config.yml")
 }
 
-// DBPath returns the SQLite store path (.pylon/pylon.db).
-func DBPath(root string) string {
-	return filepath.Join(PylonDir(root), "pylon.db")
-}
-
 // RuntimeDir returns the pipeline runtime state directory (.pylon/runtime).
 func RuntimeDir(root string) string {
 	return filepath.Join(PylonDir(root), "runtime")
 }
 
-// AgentsDir returns the agent definition directory (.pylon/agents).
-func AgentsDir(root string) string {
-	return filepath.Join(PylonDir(root), "agents")
+// MemoryDir returns the markdown memory store root (.pylon/memory).
+func MemoryDir(root string) string {
+	return filepath.Join(PylonDir(root), "memory")
+}
+
+// ProjectMemoryDir returns one project's memory directory (.pylon/memory/<project>).
+func ProjectMemoryDir(root, project string) string {
+	return filepath.Join(MemoryDir(root), project)
+}
+
+// HistoryDir returns the file-based work history root (.pylon/history).
+func HistoryDir(root string) string {
+	return filepath.Join(PylonDir(root), "history")
 }
 
 // CommandsDir returns the pipeline command directory (.pylon/commands).

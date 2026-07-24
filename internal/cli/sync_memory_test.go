@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/memory"
 )
 
 func TestNewSyncMemoryCmd_Flags(t *testing.T) {
@@ -554,7 +554,7 @@ func TestRunSyncFromSession_EmptyContent(t *testing.T) {
 }
 
 // --incremental은 더 이상 아무것도 저장하지 않는다 — 파일 변경 이력은
-// Fossil history(executed 체크포인트의 changed_files)가 담당한다.
+// history 체크포인트(executed 체크포인트의 changed_files)가 담당한다.
 func TestRunSyncIncremental_IsNoOp(t *testing.T) {
 	root := setupTestWorkspace(t)
 
@@ -566,20 +566,29 @@ func TestRunSyncIncremental_IsNoOp(t *testing.T) {
 		t.Fatalf("runSyncIncremental failed: %v", err)
 	}
 
-	s, err := store.NewStore(filepath.Join(root, ".pylon", "pylon.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if err := s.Migrate(); err != nil {
-		t.Fatal(err)
-	}
-	entries, err := s.GetMemoryByCategory(filepath.Base(root), "change")
+	entries, err := memory.NewStore(root).ListByCategory(filepath.Base(root), "change")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(entries) != 0 {
 		t.Fatalf("change entries must not be stored, got %d", len(entries))
+	}
+}
+
+// --from-session은 학습 내용을 마크다운 파일로 저장한다.
+func TestSyncFromSessionWritesMarkdown(t *testing.T) {
+	root := setupTestWorkspace(t)
+
+	prev := flagWorkspace
+	flagWorkspace = root
+	defer func() { flagWorkspace = prev }()
+
+	if err := runSyncFromSession("app", "architect", "- 학습 내용 하나\n- 학습 내용 둘"); err != nil {
+		t.Fatalf("sync 실패: %v", err)
+	}
+	entries, err := memory.NewStore(root).ListByCategory("app", "learning")
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("2건 저장되어야 한다: %d, err=%v", len(entries), err)
 	}
 }
 

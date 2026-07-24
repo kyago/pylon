@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
+	"github.com/kyago/pylon/internal/memory"
 )
 
 // buildRootCLAUDEMD generates the root agent system prompt.
@@ -24,9 +24,9 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	// Workspace info
 	b.WriteString("## 워크스페이스\n\n")
 	b.WriteString(fmt.Sprintf("- **루트**: `%s`\n", root))
-	b.WriteString(fmt.Sprintf("- **설정**: `.pylon/config.yml`\n"))
-	b.WriteString(fmt.Sprintf("- **도메인 지식**: `.pylon/domain/`\n"))
-	b.WriteString(fmt.Sprintf("- **에이전트 정의**: `.pylon/agents/`\n"))
+	b.WriteString("- **설정**: `.pylon/config.yml`\n")
+	b.WriteString("- **도메인 지식**: `.pylon/domain/`\n")
+	b.WriteString("- **에이전트 정의**: `.pylon/agents/`\n")
 
 	// Projects
 	if len(projects) > 0 {
@@ -75,12 +75,40 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 
 	// Memory access
 	b.WriteString("## 프로젝트 메모리\n\n")
-	b.WriteString("프로젝트 지식은 `pylon mem` CLI를 사용합니다:\n")
+	b.WriteString("프로젝트 지식은 `.pylon/memory/<project>/` 아래 마크다운 파일입니다.\n")
+	b.WriteString("Grep/Read로 직접 탐색하거나 `pylon mem` CLI를 사용합니다:\n")
 	b.WriteString("```bash\n")
-	b.WriteString("pylon mem search --project <name> --query \"검색어\"   # BM25 검색\n")
+	b.WriteString("pylon mem search --project <name> --query \"검색어\"   # 토큰 매칭 검색\n")
 	b.WriteString("pylon mem store --project <name> --key \"키\" --content \"내용\"  # 저장\n")
 	b.WriteString("pylon mem list --project <name>                       # 목록\n")
 	b.WriteString("```\n\n")
+
+	// Proactive memory index injection
+	if cfg.Memory.ProactiveInjection {
+		maxTokens := cfg.Memory.ProactiveMaxTokens
+		if maxTokens <= 0 {
+			maxTokens = 2000
+		}
+		remaining := maxTokens * 4 // 대략적인 토큰→바이트 환산
+		memStore := memory.NewStore(root)
+		wroteHeader := false
+		for _, p := range projects {
+			if remaining <= 0 {
+				break
+			}
+			index, err := memStore.IndexMarkdown(p.Name, remaining)
+			if err != nil || index == "" {
+				continue
+			}
+			if !wroteHeader {
+				b.WriteString("### 메모리 인덱스\n\n")
+				wroteHeader = true
+			}
+			b.WriteString(index)
+			b.WriteString("\n")
+			remaining -= len(index)
+		}
+	}
 
 	// Available skills
 	b.WriteString("## 사용 가능한 스킬 (슬래시 커맨드)\n\n")
@@ -188,18 +216,4 @@ func discoverAgentsByDomain(pylonDir string) map[string][]config.AgentConfig {
 		result[domain] = append(result[domain], *agent)
 	}
 	return result
-}
-
-// formatProjectsJSON returns project info as JSON for agent consumption.
-func formatProjectsJSON(projects []config.ProjectInfo) string {
-	type projectOut struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-	}
-	out := make([]projectOut, len(projects))
-	for i, p := range projects {
-		out[i] = projectOut{Name: p.Name, Path: p.Path}
-	}
-	data, _ := json.Marshal(out)
-	return string(data)
 }

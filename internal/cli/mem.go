@@ -1,13 +1,13 @@
 package cli
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/kyago/pylon/internal/store"
+	"github.com/kyago/pylon/internal/memory"
 )
 
 func newMemCmd() *cobra.Command {
@@ -19,11 +19,11 @@ func newMemCmd() *cobra.Command {
 루트 에이전트(PO)가 프로젝트 지식을 저장/검색할 때 사용합니다.
 
 사용 가능한 하위 명령:
-  search  BM25 검색
+  search  토큰 매칭 검색
   store   메모리 저장
   list    메모리 목록
   delete  메모리 삭제 (키/카테고리 단위)
-  prune   오염 메모리 정리 (카테고리 일괄/중복 제거)`,
+  prune   오염 메모리 정리 (카테고리 일괄 삭제)`,
 	}
 
 	cmd.AddCommand(newMemSearchCmd())
@@ -42,7 +42,7 @@ func newMemSearchCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "search",
-		Short: "Search project memory using BM25",
+		Short: "Search project memory by token matching",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if project == "" || query == "" {
 				return fmt.Errorf("--project and --query are required")
@@ -142,29 +142,27 @@ func newMemDeleteCmd() *cobra.Command {
 
 func newMemPruneCmd() *cobra.Command {
 	var project, category string
-	var dedup, dryRun, yes bool
+	var dryRun, yes bool
 
 	cmd := &cobra.Command{
 		Use:   "prune",
-		Short: "Prune polluted memory entries (bulk delete / dedup)",
-		Long: `오염된 메모리를 정리합니다. 삭제 후 VACUUM으로 저장 공간을 회수합니다.
+		Short: "Prune polluted memory entries (bulk delete)",
+		Long: `오염된 메모리를 정리합니다.
 
 사용 예:
   pylon mem prune --category change                # 전체 프로젝트의 change 일괄 삭제
   pylon mem prune --category change --project app  # 특정 프로젝트만
-  pylon mem prune --dedup                          # 동일 파일 중복 change 중 최신 1건만 유지
   pylon mem prune --category change --dry-run      # 영향 건수 미리보기`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !dedup && category == "" {
-				return fmt.Errorf("--category or --dedup is required")
+			if category == "" {
+				return fmt.Errorf("--category is required")
 			}
-			return runMemPrune(project, category, dedup, dryRun, yes)
+			return runMemPrune(project, category, dryRun, yes)
 		},
 	}
 
 	cmd.Flags().StringVar(&project, "project", "", "project name (empty = all projects)")
 	cmd.Flags().StringVar(&category, "category", "", "delete all entries in this category")
-	cmd.Flags().BoolVar(&dedup, "dedup", false, "keep only the latest change entry per file")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show affected count without deleting")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 
@@ -182,13 +180,12 @@ func confirmDeletion(count int64) bool {
 
 func printPruneResult(action string, count int64, dryRun bool) {
 	if flagJSON {
-		data, _ := json.Marshal(map[string]any{
+		_ = printJSON(map[string]any{
 			"status":  "ok",
 			"action":  action,
 			"count":   count,
 			"dry_run": dryRun,
 		})
-		fmt.Println(string(data))
 	} else if dryRun {
 		fmt.Printf("%d건이 삭제 대상입니다 (dry-run, 실제 삭제되지 않음)\n", count)
 	} else {
@@ -197,13 +194,13 @@ func printPruneResult(action string, count int64, dryRun bool) {
 }
 
 func runMemDelete(project, category, key string, dryRun, yes bool) error {
-	_, _, s, err := openWorkspaceStore()
+	root, _, err := openWorkspace()
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	memStore := memory.NewStore(root)
 
-	count, err := s.DeleteMemory(project, category, key, true)
+	count, err := memStore.Delete(project, category, key, true)
 	if err != nil {
 		return fmt.Errorf("failed to count memory: %w", err)
 	}
@@ -218,7 +215,7 @@ func runMemDelete(project, category, key string, dryRun, yes bool) error {
 		return nil
 	}
 
-	deleted, err := s.DeleteMemory(project, category, key, false)
+	deleted, err := memStore.Delete(project, category, key, false)
 	if err != nil {
 		return fmt.Errorf("failed to delete memory: %w", err)
 	}
@@ -227,32 +224,20 @@ func runMemDelete(project, category, key string, dryRun, yes bool) error {
 	return nil
 }
 
-func runMemPrune(project, category string, dedup, dryRun, yes bool) error {
-	_, _, s, err := openWorkspaceStore()
+func runMemPrune(project, category string, dryRun, yes bool) error {
+	root, _, err := openWorkspace()
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	memStore := memory.NewStore(root)
 
-	countFn := func(dry bool) (int64, error) {
-		if dedup {
-			return s.DedupMemoryChanges(project, dry)
-		}
-		return s.DeleteMemory(project, category, "", dry)
-	}
-
-	action := "prune"
-	if dedup {
-		action = "dedup"
-	}
-
-	count, err := countFn(true)
+	count, err := memStore.Delete(project, category, "", true)
 	if err != nil {
 		return fmt.Errorf("failed to count memory: %w", err)
 	}
 
 	if dryRun || count == 0 {
-		printPruneResult(action, count, true)
+		printPruneResult("prune", count, true)
 		return nil
 	}
 
@@ -261,27 +246,23 @@ func runMemPrune(project, category string, dedup, dryRun, yes bool) error {
 		return nil
 	}
 
-	deleted, err := countFn(false)
+	deleted, err := memStore.Delete(project, category, "", false)
 	if err != nil {
 		return fmt.Errorf("failed to prune memory: %w", err)
 	}
 
-	if err := s.Vacuum(); err != nil {
-		return err
-	}
-
-	printPruneResult(action, deleted, false)
+	printPruneResult("prune", deleted, false)
 	return nil
 }
 
 func runMemSearch(project, query string, limit int) error {
-	_, _, s, err := openWorkspaceStore()
+	root, _, err := openWorkspace()
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	memStore := memory.NewStore(root)
 
-	results, err := s.SearchMemory(project, query, limit)
+	results, err := memStore.Search(project, query, limit)
 	if err != nil {
 		return fmt.Errorf("search failed: %w", err)
 	}
@@ -313,8 +294,7 @@ func runMemSearch(project, query string, limit int) error {
 				Rank:       r.Rank,
 			}
 		}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
+		return printJSONIndent(out)
 	} else {
 		for _, r := range results {
 			fmt.Printf("[%s/%s] (rank: %.2f, confidence: %.1f)\n", r.Category, r.Key, r.Rank, r.Confidence)
@@ -326,13 +306,13 @@ func runMemSearch(project, query string, limit int) error {
 }
 
 func runMemStore(project, key, content, category, author string, confidence float64) error {
-	_, _, s, err := openWorkspaceStore()
+	root, _, err := openWorkspace()
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	memStore := memory.NewStore(root)
 
-	entry := &store.MemoryEntry{
+	entry := &memory.Entry{
 		ProjectID:  project,
 		Category:   category,
 		Key:        key,
@@ -341,38 +321,49 @@ func runMemStore(project, key, content, category, author string, confidence floa
 		Confidence: confidence,
 	}
 
-	if err := s.InsertMemory(entry); err != nil {
+	if err := memStore.Insert(entry); err != nil {
+		if errors.Is(err, memory.ErrDuplicate) {
+			if flagJSON {
+				_ = printJSON(map[string]string{
+					"status": "skip",
+					"reason": "duplicate content",
+					"path":   entry.Path,
+				})
+			} else {
+				fmt.Printf("동일한 내용이 이미 저장되어 있어 건너뜁니다: %s\n", entry.Path)
+			}
+			return nil
+		}
 		return fmt.Errorf("failed to store memory: %w", err)
 	}
 
 	if flagJSON {
-		data, _ := json.Marshal(map[string]string{
-			"id":      entry.ID,
+		return printJSON(map[string]string{
+			"path":    entry.Path,
 			"project": project,
 			"key":     key,
 			"status":  "ok",
 		})
-		fmt.Println(string(data))
 	} else {
-		fmt.Printf("✓ 메모리 저장: %s/%s/%s\n", project, category, key)
+		fmt.Printf("✓ 메모리 저장: %s\n", entry.Path)
 	}
 
 	return nil
 }
 
 func runMemList(project, category string) error {
-	_, _, s, err := openWorkspaceStore()
+	root, _, err := openWorkspace()
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	memStore := memory.NewStore(root)
 
-	var entries []store.MemoryEntry
+	var entries []memory.Entry
 
 	if category != "" {
-		entries, err = s.GetMemoryByCategory(project, category)
+		entries, err = memStore.ListByCategory(project, category)
 	} else {
-		entries, err = s.ListProjectMemory(project)
+		entries, err = memStore.List(project)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to list memory: %w", err)
@@ -405,8 +396,7 @@ func runMemList(project, category string) error {
 				Confidence: e.Confidence,
 			}
 		}
-		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
+		return printJSONIndent(out)
 	} else {
 		fmt.Printf("%-15s %-15s %-40s %s\n", "CATEGORY", "KEY", "CONTENT", "AUTHOR")
 		for _, e := range entries {

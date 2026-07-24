@@ -135,3 +135,37 @@ func TestVerifyConfig_OrderedSteps_EmptyCommand(t *testing.T) {
 		t.Errorf("steps[0].Name = %q, want test", steps[0].Name)
 	}
 }
+
+func TestLoadVerifyConfig_CommandsSchema(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "verify.yml")
+	content := `commands:
+  - name: build
+    command: npm run build
+    timeout: 5m
+  - name: test
+    command: npm test
+    timeout: 10m
+  - name: lint
+    command: npm run lint
+    timeout: 3m
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	vc, err := LoadVerifyConfig(path)
+	if err != nil {
+		t.Fatalf("LoadVerifyConfig failed: %v", err)
+	}
+	steps := vc.OrderedSteps()
+	if len(steps) != 3 {
+		t.Fatalf("got %d steps, want 3", len(steps))
+	}
+	if steps[0].Name != "build" || steps[0].Command != "npm run build" || steps[0].Timeout != "5m" {
+		t.Errorf("unexpected build step: %+v", steps[0])
+	}
+	if steps[1].Name != "test" || steps[2].Name != "lint" {
+		t.Errorf("unexpected command order: %+v", steps)
+	}
+}

@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/history"
 	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
 )
@@ -29,13 +28,6 @@ type Check struct {
 }
 
 var checks = []Check{
-	{
-		Name:        "fossil",
-		Required:    true,
-		Verify:      history.VerifyFossil,
-		InstallURL:  "https://fossil-scm.org/home/uv/download.html",
-		BrewFormula: "fossil",
-	},
 	{
 		Name:       "git",
 		Required:   true,
@@ -60,7 +52,7 @@ func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check required tool installations and versions",
-		Long: `Verify that all required tools (fossil, git, gh, claude) are installed and configured.
+		Long: `Verify that all required tools (git, gh, claude) are installed and configured.
 
 Use --fix-excludes to automatically add .pylon/ to project .git/info/exclude
 for any projects that are missing the local-scope ignore entry.`,

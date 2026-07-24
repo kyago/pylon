@@ -1,85 +1,70 @@
 ---
-description: "구버전 워크스페이스를 Fossil 이력 체계로 마이그레이션"
+description: "구버전 워크스페이스의 레거시 저장소(SQLite·Fossil)를 폐기"
 ---
 
 # Workspace Migrate
 
-Fossil 이력 일원화 이후 처음 실행하는 워크스페이스를 정리합니다.
-모든 단계는 멱등이므로 여러 번 실행해도 안전합니다. 실제 변경은 전부
-pylon CLI 명령으로 수행하고, 판단이 어려운 항목은 삭제하지 말고 사용자에게 보고합니다.
+MD-First 저장소 전환 이후 처음 실행하는 워크스페이스를 정리합니다.
+**레거시 데이터(SQLite 메모리, Fossil 이력)는 새 버전으로 이전되지 않고 삭제됩니다.**
+새 메모리(`.pylon/memory/`)와 새 이력(`.pylon/history/pipelines/`)은 빈 상태로 시작합니다.
 
-## 사전 확인
+실제 삭제는 사용자의 명시적 확인을 받은 뒤에만 수행하고, 판단이 어려운 항목은
+삭제하지 말고 사용자에게 보고합니다.
+
+## Step 1: 레거시 파일 감지
+
+구버전 저장소 파일이 남아 있는지 확인합니다:
+
+```bash
+test -f .pylon/pylon.db && echo "발견: .pylon/pylon.db (SQLite 메모리/프로젝트 레지스트리)"
+test -f .pylon/history/pylon-history.fossil && echo "발견: .pylon/history/pylon-history.fossil (Fossil 이력)"
+test -d .pylon/history/checkout && echo "발견: .pylon/history/checkout (Fossil 체크아웃)"
+test -f .pylon/history/state.json && echo "발견: .pylon/history/state.json (Fossil 체크포인트 캐시)"
+```
+
+하나도 발견되지 않으면 이미 정리된 상태이므로 Step 4로 진행합니다.
+
+## Step 2: 사용자 고지 및 확인
+
+레거시 파일이 발견되면 다음을 **명시적으로** 알리고 확인을 받습니다:
+
+> 레거시 데이터(SQLite 메모리, Fossil 이력)는 새 버전으로 **이전되지 않고 삭제**됩니다.
+> - `.pylon/pylon.db`의 프로젝트 메모리는 복구되지 않습니다.
+> - Fossil 작업 이력은 복구되지 않습니다.
+> 계속하시겠습니까?
+
+확인을 받지 못하면 여기서 중단하고 아무 파일도 삭제하지 않습니다.
+
+## Step 3: 레거시 파일 삭제 (되돌릴 수 없음)
+
+확인을 받은 뒤에만 실행합니다:
+
+```bash
+# 확인 후 실행 (되돌릴 수 없음)
+test -f .pylon/pylon.db && rm .pylon/pylon.db
+rm -rf .pylon/history/pylon-history.fossil .pylon/history/checkout .pylon/history/state.json
+```
+
+삭제 후 `.pylon/history/`에는 새 파일 기반 이력인 `pipelines/`만 남습니다.
+
+## Step 4: 커맨드·설정 동기화
 
 ```bash
 pylon doctor
 ```
 
-- DB 마이그레이션(legacy `pipeline_state` 테이블 드롭)은 pylon 명령 실행 시 자동 적용됩니다
 - doctor가 스크립트·슬래시 커맨드·config 기본값을 최신으로 동기화합니다
-
-## 실행
-
-### Step 1: 종료된 runtime 디렉토리 백필
-
-Fossil 도입 이전에 끝난 파이프라인은 체크포인트 없이 `.pylon/runtime/`에만 남아 있습니다.
-각 디렉토리의 상태를 확인합니다:
-
-```bash
-for dir in .pylon/runtime/*/; do
-  if [ -f "${dir}status.json" ]; then
-    echo "${dir}: $(jq -r '.status // "unknown"' "${dir}status.json")"
-  else
-    echo "${dir}: no-status"
-  fi
-done
-```
-
-종료된 디렉토리가 하나도 없으면 이 단계를 건너뛰고 Step 2로 진행합니다.
-`no-status`인 디렉토리는 판단 불가로 취급해 보존하고 사용자에게 보고합니다.
-
-상태별 phase 매핑:
-
-| status.json의 status | phase |
-|---|---|
-| `completed`, `success` | `completed` |
-| `cancelled`, `cleaned` | `cancelled` |
-| `failed` | `failed` |
-| `running` 또는 판단 불가 | 건드리지 않고 사용자에게 보고 |
-
-종료 상태인 디렉토리마다 체크포인트를 생성하고, **성공한 경우에만** runtime 디렉토리를 삭제합니다.
-`<pipeline-id>`는 runtime 디렉토리 이름 그대로입니다 (예: `.pylon/runtime/20260305-user-login/` → `20260305-user-login`).
-`&&` 체이닝이 체크포인트 실패 시 삭제를 막아주므로 반드시 아래 형태로 실행합니다:
-
-```bash
-BRANCH=$(jq -r '.branch // ""' ".pylon/runtime/<pipeline-id>/status.json")
-pylon history checkpoint --pipeline "<pipeline-id>" --phase <phase> && \
-  .pylon/scripts/bash/cleanup-pipeline.sh ".pylon/runtime/<pipeline-id>" "$BRANCH" true
-```
-
-체크포인트가 실패하면(예: fossil 미설치) 해당 디렉토리는 보존하고 실패 원인을 보고합니다.
-
-### Step 2: 검색을 오염시키는 change 메모리 정리
-
-파일 변경 이력은 이제 Fossil 체크포인트가 담당하므로, 과거에 쌓인
-`change` 카테고리 메모리를 일괄 삭제합니다. 먼저 규모를 확인한 뒤 삭제합니다:
-
-```bash
-pylon mem prune --category change --dry-run
-pylon mem prune --category change --yes
-```
-
-### Step 3: 설정과 hook 점검 (선택)
-
-- `.pylon/config.yml`에서 더 이상 사용되지 않는 키를 제거할 수 있습니다(남겨도 무해):
-  `memory.session_archive`, `memory.retention_days`, `conversation:` 섹션 전체
+  (구버전 커맨드 md가 새 버전으로 교체됩니다).
+- `.pylon/config.yml`에서 더 이상 사용되지 않는 키는 제거할 수 있습니다(남겨도 무해):
+  `history:` 섹션 전체, `memory.compaction_threshold`, `memory.session_archive`,
+  `conversation:` 섹션 전체.
 - `.claude/settings.json` 등에 수동으로 추가한 `pylon sync-memory --incremental` hook이
-  있으면 제거합니다 (이제 아무것도 저장하지 않는 no-op입니다)
-- `pylon destroy`는 제거되었습니다 → `pylon uninstall`을 사용합니다
+  있으면 제거합니다 (이제 아무것도 저장하지 않는 no-op입니다).
 
-### Step 4: 결과 보고
+## Step 5: 결과 보고
 
 다음을 요약해 보고합니다:
 
-- 백필·삭제한 파이프라인 수와 각 체크인 ID
-- 삭제한 `change` 메모리 엔트리 수
-- 보존한 항목(진행 중 파이프라인, 체크포인트 실패 디렉토리)과 그 이유
+- 삭제한 레거시 파일 목록
+- 보존한 항목(진행 중 파이프라인 등)과 그 이유
+- 새 메모리/이력이 빈 상태로 시작한다는 안내
