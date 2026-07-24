@@ -89,8 +89,8 @@ type WikiConfig struct {
 // MemoryConfig defines agent memory management settings.
 // Spec Reference: Section 16 "memory"
 type MemoryConfig struct {
-	ProactiveInjection bool           `yaml:"proactive_injection"`
-	ProactiveMaxTokens int            `yaml:"proactive_max_tokens"`
+	ProactiveInjection bool `yaml:"proactive_injection"`
+	ProactiveMaxTokens int  `yaml:"proactive_max_tokens"`
 	// RetentionDays: 카테고리별 보존 일수. 미지정 카테고리·0 이하 = 영구 보존.
 	// nil(설정 파일에 키 없음)이면 기본값 {"learning": 30}이 적용되고,
 	// 명시적 빈 맵({})은 전체 영구 보존 opt-out이다.
