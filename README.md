@@ -415,6 +415,8 @@ wiki:
 memory:
   proactive_injection: true
   proactive_max_tokens: 2000
+  retention_days:        # 카테고리별 보존 일수 — 미지정/0 이하 = 영구 보존, {} = 전체 영구 보존
+    learning: 30
 
 skills:
   enabled: true                # 에이전트 스킬 주입 활성화

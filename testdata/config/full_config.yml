@@ -46,7 +46,8 @@ memory:
   proactive_injection: true
   proactive_max_tokens: 2000
   session_archive: true
-  retention_days: 0
+  retention_days:
+    learning: 30
 
 conversation:
   retention_days: 90
