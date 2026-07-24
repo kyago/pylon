@@ -27,6 +27,32 @@ func TestIsNearDuplicate(t *testing.T) {
 	}
 }
 
+func TestIsNearDuplicatePreservesCorrections(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+	}{
+		{"숫자 값 정정 30→60", "요청 타임아웃을 30초로 설정해야 한다는 중요한 설정", "요청 타임아웃을 60초로 설정해야 한다는 중요한 설정"},
+		{"플래그 값 정정 0→1", "이 프로젝트는 CGO_ENABLED=0으로 빌드해야 한다는 규칙", "이 프로젝트는 CGO_ENABLED=1으로 빌드해야 한다는 규칙"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if isNearDuplicate(c.a, c.b) {
+				t.Errorf("값 정정은 보존되어야 한다(중복 아님): %q vs %q", c.a, c.b)
+			}
+		})
+	}
+}
+
+// 숫자 없는 순수 재진술(어미 변화)은 0.95에서도 여전히 중복으로 병합된다.
+func TestIsNearDuplicateStillMergesRestatement(t *testing.T) {
+	a := "테스트는 race 플래그를 켜고 실행해야 한다는 것"
+	b := "테스트는 race 플래그를 켜고 실행해야 한다"
+	if !isNearDuplicate(a, b) {
+		t.Errorf("숫자 없는 재진술은 병합되어야 한다: %q vs %q", a, b)
+	}
+}
+
 func TestDiceSimilarityBounds(t *testing.T) {
 	if got := diceSimilarity("", "아무 내용"); got != 0 {
 		t.Errorf("빈 문자열 유사도 = %v, want 0", got)

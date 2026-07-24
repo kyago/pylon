@@ -69,10 +69,10 @@ func TestNewSyncMemoryCmd_MutuallyExclusive(t *testing.T) {
 
 func TestParseLearnings(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantLen  int
-		wantNil  bool
+		name    string
+		input   string
+		wantLen int
+		wantNil bool
 	}{
 		{"empty", "", 0, true},
 		{"single line", "learned something", 1, false},
@@ -672,4 +672,3 @@ func TestSyncFromSessionPrunesExpired(t *testing.T) {
 		}
 	}
 }
-

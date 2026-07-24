@@ -564,3 +564,13 @@ func TestMemoryRetentionDaysExplicitEmpty(t *testing.T) {
 		t.Errorf("빈 맵 명시는 보존 정책 해제여야 한다: %v", cfg.Memory.RetentionDays)
 	}
 }
+
+func TestMemoryRetentionDaysLegacyScalar(t *testing.T) {
+	cfg, err := ParseConfig([]byte("version: \"0.1\"\nmemory:\n  retention_days: 0\n"))
+	if err != nil {
+		t.Fatalf("레거시 스칼라 retention_days는 파싱 에러 없이 로드되어야 한다: %v", err)
+	}
+	if len(cfg.Memory.RetentionDays) != 0 {
+		t.Errorf("레거시 스칼라는 정책 없음(빈)이어야 한다: %v", cfg.Memory.RetentionDays)
+	}
+}

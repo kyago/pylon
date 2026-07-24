@@ -94,7 +94,26 @@ type MemoryConfig struct {
 	// RetentionDays: 카테고리별 보존 일수. 미지정 카테고리·0 이하 = 영구 보존.
 	// nil(설정 파일에 키 없음)이면 기본값 {"learning": 30}이 적용되고,
 	// 명시적 빈 맵({})은 전체 영구 보존 opt-out이다.
-	RetentionDays map[string]int `yaml:"retention_days"`
+	RetentionDays retentionPolicy `yaml:"retention_days"`
+}
+
+// retentionPolicy is a category→days map that tolerates a legacy scalar
+// retention_days value (older configs shipped `retention_days: 0`). A
+// non-mapping node is treated as "no policy" so those configs still load,
+// preserving the pre-existing behavior where the field was ignored.
+type retentionPolicy map[string]int
+
+func (r *retentionPolicy) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		*r = retentionPolicy{} // 레거시 스칼라 → 정책 없음(기존 무시 동작 보존)
+		return nil
+	}
+	m := map[string]int{}
+	if err := value.Decode(&m); err != nil {
+		return err
+	}
+	*r = m
+	return nil
 }
 
 // WorkflowConfig defines workflow template settings.
@@ -353,7 +372,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Memory.ProactiveMaxTokens = 2000
 	}
 	if cfg.Memory.RetentionDays == nil {
-		cfg.Memory.RetentionDays = map[string]int{"learning": 30}
+		cfg.Memory.RetentionDays = retentionPolicy{"learning": 30}
 	}
 	// ProactiveInjection defaults to true,
 	// handled by pre-initialization in ParseConfig.

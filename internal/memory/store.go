@@ -329,6 +329,9 @@ func (s *Store) PruneExpired(project string, retentionDays map[string]int) (int6
 		if !ok || days <= 0 {
 			continue
 		}
+		if e.CreatedAt.IsZero() {
+			continue // created_at 결측 항목은 나이를 알 수 없으므로 영구 보존
+		}
 		if now.Sub(e.CreatedAt) > time.Duration(days)*24*time.Hour {
 			targets = append(targets, e)
 		}

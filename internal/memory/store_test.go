@@ -368,6 +368,27 @@ func TestPruneExpiredNilPolicy(t *testing.T) {
 	}
 }
 
+func TestPruneExpiredSkipsZeroCreatedAt(t *testing.T) {
+	s := newTestStore(t)
+	// created_at 없는 항목을 직접 파일로 쓴다 (parseEntry는 이를 손상으로 보지 않고
+	// CreatedAt=zero로 둔다). 정책이 있어도 나이를 몰라 삭제되면 안 된다.
+	dir := filepath.Join(s.projectDir("app"), "learning")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\ncategory: learning\nkey: 날짜없는 항목\nconfidence: 0.8\n---\n\ncreated_at 없이 손으로 작성한 메모리 항목\n"
+	if err := os.WriteFile(filepath.Join(dir, "no-date.md"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.PruneExpired("app", map[string]int{"learning": 30})
+	if err != nil {
+		t.Fatalf("PruneExpired 실패: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("created_at 결측 항목은 삭제되면 안 된다: %d건 삭제됨", n)
+	}
+}
+
 // 주입 출력은 confidence 우선, 동률이면 최신 우선으로 정렬된다 —
 // 예산 절단 시 카테고리 알파벳순이 아니라 중요도 낮은 항목부터 떨어진다.
 func TestInjectionMarkdownRanksByConfidenceThenRecency(t *testing.T) {
