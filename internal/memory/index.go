@@ -2,7 +2,6 @@
 package memory
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,26 +38,6 @@ func (s *Store) rebuildIndexLocked(project string) error {
 		b.WriteString(indexLine(e))
 	}
 	return fsutil.WriteFileAtomic(indexPath, []byte(b.String()), 0644)
-}
-
-// IndexMarkdown returns the project index, truncated at a line boundary when
-// maxBytes > 0. 존재하지 않는 프로젝트는 빈 문자열을 반환한다.
-func (s *Store) IndexMarkdown(project string, maxBytes int) (string, error) {
-	data, err := os.ReadFile(filepath.Join(s.projectDir(project), indexFileName))
-	if os.IsNotExist(err) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if maxBytes <= 0 || len(data) <= maxBytes {
-		return string(data), nil
-	}
-	cut := bytes.LastIndexByte(data[:maxBytes], '\n')
-	if cut <= 0 {
-		return "…(생략)\n", nil
-	}
-	return string(data[:cut]) + "\n…(생략)\n", nil
 }
 
 // indexLine renders one entry as an index/injection line.

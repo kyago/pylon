@@ -275,30 +275,6 @@ func TestStoreLearningsTruncatesKeyByRunes(t *testing.T) {
 	}
 }
 
-func TestIndexMarkdownTruncation(t *testing.T) {
-	s := newTestStore(t)
-	for i := 0; i < 20; i++ {
-		// content는 항목마다 달라야 한다 — 동일 내용은 D4로 중복 스킵된다.
-		mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning",
-			Key: strings.Repeat("k", 10) + string(rune('a'+i)), Content: strings.Repeat("내용 ", 30) + string(rune('a'+i)), Confidence: 0.8})
-	}
-	full, err := s.IndexMarkdown("app", 0)
-	if err != nil || full == "" {
-		t.Fatalf("전체 인덱스: err=%v", err)
-	}
-	capped, err := s.IndexMarkdown("app", 300)
-	if err != nil {
-		t.Fatalf("잘린 인덱스: %v", err)
-	}
-	if len(capped) > 300+len("\n…(생략)\n") {
-		t.Errorf("maxBytes를 초과했습니다: %d바이트", len(capped))
-	}
-	// 존재하지 않는 프로젝트는 빈 문자열
-	if empty, err := s.IndexMarkdown("ghost", 100); err != nil || empty != "" {
-		t.Errorf("없는 프로젝트: %q, err=%v", empty, err)
-	}
-}
-
 // Stop hook이 매 턴 표현만 바뀐 학습을 다시 보내므로, 바이트 동일이 아니어도
 // 근사 중복이면 스킵되어야 한다 (D4 확장).
 func TestInsertSkipsNearDuplicate(t *testing.T) {
