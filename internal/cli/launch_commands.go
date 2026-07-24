@@ -24,10 +24,8 @@ func buildSlashCommands(root string) map[string]string {
 
 ## 절차
 
-1. 프로젝트 목록을 동기화하고 조회합니다 (DB에 최신 상태를 반영하기 위해 sync를 먼저 실행):
-   ` + "```" + `bash
-   pylon sync-projects
-   ` + "```" + `
+1. 프로젝트 목록을 조회합니다. 프로젝트는 워크스페이스 하위에서 자체 ` + "`" + `.pylon/` + "`" + ` 디렉토리를
+   가진 디렉토리로 자동 탐색되므로 별도 동기화 명령이 필요하지 않습니다.
 
 2. 각 프로젝트의 인덱싱 상태를 판단합니다. 다음 두 지표를 확인하여 판단합니다:
 
@@ -67,7 +65,7 @@ func buildSlashCommands(root string) map[string]string {
 - 인덱싱이 되지 않은 프로젝트는 "미인덱싱" 상태로 표시하고 ` + "`" + `/pl:index` + "`" + ` 실행을 안내
 - 프로젝트가 없는 경우 ` + "`" + `pylon add-project <git-url>` + "`" + `로 추가하도록 안내
 - 출력은 테이블 또는 구조화된 목록 형태로 보기 좋게 정리
-- 메모리 조회 시 ` + "`" + `--category` + "`" + ` 필터를 사용하지 않습니다 (실제 데이터는 change, learning 등 다양한 카테고리로 저장됨)
+- 메모리 조회 시 ` + "`" + `--category` + "`" + ` 필터를 사용하지 않습니다 (실제 데이터는 learning, decision 등 다양한 카테고리로 저장됨)
 `,
 
 		"pl/index": `# /pl:index — 프로젝트 코드베이스 인덱싱

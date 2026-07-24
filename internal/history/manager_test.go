@@ -105,6 +105,60 @@ func TestTerminalPhaseCopiesMemorySnapshot(t *testing.T) {
 	}
 }
 
+// 이력 스냅샷에는 큐레이션된 카테고리만 남아야 한다 — raw 변경 이력 등은 제외.
+func TestTerminalPhaseExcludesUncuratedMemoryCategories(t *testing.T) {
+	m, root := newTestManager(t)
+	mustWrite(t, filepath.Join(root, ".pylon", "memory", "app", "learning", "keep.md"),
+		"---\nkey: k\ncategory: learning\nconfidence: 0.8\ncreated_at: 2026-07-23T00:00:00Z\n---\n\n유지\n")
+	mustWrite(t, filepath.Join(root, ".pylon", "memory", "app", "change", "raw.md"),
+		"---\nkey: k\ncategory: change\nconfidence: 0.8\ncreated_at: 2026-07-23T00:00:00Z\n---\n\nRAW_DIFF\n")
+
+	mustCheckpoint(t, m, "pipe-1", PhaseCompleted)
+
+	snap := filepath.Join(root, ".pylon", "history", "pipelines", "pipe-1", "completed", "memory", "app")
+	if _, err := os.Stat(filepath.Join(snap, "learning", "keep.md")); err != nil {
+		t.Errorf("learning 카테고리는 보존되어야 한다: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snap, "change", "raw.md")); err == nil {
+		t.Error("change 카테고리는 이력에 복사되면 안 된다")
+	}
+}
+
+// 서로 다른 repo가 같은 basename을 가져도 체크포인트가 실패하면 안 된다.
+func TestTerminalPhaseHandlesProjectBasenameCollision(t *testing.T) {
+	m, root := newTestManager(t)
+	mustWrite(t, filepath.Join(root, ".pylon", "runtime", "pipe-2", "tasks.json"),
+		`{"tasks":[{"repo":"services/api"},{"repo":"vendor/api"}]}`)
+	mustWrite(t, filepath.Join(root, ".pylon", "runtime", "pipe-2", "status.json"), `{"status":"completed"}`)
+	mustWrite(t, filepath.Join(root, ".pylon", "memory", "api", "learning", "a.md"),
+		"---\nkey: k\ncategory: learning\nconfidence: 0.8\ncreated_at: 2026-07-23T00:00:00Z\n---\n\n본문\n")
+
+	if _, err := m.Checkpoint("pipe-2", PhaseCompleted); err != nil {
+		t.Fatalf("basename이 겹쳐도 체크포인트는 성공해야 한다: %v", err)
+	}
+}
+
+// 재체크포인트가 기존 스냅샷을 파괴하지 않아야 한다(삭제 후 rename 금지).
+func TestRecheckpointReplacesSnapshotWithoutLoss(t *testing.T) {
+	m, root := newTestManager(t)
+	mustCheckpoint(t, m, "pipe-1", PhasePlanned)
+	mustWrite(t, filepath.Join(root, ".pylon", "runtime", "pipe-1", "requirement.md"), "# 갱신된 요구사항")
+	mustCheckpoint(t, m, "pipe-1", PhasePlanned)
+
+	data, err := os.ReadFile(filepath.Join(root, ".pylon", "history", "pipelines", "pipe-1", "planned", "requirement.md"))
+	if err != nil {
+		t.Fatalf("교체 후에도 스냅샷이 있어야 한다: %v", err)
+	}
+	if !strings.Contains(string(data), "갱신된 요구사항") {
+		t.Errorf("새 내용으로 교체되어야 한다: %s", data)
+	}
+	// 교체용 임시 디렉토리가 log에 새어나오면 안 된다.
+	entries, err := m.Log("", 20)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("체크포인트는 1건이어야 한다: %d, err=%v", len(entries), err)
+	}
+}
+
 func TestCheckpointCuratesJSONKeys(t *testing.T) {
 	m, root := newTestManager(t)
 	if _, err := m.Checkpoint("pipe-1", PhaseCompleted); err != nil {

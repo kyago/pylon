@@ -136,12 +136,27 @@ func (m *Manager) Checkpoint(pipelineID string, phase Phase) (CheckpointResult, 
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return result, err
 	}
-	if err := os.RemoveAll(target); err != nil {
+	// 기존 스냅샷은 삭제 대신 옆으로 옮긴 뒤 교체한다 — 삭제와 rename 사이에
+	// 프로세스가 죽으면 해당 phase의 유일한 사본이 사라지기 때문이다.
+	// aside는 pipelines/ 바로 아래(depth 1)라 Log의 <id>/<phase> glob에 잡히지 않는다.
+	aside := filepath.Join(m.pipelinesDir(), "."+pipelineID+"-"+string(phase)+".old")
+	if err := os.RemoveAll(aside); err != nil {
 		return result, err
+	}
+	restore := false
+	if _, err := os.Stat(target); err == nil {
+		if err := os.Rename(target, aside); err != nil {
+			return result, err
+		}
+		restore = true
 	}
 	if err := os.Rename(tempDir, target); err != nil {
+		if restore {
+			_ = os.Rename(aside, target) // 교체 실패 시 기존 스냅샷을 되돌린다
+		}
 		return result, err
 	}
+	_ = os.RemoveAll(aside)
 	return result, nil
 }
 
@@ -160,19 +175,36 @@ func readManifest(dir string) (*Manifest, error) {
 	return &m, nil
 }
 
-// exportMemory copies the affected projects' markdown memory into the snapshot.
+// curatedMemoryCategories are the only memory categories preserved in history
+// snapshots — raw 변경 이력 같은 오염 카테고리는 제외한다.
+var curatedMemoryCategories = []string{"learning", "decision", "architecture", "pattern"}
+
+// exportMemory copies the affected projects' curated markdown memory into the snapshot.
 func (m *Manager) exportMemory(destDir string, projects []string) error {
+	seen := make(map[string]bool)
 	for _, project := range projects {
 		projectID := filepath.Base(project)
 		if project == "." {
 			projectID = filepath.Base(m.Root)
 		}
+		// 서로 다른 repo가 같은 basename을 가지면 projectID가 겹친다
+		// (예: services/api, vendor/api) — 중복 복사로 실패하지 않도록 한 번만 복사한다.
+		if seen[projectID] {
+			continue
+		}
+		seen[projectID] = true
 		src := layout.ProjectMemoryDir(m.Root, projectID)
 		if info, err := os.Stat(src); err != nil || !info.IsDir() {
 			continue
 		}
-		if err := fsutil.CopyDir(src, filepath.Join(destDir, "memory", projectID)); err != nil {
-			return err
+		for _, category := range curatedMemoryCategories {
+			categorySrc := filepath.Join(src, category)
+			if info, err := os.Stat(categorySrc); err != nil || !info.IsDir() {
+				continue
+			}
+			if err := fsutil.CopyDir(categorySrc, filepath.Join(destDir, "memory", projectID, category)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -62,6 +62,10 @@ func (s *Store) Insert(e *Entry) error {
 	if err := validateComponent("category", e.Category); err != nil {
 		return err
 	}
+	// 저장 전에 정규화한다. 쓰기/읽기/비교의 정규화가 어긋나면 후행 공백이 붙은
+	// content가 자기 자신과도 매칭되지 않아 중복 스킵(D4)이 무력화된다.
+	// 선행 공백은 보존한다 — 들여쓴 코드 조각이 깨지면 안 되기 때문이다.
+	e.Content = trimContent(e.Content)
 	if e.Key == "" || e.Content == "" {
 		return fmt.Errorf("key와 content는 비어 있을 수 없습니다")
 	}
@@ -155,11 +159,14 @@ func (s *Store) List(project string) ([]Entry, error) {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return nil // 일시적으로 읽을 수 없는 파일은 건너뛴다
 		}
 		e, err := parseEntry(data)
 		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			// 손상된 파일 1개가 저장소 전체를 마비시키지 않도록 건너뛴다.
+			// .pylon/memory/는 git 추적 대상이라(D1) 병합 충돌 마커는 예상 가능한
+			// 상태이며, 건너뛰어야 사용자가 저장/삭제로 자가 복구할 수 있다.
+			return nil
 		}
 		e.ProjectID = project
 		rel, err := filepath.Rel(s.Root, path)

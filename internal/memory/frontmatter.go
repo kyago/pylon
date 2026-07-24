@@ -24,6 +24,12 @@ type Entry struct {
 
 const frontmatterDelim = "---\n"
 
+// trimContent normalizes entry content identically on write, read, and
+// duplicate comparison. 후행 공백만 제거하고 선행 들여쓰기는 보존한다.
+func trimContent(s string) string {
+	return strings.TrimRight(s, " \t\r\n")
+}
+
 // marshalEntry renders an Entry as markdown with YAML frontmatter.
 func marshalEntry(e *Entry) ([]byte, error) {
 	head, err := yaml.Marshal(e)
@@ -35,7 +41,7 @@ func marshalEntry(e *Entry) ([]byte, error) {
 	buf.Write(head)
 	buf.WriteString(frontmatterDelim)
 	buf.WriteString("\n")
-	buf.WriteString(strings.TrimRight(e.Content, "\n"))
+	buf.WriteString(trimContent(e.Content))
 	buf.WriteString("\n")
 	return buf.Bytes(), nil
 }
@@ -56,6 +62,8 @@ func parseEntry(data []byte) (*Entry, error) {
 	if err := yaml.Unmarshal([]byte(rest[:idx+1]), &e); err != nil {
 		return nil, fmt.Errorf("frontmatter 파싱 실패: %w", err)
 	}
-	e.Content = strings.TrimSpace(rest[idx+len(sep):])
+	// 본문은 종료 구분자 뒤 빈 줄 하나를 사이에 두고 시작한다. 그 구분용 개행만
+	// 걷어내고 나머지는 trimContent로 정규화해 선행 들여쓰기를 보존한다.
+	e.Content = trimContent(strings.TrimPrefix(rest[idx+len(sep):], "\n"))
 	return &e, nil
 }

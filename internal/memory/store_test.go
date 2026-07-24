@@ -109,6 +109,68 @@ func TestInsertSkipsDuplicateContent(t *testing.T) {
 	}
 }
 
+// 후행 개행이 붙은 content도 중복으로 인식되어야 한다 (D4).
+// marshal(TrimRight) / parse(TrimSpace) / 비교(원본) 정규화가 어긋나면
+// 같은 내용이 자기 자신과도 매칭되지 않아 매 턴 새 파일이 쌓인다.
+func TestInsertSkipsDuplicateWithTrailingWhitespace(t *testing.T) {
+	s := newTestStore(t)
+	for i := 0; i < 3; i++ {
+		e := &Entry{ProjectID: "app", Category: "learning", Key: "k", Content: "반복 내용\n", Confidence: 0.8}
+		err := s.Insert(e)
+		if i == 0 && err != nil {
+			t.Fatalf("첫 저장 실패: %v", err)
+		}
+		if i > 0 && !errors.Is(err, ErrDuplicate) {
+			t.Fatalf("%d번째: 후행 개행 content는 중복이어야 한다: %v", i, err)
+		}
+	}
+	entries, _ := s.ListByCategory("app", "learning")
+	if len(entries) != 1 {
+		t.Fatalf("1건만 저장되어야 한다: %d건", len(entries))
+	}
+}
+
+// 정규화가 선행 들여쓰기를 훼손하면 안 된다 — 들여쓴 코드 조각이 저장 대상이다.
+func TestInsertPreservesLeadingIndentation(t *testing.T) {
+	s := newTestStore(t)
+	const padded = "    indented code\n    second line"
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "k", Content: padded, Confidence: 0.8})
+
+	entries, err := s.List("app")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("1건 조회: %d, err=%v", len(entries), err)
+	}
+	if entries[0].Content != padded {
+		t.Errorf("들여쓰기가 보존되어야 한다: wrote %q, read %q", padded, entries[0].Content)
+	}
+	// 들여쓴 동일 내용도 중복으로 인식되어야 한다 (D4).
+	if err := s.Insert(&Entry{ProjectID: "app", Category: "learning", Key: "k2", Content: padded, Confidence: 0.8}); !errors.Is(err, ErrDuplicate) {
+		t.Errorf("동일 들여쓰기 content는 중복이어야 한다: %v", err)
+	}
+}
+
+// 손상된 .md 파일 1개가 프로젝트 메모리 전체를 마비시키면 안 된다.
+// .pylon/memory/는 git 추적 대상이므로 병합 충돌 마커는 예상 가능한 상태다 (D1).
+func TestListSkipsCorruptFiles(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "정상", Content: "정상 내용", Confidence: 0.8})
+
+	corrupt := filepath.Join(s.Root, ".pylon", "memory", "app", "learning", "conflict.md")
+	if err := os.WriteFile(corrupt, []byte("<<<<<<< HEAD\n앞\n=======\n뒤\n>>>>>>> branch\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := s.List("app")
+	if err != nil {
+		t.Fatalf("손상 파일이 있어도 List는 성공해야 한다: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Key != "정상" {
+		t.Fatalf("정상 항목은 계속 조회되어야 한다: %+v", entries)
+	}
+	// 손상 파일이 있어도 저장은 계속 가능해야 한다(자가 복구 가능).
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "추가", Content: "추가 내용", Confidence: 0.8})
+}
+
 func TestStoreLearningsSilentlySkipsDuplicates(t *testing.T) {
 	s := newTestStore(t)
 	// Stop hook이 매 턴 같은 학습 내용을 보내는 상황 재현 — 에러 없이 1건만 남아야 한다
@@ -216,8 +278,9 @@ func TestStoreLearningsTruncatesKeyByRunes(t *testing.T) {
 func TestIndexMarkdownTruncation(t *testing.T) {
 	s := newTestStore(t)
 	for i := 0; i < 20; i++ {
+		// content는 항목마다 달라야 한다 — 동일 내용은 D4로 중복 스킵된다.
 		mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning",
-			Key: strings.Repeat("k", 10) + string(rune('a'+i)), Content: strings.Repeat("내용 ", 30), Confidence: 0.8})
+			Key: strings.Repeat("k", 10) + string(rune('a'+i)), Content: strings.Repeat("내용 ", 30) + string(rune('a'+i)), Confidence: 0.8})
 	}
 	full, err := s.IndexMarkdown("app", 0)
 	if err != nil || full == "" {
