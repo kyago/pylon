@@ -329,3 +329,65 @@ func TestInsertKeepsDistinctShortEntries(t *testing.T) {
 	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "짧은 항목 2",
 		Content: "빌드 성능", Confidence: 0.8})
 }
+
+// 카테고리별 보존 일수를 넘긴 항목은 삭제되고, 정책 없는 카테고리는 영구 보존된다.
+func TestPruneExpiredDeletesOldEntries(t *testing.T) {
+	s := newTestStore(t) // Now = 2026-07-23 12:00 UTC 고정
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "오래된 학습",
+		Content: "32일 전에 저장된 학습 내용이라 만료 대상이다", Confidence: 0.8,
+		CreatedAt: time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "최근 학습",
+		Content: "어제 저장된 학습이라 보존 기간 안에 있다", Confidence: 0.8,
+		CreatedAt: time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "decision", Key: "오래된 결정",
+		Content: "decision 카테고리는 보존 정책이 없으므로 영구 보존되어야 한다", Confidence: 0.9,
+		CreatedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)})
+
+	n, err := s.PruneExpired("app", map[string]int{"learning": 30})
+	if err != nil {
+		t.Fatalf("PruneExpired 실패: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("만료 1건만 삭제되어야 한다: %d", n)
+	}
+	entries, err := s.List("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Key == "오래된 학습" {
+			t.Error("만료 항목이 남아 있다")
+		}
+	}
+	if len(entries) != 2 {
+		t.Errorf("최근 학습과 decision은 남아야 한다: %d건", len(entries))
+	}
+	// INDEX.md도 갱신되어야 한다
+	index, err := os.ReadFile(filepath.Join(s.Root, ".pylon", "memory", "app", "INDEX.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(index), "오래된 학습") {
+		t.Error("INDEX.md에서 만료 항목이 제거되어야 한다")
+	}
+}
+
+// 0 이하의 보존 일수는 영구 보존을 뜻한다.
+func TestPruneExpiredZeroMeansPermanent(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "아주 오래된 학습",
+		Content: "보존 일수가 0이면 아무리 오래돼도 지우지 않는다", Confidence: 0.8,
+		CreatedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)})
+	n, err := s.PruneExpired("app", map[string]int{"learning": 0})
+	if err != nil || n != 0 {
+		t.Fatalf("0일 정책은 no-op여야 한다: n=%d, err=%v", n, err)
+	}
+}
+
+// nil/빈 정책은 no-op이다.
+func TestPruneExpiredNilPolicy(t *testing.T) {
+	s := newTestStore(t)
+	if n, err := s.PruneExpired("app", nil); err != nil || n != 0 {
+		t.Fatalf("nil 정책은 (0, nil)이어야 한다: n=%d, err=%v", n, err)
+	}
+}
