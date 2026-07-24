@@ -85,13 +85,14 @@ func (s *Store) Insert(e *Entry) error {
 	}
 	defer unlock()
 
-	// Stop hook이 매 턴 같은 학습을 보내므로 동일 내용은 저장하지 않는다 (D4).
+	// Stop hook이 매 턴 같은 학습을 보내므로 동일·근사 중복 내용은 저장하지
+	// 않는다 (D4). 표현만 바뀐 재진술은 bigram Dice 유사도로 걸러낸다.
 	existing, err := s.ListByCategory(e.ProjectID, e.Category)
 	if err != nil {
 		return err
 	}
 	for _, prev := range existing {
-		if prev.Content == e.Content {
+		if isNearDuplicate(prev.Content, e.Content) {
 			e.Path = prev.Path
 			return fmt.Errorf("%w: %s", ErrDuplicate, prev.Path)
 		}

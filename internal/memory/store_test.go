@@ -298,3 +298,34 @@ func TestIndexMarkdownTruncation(t *testing.T) {
 		t.Errorf("없는 프로젝트: %q, err=%v", empty, err)
 	}
 }
+
+// Stop hook이 매 턴 표현만 바뀐 학습을 다시 보내므로, 바이트 동일이 아니어도
+// 근사 중복이면 스킵되어야 한다 (D4 확장).
+func TestInsertSkipsNearDuplicate(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "race 플래그",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다", Confidence: 0.8})
+
+	e := &Entry{ProjectID: "app", Category: "learning", Key: "race 플래그 재진술",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다는 것", Confidence: 0.8}
+	err := s.Insert(e)
+	if !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("근사 중복은 ErrDuplicate여야 한다: %v", err)
+	}
+	if e.Path == "" {
+		t.Error("스킵 시 기존 항목의 Path가 채워져야 한다")
+	}
+
+	// 카테고리가 다르면 같은 내용도 저장된다 (기존 동작 유지)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "decision", Key: "race 플래그",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다는 것", Confidence: 0.9})
+}
+
+// 짧은 항목은 bigram 신호가 불안정하므로 정확 일치만 중복 처리한다.
+func TestInsertKeepsDistinctShortEntries(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "짧은 항목 1",
+		Content: "빌드 성공", Confidence: 0.8})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "짧은 항목 2",
+		Content: "빌드 성능", Confidence: 0.8})
+}
