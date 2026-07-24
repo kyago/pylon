@@ -64,7 +64,7 @@ Claude Code Hook에서 자동 호출되어 세션 종료 시
 // runSyncFromSession handles --from-session: stores session learnings into project memory.
 // Note: Stop hook fires after EVERY Claude response turn, NOT only at session end.
 func runSyncFromSession(project, agent, content string) error {
-	root, _, err := openWorkspace()
+	root, cfg, err := openWorkspace()
 	if err != nil {
 		return err
 	}
@@ -97,6 +97,13 @@ func runSyncFromSession(project, agent, content string) error {
 		return fmt.Errorf("학습 내용 저장 실패: %w", err)
 	}
 
+	// 저장 위생: 보존 기간이 지난 항목을 함께 정리한다. 정리 실패는 저장
+	// 성공을 막지 않는다 (Stop hook이 실패하면 세션 흐름을 방해하므로).
+	pruned, pruneErr := memStore.PruneExpired(project, cfg.Memory.RetentionDays)
+	if pruneErr != nil {
+		fmt.Fprintf(os.Stderr, "경고: 만료 메모리 정리 실패: %v\n", pruneErr)
+	}
+
 	if flagJSON {
 		data, _ := json.Marshal(map[string]any{
 			"status":   "ok",
@@ -105,10 +112,14 @@ func runSyncFromSession(project, agent, content string) error {
 			"task_id":  taskID,
 			"count":    len(learnings),
 			"category": "learning",
+			"pruned":   pruned,
 		})
 		fmt.Println(string(data))
 	} else {
 		fmt.Printf("✓ %d개 학습 내용을 %s 프로젝트에 저장했습니다 (task: %s)\n", len(learnings), project, taskID)
+		if pruned > 0 {
+			fmt.Printf("✓ 보존 기간이 지난 메모리 %d건을 정리했습니다\n", pruned)
+		}
 	}
 
 	return nil
