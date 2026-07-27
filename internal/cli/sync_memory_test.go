@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/memory"
@@ -68,10 +69,10 @@ func TestNewSyncMemoryCmd_MutuallyExclusive(t *testing.T) {
 
 func TestParseLearnings(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantLen  int
-		wantNil  bool
+		name    string
+		input   string
+		wantLen int
+		wantNil bool
 	}{
 		{"empty", "", 0, true},
 		{"single line", "learned something", 1, false},
@@ -642,3 +643,32 @@ func TestGenerateClaudeDir_IncludesSettings(t *testing.T) {
 	}
 }
 
+// Stop hook 경로는 학습 저장 후 만료 항목을 자동 정리한다 (기본 learning 30일).
+func TestSyncFromSessionPrunesExpired(t *testing.T) {
+	root := setupTestWorkspace(t)
+
+	prev := flagWorkspace
+	flagWorkspace = root
+	defer func() { flagWorkspace = prev }()
+
+	s := memory.NewStore(root)
+	if err := s.Insert(&memory.Entry{ProjectID: "app", Category: "learning",
+		Key: "오래된 학습", Content: "31일이 지나 만료 정리 대상인 오래된 학습 내용",
+		Confidence: 0.8, CreatedAt: time.Now().UTC().Add(-31 * 24 * time.Hour)}); err != nil {
+		t.Fatalf("사전 저장 실패: %v", err)
+	}
+
+	if err := runSyncFromSession("app", "claude", "- 새로 들어온 학습 내용"); err != nil {
+		t.Fatalf("sync 실패: %v", err)
+	}
+
+	entries, err := s.ListByCategory("app", "learning")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Key == "오래된 학습" {
+			t.Error("30일 지난 learning 항목은 자동 정리되어야 한다")
+		}
+	}
+}

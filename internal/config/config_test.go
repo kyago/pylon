@@ -127,7 +127,8 @@ func TestParseConfig_IgnoresRemovedFields(t *testing.T) {
 version: "1"
 memory:
   session_archive: true
-  retention_days: 30
+  retention_days:
+    learning: 30
 conversation:
   retention_days: 90
 `
@@ -528,5 +529,48 @@ func TestFindMissingFields_TypeMismatchGuard(t *testing.T) {
 	}
 	if nested["child_a"] != "val_a" || nested["child_b"] != "val_b" {
 		t.Errorf("expected default sub-keys, got %v", nested)
+	}
+}
+
+func TestMemoryRetentionDaysDefault(t *testing.T) {
+	cfg, err := ParseConfig([]byte("version: \"0.1\"\n"))
+	if err != nil {
+		t.Fatalf("ParseConfig 실패: %v", err)
+	}
+	if got := cfg.Memory.RetentionDays["learning"]; got != 30 {
+		t.Errorf("retention_days.learning 기본값 = %d, want 30", got)
+	}
+}
+
+func TestMemoryRetentionDaysOverride(t *testing.T) {
+	yml := "version: \"0.1\"\nmemory:\n  retention_days:\n    learning: 7\n    note: 14\n"
+	cfg, err := ParseConfig([]byte(yml))
+	if err != nil {
+		t.Fatalf("ParseConfig 실패: %v", err)
+	}
+	if cfg.Memory.RetentionDays["learning"] != 7 || cfg.Memory.RetentionDays["note"] != 14 {
+		t.Errorf("명시값이 적용되어야 한다: %v", cfg.Memory.RetentionDays)
+	}
+}
+
+// 빈 맵을 명시하면 "모든 카테고리 영구 보존" opt-out이다 (기본값 미적용).
+func TestMemoryRetentionDaysExplicitEmpty(t *testing.T) {
+	yml := "version: \"0.1\"\nmemory:\n  retention_days: {}\n"
+	cfg, err := ParseConfig([]byte(yml))
+	if err != nil {
+		t.Fatalf("ParseConfig 실패: %v", err)
+	}
+	if len(cfg.Memory.RetentionDays) != 0 {
+		t.Errorf("빈 맵 명시는 보존 정책 해제여야 한다: %v", cfg.Memory.RetentionDays)
+	}
+}
+
+func TestMemoryRetentionDaysLegacyScalar(t *testing.T) {
+	cfg, err := ParseConfig([]byte("version: \"0.1\"\nmemory:\n  retention_days: 0\n"))
+	if err != nil {
+		t.Fatalf("레거시 스칼라 retention_days는 파싱 에러 없이 로드되어야 한다: %v", err)
+	}
+	if len(cfg.Memory.RetentionDays) != 0 {
+		t.Errorf("레거시 스칼라는 정책 없음(빈)이어야 한다: %v", cfg.Memory.RetentionDays)
 	}
 }

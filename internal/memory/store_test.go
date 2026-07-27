@@ -275,26 +275,191 @@ func TestStoreLearningsTruncatesKeyByRunes(t *testing.T) {
 	}
 }
 
-func TestIndexMarkdownTruncation(t *testing.T) {
+// Stop hook이 매 턴 표현만 바뀐 학습을 다시 보내므로, 바이트 동일이 아니어도
+// 근사 중복이면 스킵되어야 한다 (D4 확장).
+func TestInsertSkipsNearDuplicate(t *testing.T) {
 	s := newTestStore(t)
-	for i := 0; i < 20; i++ {
-		// content는 항목마다 달라야 한다 — 동일 내용은 D4로 중복 스킵된다.
-		mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning",
-			Key: strings.Repeat("k", 10) + string(rune('a'+i)), Content: strings.Repeat("내용 ", 30) + string(rune('a'+i)), Confidence: 0.8})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "race 플래그",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다", Confidence: 0.8})
+
+	e := &Entry{ProjectID: "app", Category: "learning", Key: "race 플래그 재진술",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다는 것", Confidence: 0.8}
+	err := s.Insert(e)
+	if !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("근사 중복은 ErrDuplicate여야 한다: %v", err)
 	}
-	full, err := s.IndexMarkdown("app", 0)
-	if err != nil || full == "" {
-		t.Fatalf("전체 인덱스: err=%v", err)
+	if e.Path == "" {
+		t.Error("스킵 시 기존 항목의 Path가 채워져야 한다")
 	}
-	capped, err := s.IndexMarkdown("app", 300)
+
+	// 카테고리가 다르면 같은 내용도 저장된다 (기존 동작 유지)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "decision", Key: "race 플래그",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다는 것", Confidence: 0.9})
+}
+
+// 짧은 항목은 bigram 신호가 불안정하므로 정확 일치만 중복 처리한다.
+func TestInsertKeepsDistinctShortEntries(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "짧은 항목 1",
+		Content: "빌드 성공", Confidence: 0.8})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "짧은 항목 2",
+		Content: "빌드 성능", Confidence: 0.8})
+}
+
+// 카테고리별 보존 일수를 넘긴 항목은 삭제되고, 정책 없는 카테고리는 영구 보존된다.
+func TestPruneExpiredDeletesOldEntries(t *testing.T) {
+	s := newTestStore(t) // Now = 2026-07-23 12:00 UTC 고정
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "오래된 학습",
+		Content: "32일 전에 저장된 학습 내용이라 만료 대상이다", Confidence: 0.8,
+		CreatedAt: time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "최근 학습",
+		Content: "어제 저장된 학습이라 보존 기간 안에 있다", Confidence: 0.8,
+		CreatedAt: time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "decision", Key: "오래된 결정",
+		Content: "decision 카테고리는 보존 정책이 없으므로 영구 보존되어야 한다", Confidence: 0.9,
+		CreatedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)})
+
+	n, err := s.PruneExpired("app", map[string]int{"learning": 30})
 	if err != nil {
-		t.Fatalf("잘린 인덱스: %v", err)
+		t.Fatalf("PruneExpired 실패: %v", err)
 	}
-	if len(capped) > 300+len("\n…(생략)\n") {
-		t.Errorf("maxBytes를 초과했습니다: %d바이트", len(capped))
+	if n != 1 {
+		t.Fatalf("만료 1건만 삭제되어야 한다: %d", n)
 	}
-	// 존재하지 않는 프로젝트는 빈 문자열
-	if empty, err := s.IndexMarkdown("ghost", 100); err != nil || empty != "" {
-		t.Errorf("없는 프로젝트: %q, err=%v", empty, err)
+	entries, err := s.List("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Key == "오래된 학습" {
+			t.Error("만료 항목이 남아 있다")
+		}
+	}
+	if len(entries) != 2 {
+		t.Errorf("최근 학습과 decision은 남아야 한다: %d건", len(entries))
+	}
+	// INDEX.md도 갱신되어야 한다
+	index, err := os.ReadFile(filepath.Join(s.Root, ".pylon", "memory", "app", "INDEX.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(index), "오래된 학습") {
+		t.Error("INDEX.md에서 만료 항목이 제거되어야 한다")
+	}
+}
+
+// 0 이하의 보존 일수는 영구 보존을 뜻한다.
+func TestPruneExpiredZeroMeansPermanent(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "아주 오래된 학습",
+		Content: "보존 일수가 0이면 아무리 오래돼도 지우지 않는다", Confidence: 0.8,
+		CreatedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)})
+	n, err := s.PruneExpired("app", map[string]int{"learning": 0})
+	if err != nil || n != 0 {
+		t.Fatalf("0일 정책은 no-op여야 한다: n=%d, err=%v", n, err)
+	}
+}
+
+// nil/빈 정책은 no-op이다.
+func TestPruneExpiredNilPolicy(t *testing.T) {
+	s := newTestStore(t)
+	if n, err := s.PruneExpired("app", nil); err != nil || n != 0 {
+		t.Fatalf("nil 정책은 (0, nil)이어야 한다: n=%d, err=%v", n, err)
+	}
+}
+
+func TestPruneExpiredSkipsZeroCreatedAt(t *testing.T) {
+	s := newTestStore(t)
+	// created_at 없는 항목을 직접 파일로 쓴다 (parseEntry는 이를 손상으로 보지 않고
+	// CreatedAt=zero로 둔다). 정책이 있어도 나이를 몰라 삭제되면 안 된다.
+	dir := filepath.Join(s.projectDir("app"), "learning")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\ncategory: learning\nkey: 날짜없는 항목\nconfidence: 0.8\n---\n\ncreated_at 없이 손으로 작성한 메모리 항목\n"
+	if err := os.WriteFile(filepath.Join(dir, "no-date.md"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.PruneExpired("app", map[string]int{"learning": 30})
+	if err != nil {
+		t.Fatalf("PruneExpired 실패: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("created_at 결측 항목은 삭제되면 안 된다: %d건 삭제됨", n)
+	}
+}
+
+// 주입 출력은 confidence 우선, 동률이면 최신 우선으로 정렬된다 —
+// 예산 절단 시 카테고리 알파벳순이 아니라 중요도 낮은 항목부터 떨어진다.
+func TestInjectionMarkdownRanksByConfidenceThenRecency(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "낮은 확신 항목",
+		Content: "확신도가 낮아 주입 순위에서 뒤로 밀려야 하는 항목", Confidence: 0.5,
+		CreatedAt: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "z-category", Key: "높은 확신 항목",
+		Content: "카테고리 알파벳순으로는 마지막이지만 확신도가 높아 먼저 나와야 한다", Confidence: 0.9,
+		CreatedAt: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)})
+
+	out, err := s.InjectionMarkdown("app", 0)
+	if err != nil {
+		t.Fatalf("InjectionMarkdown 실패: %v", err)
+	}
+	hi := strings.Index(out, "높은 확신 항목")
+	lo := strings.Index(out, "낮은 확신 항목")
+	if hi < 0 || lo < 0 {
+		t.Fatalf("두 항목 모두 포함되어야 한다:\n%s", out)
+	}
+	if hi > lo {
+		t.Errorf("높은 확신 항목이 먼저 나와야 한다:\n%s", out)
+	}
+	if !strings.Contains(out, "#### app") {
+		t.Errorf("프로젝트 헤더가 있어야 한다:\n%s", out)
+	}
+}
+
+// 예산 절단은 줄 단위이며, 절단 시 "…(생략)"을 표기한다.
+func TestInjectionMarkdownTruncatesWholeLines(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "우선 항목",
+		Content: "확신도가 높아 절단 후에도 살아남아야 하는 항목", Confidence: 0.9})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "후순위 항목",
+		Content: "확신도가 낮아 좁은 예산에서는 잘려 나가야 하는 항목", Confidence: 0.3})
+
+	full, err := s.InjectionMarkdown("app", 0)
+	if err != nil {
+		t.Fatalf("전체 출력 실패: %v", err)
+	}
+	// 한 줄만 담길 만큼의 예산: 헤더 + 첫 줄 + 생략 표기
+	capped, err := s.InjectionMarkdown("app", len(full)-10)
+	if err != nil {
+		t.Fatalf("절단 출력 실패: %v", err)
+	}
+	if !strings.Contains(capped, "우선 항목") {
+		t.Errorf("우선 항목은 살아남아야 한다:\n%s", capped)
+	}
+	if strings.Contains(capped, "후순위 항목") {
+		t.Errorf("후순위 항목은 잘려야 한다:\n%s", capped)
+	}
+	if !strings.Contains(capped, "…(생략)") {
+		t.Errorf("절단 표기가 있어야 한다:\n%s", capped)
+	}
+}
+
+// 예산이 한 줄도 못 담으면 빈 문자열을 반환해 다음 프로젝트에 예산을 양보한다.
+func TestInjectionMarkdownTinyBudgetYields(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "항목",
+		Content: "예산이 너무 작으면 아예 출력하지 않는 편이 낫다", Confidence: 0.8})
+	out, err := s.InjectionMarkdown("app", 20)
+	if err != nil || out != "" {
+		t.Fatalf("초소형 예산은 빈 출력이어야 한다: %q, err=%v", out, err)
+	}
+}
+
+// 존재하지 않는 프로젝트는 빈 문자열을 반환한다.
+func TestInjectionMarkdownGhostProject(t *testing.T) {
+	s := newTestStore(t)
+	if out, err := s.InjectionMarkdown("ghost", 100); err != nil || out != "" {
+		t.Fatalf("빈 프로젝트: %q, err=%v", out, err)
 	}
 }

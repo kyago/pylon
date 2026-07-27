@@ -85,13 +85,14 @@ func (s *Store) Insert(e *Entry) error {
 	}
 	defer unlock()
 
-	// Stop hook이 매 턴 같은 학습을 보내므로 동일 내용은 저장하지 않는다 (D4).
+	// Stop hook이 매 턴 같은 학습을 보내므로 동일·근사 중복 내용은 저장하지
+	// 않는다 (D4). 표현만 바뀐 재진술은 bigram Dice 유사도로 걸러낸다.
 	existing, err := s.ListByCategory(e.ProjectID, e.Category)
 	if err != nil {
 		return err
 	}
 	for _, prev := range existing {
-		if prev.Content == e.Content {
+		if isNearDuplicate(prev.Content, e.Content) {
 			e.Path = prev.Path
 			return fmt.Errorf("%w: %s", ErrDuplicate, prev.Path)
 		}
@@ -308,6 +309,48 @@ func (s *Store) StoreLearnings(project, taskID, agent string, learnings []string
 		}
 	}
 	return nil
+}
+
+// PruneExpired deletes entries older than their category's retention window.
+// retentionDays: 카테고리 → 보존 일수. 미지정 카테고리·0 이하 값은 영구 보존.
+// 삭제 건수를 반환하며, 삭제가 있었으면 INDEX.md를 갱신한다.
+func (s *Store) PruneExpired(project string, retentionDays map[string]int) (int64, error) {
+	if len(retentionDays) == 0 {
+		return 0, nil
+	}
+	entries, err := s.List(project)
+	if err != nil {
+		return 0, err
+	}
+	now := s.Now().UTC()
+	var targets []Entry
+	for _, e := range entries {
+		days, ok := retentionDays[e.Category]
+		if !ok || days <= 0 {
+			continue
+		}
+		if e.CreatedAt.IsZero() {
+			continue // created_at 결측 항목은 나이를 알 수 없으므로 영구 보존
+		}
+		if now.Sub(e.CreatedAt) > time.Duration(days)*24*time.Hour {
+			targets = append(targets, e)
+		}
+	}
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	unlock, err := fsutil.AcquireLock(s.lockPath(), lockTimeout)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	for _, e := range targets {
+		if err := os.Remove(filepath.Join(s.Root, filepath.FromSlash(e.Path))); err != nil && !os.IsNotExist(err) {
+			return 0, err
+		}
+	}
+	removeEmptyCategoryDirs(s.projectDir(project))
+	return int64(len(targets)), s.rebuildIndexLocked(project)
 }
 
 func sanitizeKey(v string) string {

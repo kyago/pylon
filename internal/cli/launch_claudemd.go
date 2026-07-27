@@ -83,7 +83,8 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 	b.WriteString("pylon mem list --project <name>                       # 목록\n")
 	b.WriteString("```\n\n")
 
-	// Proactive memory index injection
+	// Proactive memory index injection — 잔여 예산을 남은 프로젝트 수로 나눠
+	// 공정 분배한다(앞 프로젝트의 독식 방지). 미사용분은 뒤 프로젝트로 이월.
 	if cfg.Memory.ProactiveInjection {
 		maxTokens := cfg.Memory.ProactiveMaxTokens
 		if maxTokens <= 0 {
@@ -92,11 +93,12 @@ func buildRootCLAUDEMD(cfg *config.Config, projects []config.ProjectInfo, root s
 		remaining := maxTokens * 4 // 대략적인 토큰→바이트 환산
 		memStore := memory.NewStore(root)
 		wroteHeader := false
-		for _, p := range projects {
+		for i, p := range projects {
 			if remaining <= 0 {
 				break
 			}
-			index, err := memStore.IndexMarkdown(p.Name, remaining)
+			share := remaining / (len(projects) - i)
+			index, err := memStore.InjectionMarkdown(p.Name, share)
 			if err != nil || index == "" {
 				continue
 			}
