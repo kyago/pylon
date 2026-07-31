@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,6 +87,89 @@ func TestLoadVerificationSteps_DefaultsAndSkip(t *testing.T) {
 	}
 	if !skipped || len(steps) != 0 {
 		t.Fatalf("unexpected non-Go fallback: skipped=%v steps=%+v", skipped, steps)
+	}
+}
+
+func TestInternalVerify_FailsClosedWhenNothingConfigured(t *testing.T) {
+	dir := t.TempDir() // Go 프로젝트도 아니고 verify.yml도 없다
+	outputPath := filepath.Join(dir, "verification.json")
+
+	cmd := newInternalVerifyCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"--workdir", dir,
+		"--config", filepath.Join(dir, ".pylon", "verify.yml"),
+		"--output", outputPath,
+	})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("검증 설정이 없으면 실패해야 한다 (fail-closed)")
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("verification.json이 기록되어야 한다: %v", err)
+	}
+	var result verificationResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.OK {
+		t.Fatalf("ok는 false여야 한다: %s", data)
+	}
+	if !result.Skipped {
+		t.Fatalf("skipped는 true여야 한다: %s", data)
+	}
+	if result.Reason == "" {
+		t.Fatalf("reason이 비어 있으면 안 된다: %s", data)
+	}
+}
+
+func TestInternalVerify_FailsClosedWhenConfigHasNoCommands(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "verify.yml")
+	if err := os.WriteFile(configPath, []byte("commands: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newInternalVerifyCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--workdir", dir, "--config", configPath})
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("실행 가능한 검증 명령이 없으면 실패해야 한다 (fail-closed)")
+	}
+	if !strings.Contains(out.String(), "\"ok\":false") {
+		t.Fatalf("ok는 false여야 한다: %s", out.String())
+	}
+}
+
+func TestInternalVerify_PassesWhenStepsSucceed(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "verify.yml")
+	if err := os.WriteFile(configPath, []byte("build:\n  command: \"true\"\n  timeout: 30s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newInternalVerifyCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--workdir", dir, "--config", configPath})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("설정된 검증이 성공하면 통과해야 한다: %v (%s)", err, out.String())
+	}
+	var result verificationResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result); err != nil {
+		t.Fatalf("출력 파싱 실패: %v (%s)", err, out.String())
+	}
+	if !result.OK || result.Skipped || len(result.Checks) != 1 {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 

@@ -26,6 +26,7 @@ type verificationResult struct {
 	OK        bool                `json:"ok"`
 	Checks    []verificationCheck `json:"checks"`
 	Skipped   bool                `json:"skipped,omitempty"`
+	Reason    string              `json:"reason,omitempty"`
 	Timestamp string              `json:"timestamp"`
 }
 
@@ -38,9 +39,10 @@ func newInternalCmd() *cobra.Command {
 func newInternalVerifyCmd() *cobra.Command {
 	var workDir, configPath, outputPath string
 	cmd := &cobra.Command{
-		Use:    "verify",
-		Short:  "Run project verification commands",
-		Hidden: true,
+		Use:          "verify",
+		Short:        "Run project verification commands",
+		Hidden:       true,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			steps, skipped, err := loadVerificationSteps(workDir, configPath)
 			if err != nil {
@@ -51,6 +53,16 @@ func newInternalVerifyCmd() *cobra.Command {
 				return err
 			}
 			result.Skipped = skipped
+			// 검증할 것이 하나도 없으면 통과로 보고하지 않는다. 조용한 초록불은
+			// 검증 실패보다 나쁘다 — 호출자가 잘못된 디렉토리를 가리켜도 알 수 없다.
+			if len(steps) == 0 {
+				result.OK = false
+				if skipped {
+					result.Reason = fmt.Sprintf("검증 설정을 찾을 수 없습니다: %s 를 작성하거나 --config로 올바른 경로를 지정하세요 (workdir: %s)", configPath, workDir)
+				} else {
+					result.Reason = fmt.Sprintf("verify.yml에 실행 가능한 검증 명령이 없습니다: %s", configPath)
+				}
+			}
 			data, err := json.Marshal(result)
 			if err != nil {
 				return err
@@ -62,6 +74,9 @@ func newInternalVerifyCmd() *cobra.Command {
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), string(data))
 			if !result.OK {
+				if result.Reason != "" {
+					return errors.New(result.Reason)
+				}
 				return errors.New("verification failed")
 			}
 			return nil
