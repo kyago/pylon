@@ -1,4 +1,5 @@
 // internal/memory/index.go
+
 package memory
 
 import (

@@ -421,8 +421,8 @@ func TestAgentConfig_ResolveDefaults_EnvMerge(t *testing.T) {
 		Name: "test",
 		Role: "Test",
 		Env: map[string]string{
-			"CLAUDE_CODE_EFFORT_LEVEL": "low",  // Override global
-			"AGENT_VAR":               "agent", // Agent-specific
+			"CLAUDE_CODE_EFFORT_LEVEL": "low",   // Override global
+			"AGENT_VAR":                "agent", // Agent-specific
 		},
 	}
 

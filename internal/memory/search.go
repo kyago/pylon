@@ -1,4 +1,5 @@
 // internal/memory/search.go
+
 package memory
 
 import (

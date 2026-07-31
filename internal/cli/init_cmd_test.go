@@ -7,8 +7,38 @@ import (
 	"testing"
 )
 
+// stubInitDoctorChecks replaces the required-tool gate so init tests run on
+// machines (and CI runners) that lack claude/gh.
+func stubInitDoctorChecks(t *testing.T, passed bool) {
+	t.Helper()
+	old := initDoctorChecks
+	initDoctorChecks = func() (bool, error) { return passed, nil }
+	t.Cleanup(func() { initDoctorChecks = old })
+}
+
+// 도구가 없으면 init은 여전히 막혀야 한다 — 게이트 자체의 회귀 방지.
+func TestRunInit_BlockedWhenRequiredToolsMissing(t *testing.T) {
+	stubInitDoctorChecks(t, false)
+	tmp := t.TempDir()
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmp
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	err := newInitCmd().Execute()
+	if err == nil {
+		t.Fatal("필수 도구가 없으면 init이 실패해야 한다")
+	}
+	if !strings.Contains(err.Error(), "required tools are missing") {
+		t.Fatalf("예상과 다른 에러: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmp, ".pylon")); statErr == nil {
+		t.Error("게이트에서 막혔는데 .pylon/이 생성되면 안 된다")
+	}
+}
+
 func TestRunInit_DoesNotGitInitWorkspace(t *testing.T) {
 	requireGit(t)
+	stubInitDoctorChecks(t, true)
 	tmp := t.TempDir()
 	oldWorkspace := flagWorkspace
 	flagWorkspace = tmp
@@ -25,6 +55,7 @@ func TestRunInit_DoesNotGitInitWorkspace(t *testing.T) {
 
 func TestInitSetsUpTrackedMemoryDir(t *testing.T) {
 	requireGit(t)
+	stubInitDoctorChecks(t, true)
 	tmp := t.TempDir()
 	oldWorkspace := flagWorkspace
 	flagWorkspace = tmp

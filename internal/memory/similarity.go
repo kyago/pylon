@@ -1,4 +1,5 @@
 // internal/memory/similarity.go
+
 package memory
 
 import (

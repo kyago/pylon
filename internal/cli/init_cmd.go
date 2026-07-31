@@ -37,9 +37,14 @@ Spec Reference: Section 7 "pylon init"`,
 	}
 }
 
+// initDoctorChecks is the required-tool gate for `pylon init`, indirected so tests
+// can exercise initialization on machines without git/gh/claude installed — CI
+// runners have no claude binary, which previously failed the init tests.
+var initDoctorChecks = RunDoctorChecks
+
 func runInit(cmd *cobra.Command, args []string) error {
 	// Step 1: Run doctor checks
-	passed, err := RunDoctorChecks()
+	passed, err := initDoctorChecks()
 	if err != nil {
 		return fmt.Errorf("doctor check failed: %w", err)
 	}

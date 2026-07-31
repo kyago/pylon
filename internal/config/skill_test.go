@@ -127,8 +127,8 @@ func TestDiscoverSkills(t *testing.T) {
 
 	// Create valid skill files
 	skills := map[string]string{
-		"skill-a.md": "---\nname: skill-a\ndescription: A\n---\nBody A",
-		"skill-b.md": "---\nname: skill-b\ndescription: B\n---\nBody B",
+		"skill-a.md":      "---\nname: skill-a\ndescription: A\n---\nBody A",
+		"skill-b.md":      "---\nname: skill-b\ndescription: B\n---\nBody B",
 		"not-a-skill.txt": "plain text",
 	}
 	for name, content := range skills {
