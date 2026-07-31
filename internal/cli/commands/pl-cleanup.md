@@ -44,8 +44,10 @@ pylon mem store --project <프로젝트> --category learning --key <슬러그> -
 pylon internal verify --workdir <git-root> --config <git-root>/.pylon/verify.yml
 ```
 
-`verify.yml`이 없거나 검증이 설정되지 않았으면 "검증 미설정"으로 보고하고 넘어갑니다
-— cleanup 전체를 실패시키지 않습니다.
+검증이 설정되지 않은 워크스페이스에서는 이 명령이 종료 코드 1과 함께
+`{"ok":false,"skipped":true,"reason":"검증 설정을 찾을 수 없습니다..."}`를 출력합니다.
+출력에 `"skipped": true`가 있으면 **검증 실패가 아니라 미설정**이므로, "검증 미설정"으로
+보고하고 cleanup을 계속 진행합니다(종료 코드 1을 실패로 취급하지 않습니다).
 
 ## Step 4: 정리
 
