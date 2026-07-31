@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,6 +32,119 @@ func TestBuildRootCLAUDEMDInjectsMemoryIndex(t *testing.T) {
 	out = buildRootCLAUDEMD(cfg, projects, root)
 	if strings.Contains(out, "저장소는 md 파일") {
 		t.Error("비활성화 시 주입되면 안 된다")
+	}
+}
+
+// 루트 프롬프트는 무조건 위임을 지시하면 안 된다 — 사용자가 보고한 과잉 위임의 직접 원인이었다.
+func TestBuildRootCLAUDEMDPrefersDirectExecution(t *testing.T) {
+	out := buildRootCLAUDEMD(&config.Config{}, nil, t.TempDir())
+
+	if strings.Contains(out, "코드를 직접 작성하지 말고") {
+		t.Error("무조건 위임 지시가 남아 있으면 안 된다")
+	}
+	for _, want := range []string{
+		"기본값은 직접 수행입니다",
+		"애매하면 직접 합니다",
+		"위임할 때 프롬프트에 반드시 넣을 것",
+		"안티패턴",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("위임 판단 기준이 누락됨: %q", want)
+		}
+	}
+}
+
+// 38개 에이전트 나열(45줄)은 Claude Code가 이미 자동 노출하므로 중복이다.
+// 루트 프롬프트에는 선택 기준만 남긴다.
+func TestBuildRootCLAUDEMDReplacesAgentRosterWithCriteria(t *testing.T) {
+	root := t.TempDir()
+	agentsDir := filepath.Join(root, ".pylon", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := "---\nname: brand-strategist\nrole: Brand Strategist\ndomain: marketing\n---\n\n# Brand Strategist\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "brand-strategist.md"), []byte(agent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buildRootCLAUDEMD(&config.Config{}, nil, root)
+
+	if strings.Contains(out, "brand-strategist") {
+		t.Error("에이전트 전체 나열은 제거되어야 한다 (.pylon/agents/ 및 Claude Code가 이미 노출)")
+	}
+	if !strings.Contains(out, "서브 에이전트 선택 기준") {
+		t.Error("선택 기준표가 있어야 한다")
+	}
+}
+
+// 검증 명령이 프롬프트에 없으면 루트 에이전트는 "완료" 보고를 확인할 수단이 없다.
+func TestBuildRootCLAUDEMDRendersProjectVerifyCommands(t *testing.T) {
+	root := t.TempDir()
+	withVerify := filepath.Join(root, "api")
+	if err := os.MkdirAll(filepath.Join(withVerify, ".pylon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	verifyYML := "build:\n  command: \"go build ./...\"\ntest:\n  command: \"go test ./...\"\n"
+	if err := os.WriteFile(filepath.Join(withVerify, ".pylon", "verify.yml"), []byte(verifyYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	projects := []config.ProjectInfo{
+		{Name: "api", Path: withVerify},
+		{Name: "web", Path: filepath.Join(root, "web")}, // verify.yml 없음
+	}
+	out := buildRootCLAUDEMD(&config.Config{}, projects, root)
+
+	if !strings.Contains(out, "go build ./...") || !strings.Contains(out, "go test ./...") {
+		t.Error("프로젝트 verify.yml의 명령이 렌더링되어야 한다")
+	}
+	if !strings.Contains(out, "`.pylon/verify.yml` 없음") {
+		t.Error("검증 미설정 프로젝트는 미설정으로 표시되어야 한다")
+	}
+}
+
+// 문법이 깨진 verify.yml을 "없음"으로 안내하면 사용자는 파일을 새로 만들려 하고
+// 진짜 원인(파싱 오류)은 남는다. 부재와 오류는 구분해서 보고해야 한다.
+func TestBuildRootCLAUDEMDDistinguishesBrokenVerifyConfig(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "api")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broken := "commands:\n  - name: build\n   command: oops\n" // 들여쓰기 깨짐
+	if err := os.WriteFile(filepath.Join(projectDir, ".pylon", "verify.yml"), []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buildRootCLAUDEMD(&config.Config{}, []config.ProjectInfo{{Name: "api", Path: projectDir}}, root)
+
+	if strings.Contains(out, "`.pylon/verify.yml` 없음") {
+		t.Error("존재하지만 깨진 파일을 '없음'으로 보고하면 안 된다")
+	}
+	if !strings.Contains(out, "읽을 수 없습니다") {
+		t.Errorf("파싱 실패가 보고되어야 한다:\n%s", out)
+	}
+}
+
+// 프로젝트 서브디렉토리가 없는 단일 저장소 워크스페이스에서는 루트 verify.yml이 검증 대상이다.
+// (run-verification.sh도 --git-root 없이 루트에서 돈다.)
+func TestBuildRootCLAUDEMDRendersRootVerifyCommandsWithoutProjects(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	verifyYML := "build:\n  command: \"make build\"\n"
+	if err := os.WriteFile(filepath.Join(root, ".pylon", "verify.yml"), []byte(verifyYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buildRootCLAUDEMD(&config.Config{}, nil, root)
+
+	if !strings.Contains(out, "make build") {
+		t.Error("프로젝트가 없어도 루트 verify.yml의 명령이 렌더링되어야 한다")
+	}
+	if strings.Contains(out, "--git-root") {
+		t.Error("단일 저장소 워크스페이스에는 --git-root 안내가 붙으면 안 된다")
 	}
 }
 

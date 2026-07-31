@@ -173,6 +173,30 @@ func TestCheckpointCuratesJSONKeys(t *testing.T) {
 	}
 }
 
+// 검증이 수행되지 않아 ok:false가 된 경우, 그 사유(reason)가 이력 요약에 남아야 한다.
+// reason이 잘려나가면 요약만 보고는 "실패"와 "검증 미수행"을 구분할 수 없다.
+func TestCheckpointKeepsVerificationReason(t *testing.T) {
+	m, root := newTestManager(t)
+	pipelineDir := filepath.Join(root, ".pylon", "runtime", "pipe-1")
+	mustWrite(t, filepath.Join(pipelineDir, "verification.json"),
+		`{"ok":false,"checks":[],"skipped":true,"reason":"검증 설정을 찾을 수 없습니다: /w/.pylon/verify.yml","noise":"drop-me"}`)
+
+	if _, err := m.Checkpoint("pipe-1", PhaseCompleted); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".pylon", "history", "pipelines", "pipe-1", "completed", "verification-summary.json"))
+	if err != nil {
+		t.Fatalf("verification-summary.json이 있어야 한다: %v", err)
+	}
+	if !strings.Contains(string(data), "검증 설정을 찾을 수 없습니다") {
+		t.Errorf("reason이 요약에 보존되어야 한다: %s", data)
+	}
+	if strings.Contains(string(data), "drop-me") {
+		t.Errorf("allowlist에 없는 키는 제거되어야 한다: %s", data)
+	}
+}
+
 func TestLogSortsByRecordedAtDesc(t *testing.T) {
 	m, root := newTestManager(t)
 	base := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)

@@ -59,15 +59,32 @@ workspaces against the embedded versions.
 
 In a *runtime workspace*, `.pylon/` holds config + resources and `.claude/` is regenerated on every launch:
 CLAUDE.md, `.claude/agents/` symlinks into `.pylon/agents/`, `.claude/commands/`, and
-`.claude/settings.json` hooks. `generateClaudeDir` (`launch.go`) is the generator; it bootstraps missing
-`.pylon/` files from embeds but never overwrites user customizations. `runLaunch` also appends `.claude/`,
-`CLAUDE.md`, `.pylon/logs/` to `.gitignore`.
+`.claude/settings.json` hooks. `generateClaudeDir` (`launch.go`) is the generator. `runLaunch` also appends
+`.claude/`, `CLAUDE.md`, `.pylon/logs/` to `.gitignore`.
+
+**Ownership contract for `.pylon/` resources** (`syncPylonResources` in `doctor.go`, shared by launch and
+doctor): a file in `.pylon/{agents,skills,commands,scripts/bash}/` **whose name ships with the binary is
+pylon-owned** — it is refreshed to the embedded content on every launch and on `pylon doctor`, so editing
+one in place is not a supported customization and the edit is reverted. `pylon doctor` lists the reverted
+files by name; the launch path writes the same notice to stderr, but the Claude Code TUI takes over the
+terminal immediately afterwards, so treat doctor as the reliable reporting channel.
+Any **other** file in those directories is user-owned and is never written or removed: that is the
+sanctioned way to customize, via `pylon add-agent` / `pylon add-skill` or simply a new filename.
+Config (`config.yml`), domain knowledge, memory, history and runtime state are user data and are never
+overwritten. Only the workspace-root `.pylon/` is synced — per-project `<project>/.pylon/` directories
+are untouched.
+
+Adding an embedded resource or changing its content reaches existing workspaces automatically, with no
+migration step. **Deleting one does not**: the sync iterates embedded names, so a resource dropped from
+the binary lingers in `.pylon/` forever. Removing a built-in for real still needs a migration step.
 
 ### `doctor` is the reconciliation engine, shared with launch
 
 Desired-state for `.claude/commands/` is computed by `buildDesiredClaudeCommands` and applied by both
 `generateClaudeDir` and `pylon doctor`, so the launch path and the maintenance path can never drift. When
-adding/removing a built-in command, update the embedded set and both consumers stay in sync automatically.
+adding a built-in command, update the embedded set and both consumers stay in sync automatically.
+Removal is the exception: `desired` is computed from `.pylon/commands/`, which the sync never prunes, so a
+command deleted from the embeds survives in both `.pylon/commands/` and `.claude/commands/`.
 
 ### Package layout
 

@@ -132,14 +132,41 @@ pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase planne
 
 독립 태스크는 Agent 도구로 병렬 실행합니다.
 
+**프롬프트에는 아래 6가지를 모두 넣습니다.** 서브 에이전트는 이 대화도, Step 3에서 만든 설계도 보지
+못합니다 — 프롬프트에 넣지 않은 것은 존재하지 않는 것과 같습니다. 경로만 넘기지 말고 **내용을 붙여넣습니다**.
+
 ```
-// 의존성 없는 태스크를 동시에 실행
-Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T001 내용]", isolation="worktree")
-Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T002 내용]", isolation="worktree")
-Agent(prompt="[에이전트 정의]\n\n## 태스크\n[T003 내용]", isolation="worktree")
+// 의존성 없는 태스크를 동시에 실행 (T002, T003도 동일한 형식)
+Agent(prompt="[에이전트 정의 — .pylon/agents/{agent}.md]
+
+## 설계 근거
+[architecture.md 중 이 태스크에 해당하는 섹션 전문]
+
+## 수용 기준
+[requirement-analysis.md의 해당 Acceptance Criteria]
+
+## 태스크
+[tasks.json의 T001 항목 전문 — title, description 포함]
+
+## 대상
+- repo: [프로젝트 경로]  base: [base 브랜치]
+- 수정 대상 파일: [절대 경로 목록]
+- 기존 코드 패턴: [메인 루프가 이미 파악한 규약]
+
+## 검증
+완료 후 다음 명령을 직접 실행하고 **출력 전문**을 보고하세요: [빌드/테스트/린트 명령]
+출력 없이 '통과했습니다'라고 보고하지 않습니다.
+
+## 범위 밖
+[건드리지 말 것]", isolation="worktree")
 ```
 
-모든 에이전트 결과를 `execution-log.json`에 집계한 뒤 실행 체크포인트를 생성합니다:
+`isolation="worktree"`는 **의존성 설치가 필요 없고 서로 파일이 겹치지 않는** 태스크에만 씁니다.
+새 워크트리에는 의존성·빌드 산출물이 없어 검증 명령이 실행되지 않을 수 있습니다. 검증 실행이 필요한
+태스크는 격리 없이 순차 실행합니다.
+
+모든 에이전트 결과를 `$PIPELINE_DIR/execution-log.json`에 집계합니다(태스크별 상태, 변경 파일, 검증 출력).
+**검증 출력이 첨부되지 않은 "완료" 보고는 완료로 처리하지 않습니다.** 그 다음 실행 체크포인트를 생성합니다:
 
 ```bash
 pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase executed
@@ -147,13 +174,30 @@ pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase execut
 
 에이전트 정의는 `.pylon/agents/{agent-name}.md`에서 읽어 프롬프트에 주입합니다.
 
-### Step 7: 검증
+격리 실행한 태스크가 있으면 검증 전에 에이전트 브랜치를 태스크 브랜치로 머지합니다.
+머지하지 않으면 Step 7은 에이전트가 쓴 코드가 없는 트리를 검증하게 됩니다:
 
 ```bash
-.pylon/scripts/bash/run-verification.sh "$PIPELINE_DIR"
+.pylon/scripts/bash/merge-branches.sh "$BRANCH" "$AGENT_BRANCH_1" "$AGENT_BRANCH_2"
 ```
 
-실패 시 에러를 분석하고 수정 후 재실행합니다.
+### Step 7: 검증
+
+변경이 일어난 **프로젝트를 대상으로** 검증합니다. `--git-root`를 생략하면 워크스페이스 루트에서 실행되어
+하위 프로젝트의 `.pylon/verify.yml`을 보지 못합니다:
+
+```bash
+.pylon/scripts/bash/run-verification.sh "$PIPELINE_DIR" --git-root <프로젝트 상대경로>
+```
+
+여러 프로젝트를 수정했다면 프로젝트마다 실행합니다.
+
+결과는 `$PIPELINE_DIR/verification.json`에 기록됩니다.
+
+- `{"ok":false, "reason":"검증 설정을 찾을 수 없습니다..."}` — 검증이 **수행되지 않은** 것입니다.
+  통과로 처리하지 말고, 해당 프로젝트에 `.pylon/verify.yml`을 작성하거나 `--git-root`를 바로잡아 재실행합니다.
+- 검증 실패 시 에러를 분석하고 수정 후 재실행합니다.
+- 검증 명령의 실제 출력 없이 다음 단계로 넘어가지 않습니다.
 
 ### Step 8: PR 생성 (선택)
 
