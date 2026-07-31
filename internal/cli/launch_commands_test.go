@@ -100,3 +100,24 @@ func TestGenerateClaudeDir_PropagatesRefreshedCommand(t *testing.T) {
 		t.Fatal("낡은 커맨드가 같은 실행에서 최신 내용으로 반영되지 않았다")
 	}
 }
+
+// pl-cleanup 명령이 임베드되고 같은 실행에서 .claude/commands/pl/cleanup.md로 생성되어야 한다.
+func TestGenerateClaudeDir_InstallsCleanupCommand(t *testing.T) {
+	root := t.TempDir()
+
+	if err := generateClaudeDir(root, &config.Config{}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(root, ".claude", "commands", "pl", "cleanup.md"))
+	if err != nil {
+		t.Fatalf("pl:cleanup 명령이 생성되지 않았다: %v", err)
+	}
+	want, err := embeddedCommands.ReadFile("commands/pl-cleanup.md")
+	if err != nil {
+		t.Fatalf("pl-cleanup.md가 임베드되지 않았다: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatal("생성된 cleanup 명령이 임베드 원본과 일치하지 않는다")
+	}
+}
