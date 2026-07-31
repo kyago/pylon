@@ -91,7 +91,9 @@ var executionKeys = map[string]bool{
 	"started_at": true, "completed_at": true, "sub_pipelines": true, "pipeline_dir": true,
 }
 var verificationKeys = map[string]bool{
-	"ok": true, "skipped": true, "timestamp": true, "checks": true, "name": true,
+	// reason: 검증이 수행되지 않아 ok=false가 된 사유. 이게 빠지면 요약만 보고는
+	// "검증 실패"와 "검증 미수행"을 구분할 수 없다.
+	"ok": true, "skipped": true, "reason": true, "timestamp": true, "checks": true, "name": true,
 }
 var prKeys = map[string]bool{"url": true, "number": true, "title": true, "repo": true, "prs": true}
 var statusKeys = map[string]bool{

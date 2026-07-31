@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -232,10 +233,18 @@ func renderVerificationCommands(b *strings.Builder, root string, projects []conf
 // "not configured" line — verification is fail-closed, so a missing verify.yml is a
 // blocker the root agent has to fix rather than something to pass over in silence.
 func writeVerifySteps(b *strings.Builder, label, dir string) {
-	vc, err := config.LoadVerifyConfig(layout.VerifyConfigPath(dir))
-	if err != nil {
+	path := layout.VerifyConfigPath(dir)
+	if _, err := os.Stat(path); err != nil {
 		b.WriteString(fmt.Sprintf("- **%s**: `.pylon/verify.yml` 없음 — 검증이 미설정 상태입니다.\n", label))
 		b.WriteString("  변경했다면 먼저 verify.yml을 작성하세요. 검증 없는 완료 보고는 수용하지 않습니다.\n")
+		return
+	}
+	vc, err := config.LoadVerifyConfig(path)
+	if err != nil {
+		// 파일은 있는데 읽지 못하는 경우 — "없음"으로 안내하면 원인을 못 찾는다.
+		b.WriteString(fmt.Sprintf("- **%s**: `.pylon/verify.yml`을 읽을 수 없습니다 — %s\n",
+			label, strings.Join(strings.Fields(err.Error()), " ")))
+		b.WriteString("  파일을 고치기 전까지 이 프로젝트의 검증은 수행되지 않습니다.\n")
 		return
 	}
 	steps := vc.OrderedSteps()

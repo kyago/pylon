@@ -103,6 +103,29 @@ func TestBuildRootCLAUDEMDRendersProjectVerifyCommands(t *testing.T) {
 	}
 }
 
+// 문법이 깨진 verify.yml을 "없음"으로 안내하면 사용자는 파일을 새로 만들려 하고
+// 진짜 원인(파싱 오류)은 남는다. 부재와 오류는 구분해서 보고해야 한다.
+func TestBuildRootCLAUDEMDDistinguishesBrokenVerifyConfig(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "api")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broken := "commands:\n  - name: build\n   command: oops\n" // 들여쓰기 깨짐
+	if err := os.WriteFile(filepath.Join(projectDir, ".pylon", "verify.yml"), []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buildRootCLAUDEMD(&config.Config{}, []config.ProjectInfo{{Name: "api", Path: projectDir}}, root)
+
+	if strings.Contains(out, "`.pylon/verify.yml` 없음") {
+		t.Error("존재하지만 깨진 파일을 '없음'으로 보고하면 안 된다")
+	}
+	if !strings.Contains(out, "읽을 수 없습니다") {
+		t.Errorf("파싱 실패가 보고되어야 한다:\n%s", out)
+	}
+}
+
 // 프로젝트 서브디렉토리가 없는 단일 저장소 워크스페이스에서는 루트 verify.yml이 검증 대상이다.
 // (run-verification.sh도 --git-root 없이 루트에서 돈다.)
 func TestBuildRootCLAUDEMDRendersRootVerifyCommandsWithoutProjects(t *testing.T) {
