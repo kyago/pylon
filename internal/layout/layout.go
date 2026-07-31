@@ -40,6 +40,12 @@ func CommandsDir(root string) string {
 	return filepath.Join(PylonDir(root), "commands")
 }
 
+// VerifyConfigPath returns the verification config path (.pylon/verify.yml) for a
+// workspace root or a project directory.
+func VerifyConfigPath(dir string) string {
+	return filepath.Join(PylonDir(dir), "verify.yml")
+}
+
 // ScriptsDir returns the pipeline bash script directory (.pylon/scripts/bash).
 func ScriptsDir(root string) string {
 	return filepath.Join(PylonDir(root), "scripts", "bash")
