@@ -65,7 +65,7 @@ func runCancel(cmd *cobra.Command, args []string) error {
 		if _, err := os.Stat(cleanupScript); err == nil {
 			cleanup := exec.Command("bash", cleanupScript, pipelineDir, branch, fmt.Sprintf("%t", checkpointed))
 			cleanup.Dir = root
-			cleanup.Run() // best effort
+			_ = cleanup.Run() // best effort
 		}
 
 		if checkpointed {

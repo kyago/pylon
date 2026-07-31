@@ -19,9 +19,15 @@ root agent's system prompt. Editing a generated workspace file has no effect on 
 ```bash
 make build   # go build -ldflags "-X main.version=..." -o bin/pylon ./cmd/pylon
 make test    # go test ./... -race -count=1   (CI runs exactly this)
-make lint    # golangci-lint run ./...        (no repo config; uses golangci-lint defaults)
+make lint    # golangci-lint run ./...        (golangci-lint v2, config: .golangci.yml)
 make install # go install to $(go env GOPATH)/bin
 ```
+
+`make lint` needs **golangci-lint v2** (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
+CI installs it the same way rather than downloading a release binary: prebuilt binaries are built with an
+older Go than this repo's `toolchain go1.26.0` and refuse to run. `.golangci.yml` restores the v1 default
+exclusions, drops errcheck for `_test.go` setup calls, disables QF1012, and enables the gofmt formatter —
+so `make lint` also fails on formatting drift (`golangci-lint fmt` fixes it).
 
 Run a single test / package:
 

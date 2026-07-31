@@ -1,4 +1,5 @@
 // internal/memory/store.go
+
 // Package memory implements the markdown-file-backed project memory store.
 // 항목 1건 = .pylon/memory/<project>/<category>/<slug>.md 파일 1개.
 package memory
