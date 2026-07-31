@@ -173,7 +173,7 @@ func newMemPruneCmd() *cobra.Command {
 func confirmDeletion(count int64) bool {
 	fmt.Printf("%d건이 삭제됩니다. 계속하시겠습니까? [y/N]: ", count)
 	var answer string
-	fmt.Scanln(&answer)
+	_, _ = fmt.Scanln(&answer) // 입력이 없으면(EOF) 빈 문자열 = 거부
 	answer = strings.ToLower(strings.TrimSpace(answer))
 	return answer == "y" || answer == "yes"
 }

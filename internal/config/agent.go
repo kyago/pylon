@@ -12,22 +12,22 @@ import (
 // Spec Reference: Section 5 "Agent Configuration Format"
 type AgentConfig struct {
 	// YAML frontmatter fields (between --- delimiters)
-	Name           string            `yaml:"name"`
-	Description    string            `yaml:"description"`
-	Role           string            `yaml:"role"`
-	Type           string            `yaml:"type"`
-	Backend        string            `yaml:"backend"`
-	Scope          []string          `yaml:"scope"`
-	Tools          []string          `yaml:"tools"`
+	Name            string            `yaml:"name"`
+	Description     string            `yaml:"description"`
+	Role            string            `yaml:"role"`
+	Type            string            `yaml:"type"`
+	Backend         string            `yaml:"backend"`
+	Scope           []string          `yaml:"scope"`
+	Tools           []string          `yaml:"tools"`
 	DisallowedTools []string          `yaml:"disallowedTools"`
-	MaxTurns       int               `yaml:"maxTurns"`
-	PermissionMode string            `yaml:"permissionMode"`
-	Isolation      string            `yaml:"isolation"`
-	Model          string            `yaml:"model"`
-	Timeout        string            `yaml:"timeout"`
-	Env            map[string]string `yaml:"env"`
-	Domain         string            `yaml:"domain"`
-	Skills         []string          `yaml:"skills"`
+	MaxTurns        int               `yaml:"maxTurns"`
+	PermissionMode  string            `yaml:"permissionMode"`
+	Isolation       string            `yaml:"isolation"`
+	Model           string            `yaml:"model"`
+	Timeout         string            `yaml:"timeout"`
+	Env             map[string]string `yaml:"env"`
+	Domain          string            `yaml:"domain"`
+	Skills          []string          `yaml:"skills"`
 
 	// Markdown body (everything after the second ---)
 	Body string `yaml:"-"`

@@ -131,7 +131,7 @@ func confirmProjectDeletion(name, projectPath, removeTarget string, purge bool) 
 	}
 	fmt.Print("계속하시겠습니까? [y/N]: ")
 	var answer string
-	fmt.Scanln(&answer)
+	_, _ = fmt.Scanln(&answer) // 입력이 없으면(EOF) 빈 문자열 = 거부
 	answer = strings.ToLower(strings.TrimSpace(answer))
 	return answer == "y" || answer == "yes"
 }
