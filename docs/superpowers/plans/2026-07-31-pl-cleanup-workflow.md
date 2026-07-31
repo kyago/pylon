@@ -63,7 +63,9 @@ Expected: FAIL — `pl-cleanup.md가 임베드되지 않았다` (파일이 아�
 
 - [ ] **Step 3: pl-cleanup.md 작성**
 
-아래 내용 그대로 `internal/cli/commands/pl-cleanup.md`에 작성한다.
+아래를 시작점으로 `internal/cli/commands/pl-cleanup.md`에 작성한다. (참고: 구현 중
+코드리뷰 반영으로 Step 1의 프로젝트-이름 정합, Step 3의 verify Go 폴백/`skipped` 해석,
+Step 4의 prune 문구가 갱신되었다 — **실제 파일이 source of truth**다.)
 
 ````markdown
 ---
@@ -117,8 +119,8 @@ pylon internal verify --workdir <git-root> --config <git-root>/.pylon/verify.yml
 
 ## Step 4: 정리
 
-- 만료 메모리 정리는 세션 종료 훅(`sync-memory --from-session`)이 자동 수행하므로 별도로 호출하지 않습니다.
 - `git status`에 커밋되지 않은 변경이 있으면 커밋을 안내합니다(자동 커밋하지 않습니다).
+- 만료 메모리 정리(prune)는 이 명령의 책임이 아닙니다 — 별도로 호출하지 않습니다.
 
 ## Step 5: 완료 보고
 
@@ -198,7 +200,7 @@ Expected: 검증 미설정을 알리고 cleanup을 막지 않는 동작(비치�
 - 대상 프로젝트 결정(멀티레포 추론/확인) → Task 1 Step 3 본문 Step 1 ✓
 - 결정/학습/패턴 카테고리 메모리 저장 → 본문 Step 2 ✓
 - 검증 인라인 + verify.yml 미설정 스킵 → 본문 Step 3, Task 2 Step 3 ✓
-- prune은 Stop 훅 위임 + 커밋 안내 → 본문 Step 4 ✓
+- prune은 이 명령 책임 아님 + 커밋 안내 → 본문 Step 4 ✓
 - history/요약파일/verify.json 미생성(non-goals) → Global Constraints + 본문 도입부 ✓
 - Go 변경 없음, 파일 하나 → Architecture + Task 1 ✓
 
