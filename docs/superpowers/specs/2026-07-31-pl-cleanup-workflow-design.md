@@ -77,10 +77,11 @@ pylon internal verify --workdir <git-root> --config <git-root>/.pylon/verify.yml
 (cleanup 전체를 실패시키지 않는다).
 
 ### Step 4: 정리(tidy)
-- 만료 메모리 prune은 **별도로 호출하지 않는다.** Stop 훅(`sync-memory --from-session`)이
-  cleanup 완료 턴 직후를 포함해 매 턴 `PruneExpired`를 수행하므로 위임한다.
-  (cleanup은 Step 2에서 `mem store`로 저장만 하고, prune은 훅에 맡긴다.)
-- git에 uncommitted 변경이 있으면 커밋을 안내한다(자동 커밋하지 않음).
+- git에 uncommitted 변경이 있으면 커밋을 안내한다(자동 커밋하지 않음). 이것이 실질적 tidy 동작이다.
+- 만료 메모리 prune은 **이 명령의 책임이 아니다.** cleanup은 별도로 prune을 호출하지 않는다.
+  (`PruneExpired`는 `sync-memory --from-session`이 **학습 내용이 있을 때만** 저장과 함께 수행한다 —
+  `runSyncFromSession`은 `len(learnings)==0`이면 prune 전에 early return하므로, Stop 훅이 매 턴
+  prune한다고 가정하지 않는다. cleanup은 `mem store`로 저장만 하며 prune을 보장하지 않는다.)
 
 ### Step 5: 완료 보고
 - 저장한 메모리 항목 목록(카테고리·key)
