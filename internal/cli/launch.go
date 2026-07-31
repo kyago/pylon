@@ -156,43 +156,22 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		return fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
 	}
 
+	// Refresh the pylon-owned resources under .pylon/ (agents, skills, commands,
+	// scripts) from the embedded defaults. Shared with `pylon doctor` so launch and
+	// maintenance can never drift, and runs before the .claude/commands/
+	// reconciliation below so a command added in a new release reaches Claude Code on
+	// this launch rather than the next one. User-authored files are left untouched —
+	// see syncPylonResources for the ownership contract.
+	if _, overwritten := syncPylonResources(layout.PylonDir(root)); len(overwritten) > 0 {
+		fmt.Fprintf(os.Stderr, "⚠ 내장 버전으로 되돌린 pylon 소유 파일 %d개: %s\n",
+			len(overwritten), strings.Join(overwritten, ", "))
+	}
+
 	// Reconcile .claude/commands/ with the desired command set. The desired-state
 	// computation is shared with `pylon doctor` so the two never drift.
 	desired := buildDesiredClaudeCommands(root)
 	if err := applyClaudeCommands(commandsDir, desired); err != nil {
 		return err
-	}
-
-	// Bootstrap .pylon/commands/ from embedded defaults for future customization
-	if err := bootstrapPylonCommands(layout.CommandsDir(root)); err != nil {
-		return err
-	}
-
-	// Pipeline scripts → .pylon/scripts/bash/
-	// Bootstrap embedded scripts if workspace doesn't have them yet (existing workspaces)
-	pylonScriptsDir := layout.ScriptsDir(root)
-	if err := os.MkdirAll(pylonScriptsDir, 0755); err != nil {
-		return fmt.Errorf("scripts/bash/ 디렉토리 생성 실패: %w", err)
-	}
-	scriptEntries, err := embeddedScripts.ReadDir("scripts/bash")
-	if err == nil {
-		for _, entry := range scriptEntries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sh") {
-				continue
-			}
-			destPath := filepath.Join(pylonScriptsDir, entry.Name())
-			// Only write if file doesn't exist (preserve user customizations)
-			if _, err := os.Stat(destPath); os.IsNotExist(err) {
-				content, err := embeddedScripts.ReadFile("scripts/bash/" + entry.Name())
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "경고: 내장 스크립트 읽기 실패 (%s): %v\n", entry.Name(), err)
-					continue
-				}
-				if err := os.WriteFile(destPath, content, 0755); err != nil {
-					fmt.Fprintf(os.Stderr, "경고: 스크립트 배포 실패 (%s): %v\n", entry.Name(), err)
-				}
-			}
-		}
 	}
 
 	// Generate .claude/agents/ with skill injection

@@ -46,7 +46,7 @@ func TestSyncEmbeddedDir_RefreshesStaleFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	changed := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
+	changed, refreshed := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
 
 	got, err := os.ReadFile(destPath)
 	if err != nil {
@@ -58,6 +58,10 @@ func TestSyncEmbeddedDir_RefreshesStaleFile(t *testing.T) {
 	if changed == 0 {
 		t.Errorf("expected changed count > 0 when a stale file is refreshed, got 0")
 	}
+	// 덮어쓴 파일은 이름으로 보고되어야 한다 — 사용자가 수정한 파일일 수도 있다.
+	if len(refreshed) != 1 || refreshed[0] != name {
+		t.Errorf("expected refreshed = [%s], got %v", name, refreshed)
+	}
 }
 
 // TestSyncEmbeddedDir_SkipsUnchangedFile verifies that re-syncing identical
@@ -65,12 +69,16 @@ func TestSyncEmbeddedDir_RefreshesStaleFile(t *testing.T) {
 func TestSyncEmbeddedDir_SkipsUnchangedFile(t *testing.T) {
 	targetDir := t.TempDir()
 
-	first := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
+	first, refreshed := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
 	if first == 0 {
 		t.Fatal("expected files to be installed on first sync")
 	}
+	// 신규 설치는 '갱신'이 아니다 — 덮어쓴 것이 없으므로 보고 대상도 없다.
+	if len(refreshed) != 0 {
+		t.Errorf("expected no refreshed files on first install, got %v", refreshed)
+	}
 
-	second := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
+	second, _ := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
 	if second != 0 {
 		t.Errorf("expected 0 changes on second sync of identical content, got %d", second)
 	}

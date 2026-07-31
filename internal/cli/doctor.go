@@ -54,6 +54,10 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Check required tool installations and versions",
 		Long: `Verify that all required tools (git, gh, claude) are installed and configured.
 
+Also refreshes the pylon-owned resources under .pylon/ (agents, skills, commands,
+scripts) to the versions shipped with this binary. Files you added yourself — a new
+agent, a new skill, anything whose name is not shipped with pylon — are left alone.
+
 Use --fix-excludes to automatically add .pylon/ to project .git/info/exclude
 for any projects that are missing the local-scope ignore entry.`,
 		RunE: runDoctor,
@@ -316,19 +320,7 @@ func syncResourcesIfWorkspace() {
 	}
 
 	pylonDir := layout.PylonDir(root)
-	var totalWritten int
-
-	// Sync agents
-	totalWritten += syncEmbeddedDir(embeddedAgents, "agents", filepath.Join(pylonDir, "agents"), ".md")
-
-	// Sync skills
-	totalWritten += syncEmbeddedDir(embeddedSkills, "skills", filepath.Join(pylonDir, "skills"), ".md")
-
-	// Sync commands
-	totalWritten += syncEmbeddedDir(embeddedCommands, "commands", filepath.Join(pylonDir, "commands"), ".md")
-
-	// Sync scripts
-	totalWritten += syncEmbeddedDir(embeddedScripts, "scripts/bash", filepath.Join(pylonDir, "scripts", "bash"), ".sh")
+	totalWritten, overwritten := syncPylonResources(pylonDir)
 
 	// Update .claude/agents/ with skill injection (consistent with pylon launch)
 	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
@@ -348,26 +340,68 @@ func syncResourcesIfWorkspace() {
 	} else {
 		fmt.Println("✓ 내장 리소스 최신 상태")
 	}
+	// pylon 소유 파일을 내장 버전으로 되돌린 경우 이름을 밝힌다.
+	if len(overwritten) > 0 {
+		fmt.Printf("  ⚠ 기존 내용을 내장 버전으로 되돌린 파일 %d개:\n", len(overwritten))
+		for _, name := range overwritten {
+			fmt.Printf("    ~ .pylon/%s\n", name)
+		}
+	}
+}
+
+// syncPylonResources refreshes the pylon-owned resources under .pylon/ from the
+// embedded defaults and returns how many files were written plus the labelled
+// names of files whose existing content was overwritten.
+//
+// Ownership contract: a file whose name ships with the binary belongs to pylon and
+// is kept identical to the embedded version — editing it in place is not a supported
+// customization and the edit is reverted. Every other file in these directories
+// (agents from `pylon add-agent`, skills from `pylon add-skill`, any user-authored
+// file) belongs to the user and is never written or removed here.
+//
+// Shared by `pylon doctor` and the launch path so the two can never drift.
+func syncPylonResources(pylonDir string) (int, []string) {
+	var totalWritten int
+	var overwritten []string
+
+	sync := func(fs embed.FS, embedDir, targetDir, suffix, label string) {
+		written, refreshed := syncEmbeddedDir(fs, embedDir, targetDir, suffix)
+		totalWritten += written
+		for _, name := range refreshed {
+			overwritten = append(overwritten, label+"/"+name)
+		}
+	}
+
+	sync(embeddedAgents, "agents", filepath.Join(pylonDir, "agents"), ".md", "agents")
+	sync(embeddedSkills, "skills", filepath.Join(pylonDir, "skills"), ".md", "skills")
+	sync(embeddedCommands, "commands", filepath.Join(pylonDir, "commands"), ".md", "commands")
+	sync(embeddedScripts, "scripts/bash", filepath.Join(pylonDir, "scripts", "bash"), ".sh", "scripts/bash")
+
+	sort.Strings(overwritten)
+	return totalWritten, overwritten
 }
 
 // syncEmbeddedDir copies files from an embed.FS subdirectory to a target directory.
 // .pylon/ resources are treated as pylon-managed: a file is written when it is
 // missing or when its on-disk content differs from the embedded version, so that
 // version upgrades refresh stale files. Unchanged files are left untouched.
-// Returns the number of files written (newly installed or refreshed).
-func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
+// Returns the number of files written (newly installed or refreshed) and the names
+// of files whose existing content was overwritten — those may have been user edits,
+// so the caller reports them by name rather than as a bare count.
+func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) (int, []string) {
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		fmt.Printf("⚠ %s 디렉토리 생성 실패: %v\n", targetDir, err)
-		return 0
+		return 0, nil
 	}
 
 	entries, err := fs.ReadDir(embedDir)
 	if err != nil {
 		fmt.Printf("⚠ %s 읽기 실패: %v\n", embedDir, err)
-		return 0
+		return 0, nil
 	}
 
 	written := 0
+	var refreshed []string
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), suffix) {
 			continue // 비재귀: 서브디렉토리 스킵 (현재 리소스 구조에서는 불필요)
@@ -378,8 +412,12 @@ func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
 			continue
 		}
 		destPath := filepath.Join(targetDir, entry.Name())
-		if existing, err := os.ReadFile(destPath); err == nil && bytes.Equal(existing, content) {
-			continue // 디스크 내용이 내장 버전과 동일 — 갱신 불필요
+		existed := false
+		if existing, err := os.ReadFile(destPath); err == nil {
+			if bytes.Equal(existing, content) {
+				continue // 디스크 내용이 내장 버전과 동일 — 갱신 불필요
+			}
+			existed = true
 		}
 		perm := os.FileMode(0644)
 		if suffix == ".sh" {
@@ -390,8 +428,11 @@ func syncEmbeddedDir(fs embed.FS, embedDir, targetDir, suffix string) int {
 			continue
 		}
 		written++
+		if existed {
+			refreshed = append(refreshed, entry.Name())
+		}
 	}
-	return written
+	return written, refreshed
 }
 
 // commandDiff describes how the on-disk .claude/commands/ differs from the

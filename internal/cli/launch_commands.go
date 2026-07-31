@@ -114,8 +114,10 @@ func buildDesiredClaudeCommands(root string) map[string]string {
 		desired[filepath.FromSlash(name)+".md"] = content
 	}
 
-	// Pipeline slash commands → pl/: prefer .pylon/commands/ (user customization),
-	// fall back to embedded defaults for workspaces without .pylon/commands/.
+	// Pipeline slash commands → pl/: read from .pylon/commands/, which callers refresh
+	// from the embedded defaults first (see syncPylonResources — shipped names are
+	// pylon-owned, user-added ones are not). Fall back to the embeds for workspaces
+	// that have no .pylon/commands/ yet.
 	pylonCmdsDir := layout.CommandsDir(root)
 	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
 		for _, entry := range entries {
@@ -226,30 +228,4 @@ func isSafeCommandRel(rel string) bool {
 	}
 	clean := filepath.Clean(rel)
 	return clean == rel && clean != "." && !strings.HasPrefix(clean, ".."+string(os.PathSeparator)) && clean != ".."
-}
-
-// bootstrapPylonCommands writes embedded default commands into .pylon/commands/
-// when the directory is empty, giving users a starting point to customize.
-func bootstrapPylonCommands(pylonCmdsDir string) error {
-	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
-		return nil // already populated — preserve user customizations
-	}
-	if err := os.MkdirAll(pylonCmdsDir, 0755); err != nil {
-		return fmt.Errorf(".pylon/commands/ 디렉토리 생성 실패: %w", err)
-	}
-	embedded, err := embeddedCommands.ReadDir("commands")
-	if err != nil {
-		return nil
-	}
-	for _, entry := range embedded {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		content, err := embeddedCommands.ReadFile("commands/" + entry.Name())
-		if err != nil {
-			continue
-		}
-		_ = os.WriteFile(filepath.Join(pylonCmdsDir, entry.Name()), content, 0644)
-	}
-	return nil
 }
