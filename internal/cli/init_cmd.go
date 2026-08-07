@@ -23,6 +23,9 @@ var embeddedScripts embed.FS
 //go:embed skills/*.md
 var embeddedSkills embed.FS
 
+//go:embed reference/*.md
+var embeddedReference embed.FS
+
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
@@ -90,6 +93,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		filepath.Join(pylonDir, "domain"),
 		filepath.Join(pylonDir, "agents"),
 		filepath.Join(pylonDir, "skills"),
+		filepath.Join(pylonDir, "reference"),
 		filepath.Join(pylonDir, "scripts", "bash"),
 		filepath.Join(pylonDir, "commands"),
 		filepath.Join(pylonDir, "runtime", "memory"),
@@ -161,6 +165,11 @@ git:
 		return err
 	}
 
+	// Create embedded pylon usage manual (source for AI-authored AGENTS.md)
+	if err := writeReferenceTemplates(pylonDir); err != nil {
+		return err
+	}
+
 	// Step 5: Update .gitignore
 	gitignorePath := filepath.Join(workDir, ".gitignore")
 	gitignoreEntries := []string{
@@ -220,6 +229,7 @@ git:
 	agentCount := countEmbeddedAgents()
 	fmt.Printf("  .pylon/agents/             - agent definitions (%d agents)\n", agentCount)
 	fmt.Println("  .pylon/skills/             - agent skills")
+	fmt.Println("  .pylon/reference/          - embedded pylon usage manual")
 	fmt.Println("  .pylon/scripts/bash/       - pipeline shell scripts")
 	fmt.Println("  .pylon/commands/           - pipeline slash commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
@@ -293,6 +303,30 @@ func countEmbeddedAgents() int {
 		}
 	}
 	return count
+}
+
+func writeReferenceTemplates(pylonDir string) error {
+	entries, err := embeddedReference.ReadDir("reference")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded reference: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(pylonDir, "reference"), 0755); err != nil {
+		return fmt.Errorf("failed to create reference directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		content, err := embeddedReference.ReadFile("reference/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("failed to read reference %s: %w", entry.Name(), err)
+		}
+		path := filepath.Join(pylonDir, "reference", entry.Name())
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			return fmt.Errorf("failed to create reference %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }
 
 func writeSkillTemplates(pylonDir string) error {

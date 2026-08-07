@@ -597,3 +597,24 @@ func TestInstallHint_NoBrewFormula(t *testing.T) {
 		t.Errorf("installHint = %q, want %q", got, c.InstallURL)
 	}
 }
+
+func TestSyncPylonResourcesRefreshesReference(t *testing.T) {
+	pylonDir := t.TempDir()
+	// 오래된 내용을 미리 심어 둔다 — 동기화가 임베디드 버전으로 되돌려야 한다.
+	refDir := filepath.Join(pylonDir, "reference")
+	if err := os.MkdirAll(refDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(refDir, "pylon-usage.md")
+	if err := os.WriteFile(stale, []byte("STALE"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	syncPylonResources(pylonDir)
+	got, err := os.ReadFile(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "pylon-usage-version:") {
+		t.Errorf("reference not refreshed from embed, got: %.40q", got)
+	}
+}

@@ -376,6 +376,7 @@ func syncPylonResources(pylonDir string) (int, []string) {
 	sync(embeddedSkills, "skills", filepath.Join(pylonDir, "skills"), ".md", "skills")
 	sync(embeddedCommands, "commands", filepath.Join(pylonDir, "commands"), ".md", "commands")
 	sync(embeddedScripts, "scripts/bash", filepath.Join(pylonDir, "scripts", "bash"), ".sh", "scripts/bash")
+	sync(embeddedReference, "reference", filepath.Join(pylonDir, "reference"), ".md", "reference")
 
 	sort.Strings(overwritten)
 	return totalWritten, overwritten
