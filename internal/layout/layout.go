@@ -51,11 +51,6 @@ func ScriptsDir(root string) string {
 	return filepath.Join(PylonDir(root), "scripts", "bash")
 }
 
-// ReferenceDir returns the .pylon/reference directory (embedded pylon usage manual).
-func ReferenceDir(root string) string {
-	return filepath.Join(PylonDir(root), "reference")
-}
-
 // ClaudeDir returns the Claude CLI directory under the workspace root (.claude).
 func ClaudeDir(root string) string {
 	return filepath.Join(root, ".claude")
