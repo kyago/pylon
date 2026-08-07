@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 // firstEmbeddedSkill returns the name of the first embedded skill .md file,
@@ -616,5 +617,49 @@ func TestSyncPylonResourcesRefreshesReference(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "pylon-usage-version:") {
 		t.Errorf("reference not refreshed from embed, got: %.40q", got)
+	}
+}
+
+func TestReconcileRootAgentFilesRebootstrapsStale(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// 저버전 스탬프 = stale
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte("<!-- pylon-usage-version: 0 -->\n# old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapped, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bootstrapped {
+		t.Error("stale AGENTS.md should be re-bootstrapped")
+	}
+	got, _ := os.ReadFile(layout.RootAgentsPath(root))
+	if !strings.Contains(string(got), "pylon-usage-version: 1") {
+		t.Errorf("AGENTS.md not refreshed to current stamp: %.60q", got)
+	}
+}
+
+func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	authored := "<!-- pylon-usage-version: 1 -->\n# 저작됨"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapped, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrapped {
+		t.Error("current AGENTS.md must be left alone")
+	}
+	got, _ := os.ReadFile(layout.RootAgentsPath(root))
+	if string(got) != authored {
+		t.Errorf("current AGENTS.md was overwritten: %q", got)
 	}
 }
