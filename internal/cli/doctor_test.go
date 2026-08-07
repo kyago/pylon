@@ -629,7 +629,7 @@ func TestReconcileRootAgentFilesRebootstrapsStale(t *testing.T) {
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte("<!-- pylon-usage-version: 0 -->\n# old"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, err := reconcileRootAgentFiles(root)
+	bootstrapped, _, err := reconcileRootAgentFiles(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,7 +651,7 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, err := reconcileRootAgentFiles(root)
+	bootstrapped, _, err := reconcileRootAgentFiles(root)
 	if err != nil {
 		t.Fatal(err)
 	}

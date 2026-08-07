@@ -153,9 +153,14 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 	// Root agent files: CLAUDE.md is a deterministic @AGENTS.md import marker; AGENTS.md
 	// is (re)bootstrapped only when missing/stale so a session-authored guide survives
 	// launch. The launched claude session authors AGENTS.md on its first turn.
-	if bootstrapped, err := ensureRootAgentFiles(root, projects); err != nil {
+	bootstrapped, backedUp, err := ensureRootAgentFiles(root, projects)
+	if err != nil {
 		return err
-	} else if bootstrapped {
+	}
+	for _, name := range backedUp {
+		fmt.Fprintf(os.Stderr, "ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+	}
+	if bootstrapped {
 		fmt.Fprintln(os.Stderr, "ℹ AGENTS.md를 부트스트랩했습니다 — 세션이 첫 턴에 이 워크스페이스에 맞게 재작성합니다.")
 	}
 

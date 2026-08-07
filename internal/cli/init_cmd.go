@@ -226,8 +226,12 @@ git:
 
 	// Root agent files so the workspace is launch-ready: CLAUDE.md import marker +
 	// bootstrap AGENTS.md the first session will author against the embedded manual.
-	if _, err := ensureRootAgentFiles(workDir, projects); err != nil {
+	_, backedUp, err := ensureRootAgentFiles(workDir, projects)
+	if err != nil {
 		return err
+	}
+	for _, name := range backedUp {
+		fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다 — pylon이 이 파일을 관리합니다.\n", name, name, rootFileBackupSuffix)
 	}
 
 	fmt.Println()

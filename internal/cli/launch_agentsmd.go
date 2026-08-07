@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -73,19 +74,71 @@ func agentsMDStale(root string) bool {
 	return v < pylonUsageVersion
 }
 
+// rootFileBackupSuffix is appended to a hand-written root file that pylon is about to
+// replace, so `pylon init` in a repo that already has its own CLAUDE.md/AGENTS.md never
+// destroys it silently — the root files are gitignored, so an untracked original would
+// otherwise be unrecoverable.
+const rootFileBackupSuffix = ".pylon-bak"
+
+// backupIfHandWritten renames path aside when it exists and was not written by pylon.
+// pylonAuthored decides that from the current content; a file pylon itself wrote is
+// replaced in place, so repeated launches never churn out backups. Reports whether a
+// backup was taken.
+func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, nil // 없으면 백업할 것도 없다
+	}
+	if pylonAuthored(data) {
+		return false, nil
+	}
+	if err := os.Rename(path, path+rootFileBackupSuffix); err != nil {
+		return false, fmt.Errorf("%s 백업 실패: %w", filepath.Base(path), err)
+	}
+	return true, nil
+}
+
 // ensureRootAgentFiles keeps the two workspace-root files in the desired state:
 // CLAUDE.md is always (re)written to the deterministic @AGENTS.md import marker, and
 // AGENTS.md is (re)written to the bootstrap ONLY when stale — a session-authored,
-// current AGENTS.md is left untouched. Returns whether AGENTS.md was bootstrapped.
-func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, error) {
-	if err := os.WriteFile(layout.RootClaudePath(root), []byte(buildClaudeMDPointer()), 0644); err != nil {
-		return false, fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
+// current AGENTS.md is left untouched. A pre-existing hand-written file is moved to
+// <name>.pylon-bak first. Returns whether AGENTS.md was bootstrapped, and the names of
+// any files backed up so callers can tell the user.
+func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []string, error) {
+	var backedUp []string
+
+	claudePath := layout.RootClaudePath(root)
+	// pylon이 쓴 CLAUDE.md는 마커 한 줄뿐이다 — 그 외 내용은 사용자 것이다.
+	ok, err := backupIfHandWritten(claudePath, func(b []byte) bool {
+		return strings.TrimSpace(string(b)) == strings.TrimSpace(buildClaudeMDPointer())
+	})
+	if err != nil {
+		return false, backedUp, err
 	}
+	if ok {
+		backedUp = append(backedUp, filepath.Base(claudePath))
+	}
+	if err := os.WriteFile(claudePath, []byte(buildClaudeMDPointer()), 0644); err != nil {
+		return false, backedUp, fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
+	}
+
 	if !agentsMDStale(root) {
-		return false, nil
+		return false, backedUp, nil
 	}
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(buildBootstrapAgentsMD(root, projects)), 0644); err != nil {
-		return false, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
+
+	agentsPath := layout.RootAgentsPath(root)
+	// 스탬프가 있으면 pylon/세션이 저작한 것이다. 스탬프 없는 파일만 사용자 것으로 본다.
+	ok, err = backupIfHandWritten(agentsPath, func(b []byte) bool {
+		return usageVersionRe.Find(b) != nil
+	})
+	if err != nil {
+		return false, backedUp, err
 	}
-	return true, nil
+	if ok {
+		backedUp = append(backedUp, filepath.Base(agentsPath))
+	}
+	if err := os.WriteFile(agentsPath, []byte(buildBootstrapAgentsMD(root, projects)), 0644); err != nil {
+		return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
+	}
+	return true, backedUp, nil
 }

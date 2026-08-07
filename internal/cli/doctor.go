@@ -311,8 +311,9 @@ func syncConfigIfWorkspace() {
 // reconcileRootAgentFiles refreshes the CLAUDE.md marker and re-bootstraps AGENTS.md
 // when it is missing or older than the embedded manual, so `pylon doctor` recovers a
 // workspace whose root guide drifted. It never invokes an LLM — the next launched
-// session authors the refreshed bootstrap. Returns whether AGENTS.md was bootstrapped.
-func reconcileRootAgentFiles(root string) (bool, error) {
+// session authors the refreshed bootstrap. Returns whether AGENTS.md was bootstrapped
+// and the names of any hand-written root files moved aside first.
+func reconcileRootAgentFiles(root string) (bool, []string, error) {
 	projects, err := config.DiscoverProjects(root)
 	if err != nil {
 		projects = nil // 탐색 실패 시 팩트 없는 부트스트랩이라도 최신화한다
@@ -334,10 +335,16 @@ func syncResourcesIfWorkspace() {
 	pylonDir := layout.PylonDir(root)
 	totalWritten, overwritten := syncPylonResources(pylonDir)
 
-	if bootstrapped, err := reconcileRootAgentFiles(root); err != nil {
+	bootstrapped, backedUp, err := reconcileRootAgentFiles(root)
+	if err != nil {
 		fmt.Printf("⚠ 루트 에이전트 파일 갱신 실패: %v\n", err)
-	} else if bootstrapped {
-		fmt.Println("✓ AGENTS.md를 부트스트랩했습니다 — 다음 실행 시 세션이 이 워크스페이스에 맞게 재작성합니다.")
+	} else {
+		for _, name := range backedUp {
+			fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+		}
+		if bootstrapped {
+			fmt.Println("✓ AGENTS.md를 부트스트랩했습니다 — 다음 실행 시 세션이 이 워크스페이스에 맞게 재작성합니다.")
+		}
 	}
 
 	// Update .claude/agents/ with skill injection (consistent with pylon launch)
