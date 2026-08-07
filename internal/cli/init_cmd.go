@@ -182,6 +182,10 @@ git:
 		"# Claude CLI agent symlinks (managed by pylon)",
 		".claude/agents/",
 		"",
+		"# Pylon root agent files (regenerated; AI-authored)",
+		"CLAUDE.md",
+		"AGENTS.md",
+		"",
 	}
 	gitignoreContent := strings.Join(gitignoreEntries, "\n")
 
@@ -220,6 +224,12 @@ git:
 		}
 	}
 
+	// Root agent files so the workspace is launch-ready: CLAUDE.md import marker +
+	// bootstrap AGENTS.md the first session will author against the embedded manual.
+	if _, err := ensureRootAgentFiles(workDir, projects); err != nil {
+		return err
+	}
+
 	fmt.Println()
 	fmt.Printf("Pylon workspace initialized at %s\n", workDir)
 	fmt.Println()
@@ -238,6 +248,8 @@ git:
 	fmt.Println("  .pylon/conversations/      - conversation history")
 	fmt.Println("  .pylon/tasks/              - confirmed task specs")
 	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/agents/)")
+	fmt.Println("  CLAUDE.md                  - @AGENTS.md import marker")
+	fmt.Println("  AGENTS.md                  - operating guide (authored by first session)")
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
