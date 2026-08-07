@@ -105,6 +105,23 @@ dist/
 `,
 		},
 		{
+			name: "removes the launch-written section (pre-PR workspaces)",
+			input: `node_modules/
+
+# Pylon-generated (dynamically generated)
+.claude/
+CLAUDE.md
+AGENTS.md
+.pylon/logs/
+
+dist/
+`,
+			want: `node_modules/
+
+dist/
+`,
+		},
+		{
 			name:  "no pylon entries",
 			input: "node_modules/\ndist/\n",
 			want:  "node_modules/\ndist/\n",
