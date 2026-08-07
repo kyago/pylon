@@ -21,7 +21,7 @@ func newUninstallCmd() *cobra.Command {
 		Long: `Completely remove pylon from the current workspace.
 
 This removes:
-  1. Runtime artifacts (.claude/, CLAUDE.md)
+  1. Runtime artifacts (.claude/, CLAUDE.md, AGENTS.md)
   2. Project-level .pylon/ directories
   3. Workspace .pylon/ directory (config, domain, agents, database)
   4. Pylon entries from .gitignore
@@ -43,7 +43,7 @@ Use --remove-binary to also delete the pylon binary from $GOPATH/bin.`,
 
 // uninstallPlan holds the list of actions to perform during uninstall.
 type uninstallPlan struct {
-	runtimeFiles   []string // .claude/, CLAUDE.md
+	runtimeFiles   []string // .claude/, CLAUDE.md, AGENTS.md
 	projectPylons  []string // {project}/.pylon/ directories
 	cloneProjects  []string // standalone clone projects (only if --remove-projects)
 	workspacePylon string   // .pylon/ directory
@@ -101,9 +101,12 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 	if dirExists(claudeDir) {
 		plan.runtimeFiles = append(plan.runtimeFiles, claudeDir)
 	}
-	claudeMD := filepath.Join(root, "CLAUDE.md")
-	if fileExists(claudeMD) {
-		plan.runtimeFiles = append(plan.runtimeFiles, claudeMD)
+	// Both root agent files are pylon-generated: CLAUDE.md is the @AGENTS.md import
+	// marker, AGENTS.md the guide the session authors against the embedded manual.
+	for _, f := range []string{layout.RootClaudePath(root), layout.RootAgentsPath(root)} {
+		if fileExists(f) {
+			plan.runtimeFiles = append(plan.runtimeFiles, f)
+		}
 	}
 
 	// 2. Discover projects and their .pylon/ directories
@@ -285,7 +288,8 @@ func cleanGitignoreFull(path string) error {
 		// Detect pylon section markers (both workspace and generated)
 		if trimmed == "# pylon" || trimmed == "# Pylon" ||
 			trimmed == "# Pylon runtime (agent communication, state)" ||
-			trimmed == "# Pylon-generated Claude Code config (dynamically generated)" {
+			trimmed == "# Pylon-generated Claude Code config (dynamically generated)" ||
+			trimmed == "# Pylon root agent files (regenerated; AI-authored)" {
 			pylonSection = true
 			continue
 		}
@@ -298,7 +302,7 @@ func cleanGitignoreFull(path string) error {
 			}
 			if strings.HasPrefix(trimmed, ".pylon/") ||
 				strings.HasPrefix(trimmed, ".claude/") ||
-				trimmed == "CLAUDE.md" {
+				trimmed == "CLAUDE.md" || trimmed == "AGENTS.md" {
 				continue
 			}
 			// Non-pylon entry ends the section

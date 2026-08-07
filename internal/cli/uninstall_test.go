@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kyago/pylon/internal/layout"
 )
 
 func TestCleanGitignoreFull(t *testing.T) {
@@ -72,6 +74,37 @@ dist/
 `,
 		},
 		{
+			name: "removes AGENTS.md alongside CLAUDE.md",
+			input: `node_modules/
+
+# Pylon-generated Claude Code config (dynamically generated)
+.claude/
+CLAUDE.md
+AGENTS.md
+
+dist/
+`,
+			want: `node_modules/
+
+dist/
+`,
+		},
+		{
+			name: "removes the init-written root agent files section",
+			input: `node_modules/
+
+# Pylon root agent files (regenerated; AI-authored)
+CLAUDE.md
+AGENTS.md
+
+dist/
+`,
+			want: `node_modules/
+
+dist/
+`,
+		},
+		{
 			name:  "no pylon entries",
 			input: "node_modules/\ndist/\n",
 			want:  "node_modules/\ndist/\n",
@@ -133,8 +166,9 @@ func TestBuildUninstallPlan(t *testing.T) {
 	claudeDir := filepath.Join(root, ".claude")
 	os.MkdirAll(claudeDir, 0755)
 
-	// Create CLAUDE.md
-	os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("# Test"), 0644)
+	// Create the generated root agent files
+	os.WriteFile(layout.RootClaudePath(root), []byte("@AGENTS.md\n"), 0644)
+	os.WriteFile(layout.RootAgentsPath(root), []byte("<!-- pylon-usage-version: 1 -->\n# guide"), 0644)
 
 	// Create .gitignore
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("# pylon\n.pylon/runtime/\n"), 0644)
@@ -145,8 +179,8 @@ func TestBuildUninstallPlan(t *testing.T) {
 	}
 
 	// Verify runtime files detected
-	if len(plan.runtimeFiles) != 2 {
-		t.Errorf("expected 2 runtime files (.claude/ and CLAUDE.md), got %d", len(plan.runtimeFiles))
+	if len(plan.runtimeFiles) != 3 {
+		t.Errorf("expected 3 runtime files (.claude/, CLAUDE.md, AGENTS.md), got %d: %v", len(plan.runtimeFiles), plan.runtimeFiles)
 	}
 
 	// Verify workspace pylon detected
