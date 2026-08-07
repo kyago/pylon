@@ -150,10 +150,13 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		return err
 	}
 
-	// Generate CLAUDE.md at workspace root
-	claudeMD := buildRootCLAUDEMD(cfg, projects, root)
-	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte(claudeMD), 0644); err != nil {
-		return fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
+	// Root agent files: CLAUDE.md is a deterministic @AGENTS.md import marker; AGENTS.md
+	// is (re)bootstrapped only when missing/stale so a session-authored guide survives
+	// launch. The launched claude session authors AGENTS.md on its first turn.
+	if bootstrapped, err := ensureRootAgentFiles(root, projects); err != nil {
+		return err
+	} else if bootstrapped {
+		fmt.Fprintln(os.Stderr, "ℹ AGENTS.md를 부트스트랩했습니다 — 세션이 첫 턴에 이 워크스페이스에 맞게 재작성합니다.")
 	}
 
 	// Refresh the pylon-owned resources under .pylon/ (agents, skills, commands,
@@ -196,7 +199,7 @@ func addClaudeDirToGitignore(root string) error {
 
 	// Collect missing entries
 	var missing []string
-	for _, entry := range []string{".claude/", "CLAUDE.md", ".pylon/logs/"} {
+	for _, entry := range []string{".claude/", "CLAUDE.md", "AGENTS.md", ".pylon/logs/"} {
 		if !strings.Contains(content, entry) {
 			missing = append(missing, entry)
 		}
