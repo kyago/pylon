@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 // firstEmbeddedSkill returns the name of the first embedded skill .md file,
@@ -595,5 +596,70 @@ func TestInstallHint_NoBrewFormula(t *testing.T) {
 	c := Check{Name: "git", InstallURL: "https://git-scm.com/downloads"}
 	if got := installHint(c, true); got != c.InstallURL {
 		t.Errorf("installHint = %q, want %q", got, c.InstallURL)
+	}
+}
+
+func TestSyncPylonResourcesRefreshesReference(t *testing.T) {
+	pylonDir := t.TempDir()
+	// 오래된 내용을 미리 심어 둔다 — 동기화가 임베디드 버전으로 되돌려야 한다.
+	refDir := filepath.Join(pylonDir, "reference")
+	if err := os.MkdirAll(refDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(refDir, "pylon-usage.md")
+	if err := os.WriteFile(stale, []byte("STALE"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	syncPylonResources(pylonDir)
+	got, err := os.ReadFile(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "pylon-usage-version:") {
+		t.Errorf("reference not refreshed from embed, got: %.40q", got)
+	}
+}
+
+func TestReconcileRootAgentFilesRebootstrapsStale(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// 저버전 스탬프 = stale
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte("<!-- pylon-usage-version: 0 -->\n# old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapped, _, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bootstrapped {
+		t.Error("stale AGENTS.md should be re-bootstrapped")
+	}
+	got, _ := os.ReadFile(layout.RootAgentsPath(root))
+	if !strings.Contains(string(got), "pylon-usage-version: 1") {
+		t.Errorf("AGENTS.md not refreshed to current stamp: %.60q", got)
+	}
+}
+
+func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	authored := "<!-- pylon-usage-version: 1 -->\n# 저작됨"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapped, _, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrapped {
+		t.Error("current AGENTS.md must be left alone")
+	}
+	got, _ := os.ReadFile(layout.RootAgentsPath(root))
+	if string(got) != authored {
+		t.Errorf("current AGENTS.md was overwritten: %q", got)
 	}
 }

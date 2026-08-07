@@ -23,6 +23,9 @@ var embeddedScripts embed.FS
 //go:embed skills/*.md
 var embeddedSkills embed.FS
 
+//go:embed reference/*.md
+var embeddedReference embed.FS
+
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
@@ -90,6 +93,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		filepath.Join(pylonDir, "domain"),
 		filepath.Join(pylonDir, "agents"),
 		filepath.Join(pylonDir, "skills"),
+		filepath.Join(pylonDir, "reference"),
 		filepath.Join(pylonDir, "scripts", "bash"),
 		filepath.Join(pylonDir, "commands"),
 		filepath.Join(pylonDir, "runtime", "memory"),
@@ -161,6 +165,11 @@ git:
 		return err
 	}
 
+	// Create embedded pylon usage manual (source for AI-authored AGENTS.md)
+	if err := writeReferenceTemplates(pylonDir); err != nil {
+		return err
+	}
+
 	// Step 5: Update .gitignore
 	gitignorePath := filepath.Join(workDir, ".gitignore")
 	gitignoreEntries := []string{
@@ -172,6 +181,10 @@ git:
 		"",
 		"# Claude CLI agent symlinks (managed by pylon)",
 		".claude/agents/",
+		"",
+		"# Pylon root agent files (regenerated; AI-authored)",
+		"CLAUDE.md",
+		"AGENTS.md",
 		"",
 	}
 	gitignoreContent := strings.Join(gitignoreEntries, "\n")
@@ -211,6 +224,16 @@ git:
 		}
 	}
 
+	// Root agent files so the workspace is launch-ready: CLAUDE.md import marker +
+	// bootstrap AGENTS.md the first session will author against the embedded manual.
+	_, backedUp, err := ensureRootAgentFiles(workDir, projects)
+	if err != nil {
+		return err
+	}
+	for _, name := range backedUp {
+		fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다 — pylon이 이 파일을 관리합니다.\n", name, name, rootFileBackupSuffix)
+	}
+
 	fmt.Println()
 	fmt.Printf("Pylon workspace initialized at %s\n", workDir)
 	fmt.Println()
@@ -220,6 +243,7 @@ git:
 	agentCount := countEmbeddedAgents()
 	fmt.Printf("  .pylon/agents/             - agent definitions (%d agents)\n", agentCount)
 	fmt.Println("  .pylon/skills/             - agent skills")
+	fmt.Println("  .pylon/reference/          - embedded pylon usage manual")
 	fmt.Println("  .pylon/scripts/bash/       - pipeline shell scripts")
 	fmt.Println("  .pylon/commands/           - pipeline slash commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
@@ -228,6 +252,8 @@ git:
 	fmt.Println("  .pylon/conversations/      - conversation history")
 	fmt.Println("  .pylon/tasks/              - confirmed task specs")
 	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/agents/)")
+	fmt.Println("  CLAUDE.md                  - @AGENTS.md import marker")
+	fmt.Println("  AGENTS.md                  - operating guide (authored by first session)")
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
@@ -293,6 +319,30 @@ func countEmbeddedAgents() int {
 		}
 	}
 	return count
+}
+
+func writeReferenceTemplates(pylonDir string) error {
+	entries, err := embeddedReference.ReadDir("reference")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded reference: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(pylonDir, "reference"), 0755); err != nil {
+		return fmt.Errorf("failed to create reference directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		content, err := embeddedReference.ReadFile("reference/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("failed to read reference %s: %w", entry.Name(), err)
+		}
+		path := filepath.Join(pylonDir, "reference", entry.Name())
+		if err := os.WriteFile(path, content, 0644); err != nil {
+			return fmt.Errorf("failed to create reference %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
 }
 
 func writeSkillTemplates(pylonDir string) error {

@@ -308,6 +308,19 @@ func syncConfigIfWorkspace() {
 	}
 }
 
+// reconcileRootAgentFiles refreshes the CLAUDE.md marker and re-bootstraps AGENTS.md
+// when it is missing or older than the embedded manual, so `pylon doctor` recovers a
+// workspace whose root guide drifted. It never invokes an LLM — the next launched
+// session authors the refreshed bootstrap. Returns whether AGENTS.md was bootstrapped
+// and the names of any hand-written root files moved aside first.
+func reconcileRootAgentFiles(root string) (bool, []string, error) {
+	projects, err := config.DiscoverProjects(root)
+	if err != nil {
+		projects = nil // 탐색 실패 시 팩트 없는 부트스트랩이라도 최신화한다
+	}
+	return ensureRootAgentFiles(root, projects)
+}
+
 // syncResourcesIfWorkspace syncs embedded agents, skills, commands, and scripts
 // to the workspace if running inside a pylon workspace.
 // .pylon/ resources are pylon-managed: missing files are installed and files
@@ -321,6 +334,18 @@ func syncResourcesIfWorkspace() {
 
 	pylonDir := layout.PylonDir(root)
 	totalWritten, overwritten := syncPylonResources(pylonDir)
+
+	bootstrapped, backedUp, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		fmt.Printf("⚠ 루트 에이전트 파일 갱신 실패: %v\n", err)
+	} else {
+		for _, name := range backedUp {
+			fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+		}
+		if bootstrapped {
+			fmt.Println("✓ AGENTS.md를 부트스트랩했습니다 — 다음 실행 시 세션이 이 워크스페이스에 맞게 재작성합니다.")
+		}
+	}
 
 	// Update .claude/agents/ with skill injection (consistent with pylon launch)
 	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
@@ -376,6 +401,7 @@ func syncPylonResources(pylonDir string) (int, []string) {
 	sync(embeddedSkills, "skills", filepath.Join(pylonDir, "skills"), ".md", "skills")
 	sync(embeddedCommands, "commands", filepath.Join(pylonDir, "commands"), ".md", "commands")
 	sync(embeddedScripts, "scripts/bash", filepath.Join(pylonDir, "scripts", "bash"), ".sh", "scripts/bash")
+	sync(embeddedReference, "reference", filepath.Join(pylonDir, "reference"), ".md", "reference")
 
 	sort.Strings(overwritten)
 	return totalWritten, overwritten

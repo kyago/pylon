@@ -71,3 +71,13 @@ func ClaudeCommandsDir(root string) string {
 func AgentLinkTarget(name string) string {
 	return filepath.Join("..", "..", ".pylon", "agents", name)
 }
+
+// RootClaudePath returns the workspace-root CLAUDE.md (a thin @AGENTS.md import marker).
+func RootClaudePath(root string) string {
+	return filepath.Join(root, "CLAUDE.md")
+}
+
+// RootAgentsPath returns the workspace-root AGENTS.md (AI-authored operating guide).
+func RootAgentsPath(root string) string {
+	return filepath.Join(root, "AGENTS.md")
+}

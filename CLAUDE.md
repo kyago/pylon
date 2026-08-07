@@ -11,8 +11,17 @@ regenerates a `.claude/` directory + `CLAUDE.md` from `.pylon/` and then **repla
 Code TUI via slash commands and bash scripts — the Go code never runs the pipeline itself.
 
 Do not confuse the two `CLAUDE.md` files: *this* one guides development of the binary; the workspace
-`CLAUDE.md` is generated at runtime by `buildRootCLAUDEMD` (`internal/cli/launch_claudemd.go`) and is the
-root agent's system prompt. Editing a generated workspace file has no effect on the binary.
+`CLAUDE.md` is generated at runtime and has no effect on the binary when edited.
+
+The workspace root prompt is **AI-authored, not hardcoded in Go**. `ensureRootAgentFiles`
+(`internal/cli/launch_agentsmd.go`) writes workspace `CLAUDE.md` as a deterministic `@AGENTS.md` import
+marker on every launch, and writes a short bootstrap `AGENTS.md` **only when it is missing or stale** — so
+a guide the session authored survives subsequent launches. Staleness is a version stamp comparison:
+`AGENTS.md` carries `<!-- pylon-usage-version: N -->` and is stale when the stamp is absent, unparseable,
+or below `pylonUsageVersion`. The launched claude session authors the real `AGENTS.md` on its first turn,
+reading `.pylon/reference/pylon-usage.md` (the embedded manual) plus the actual workspace. Go never calls
+an LLM. Bump `pylonUsageVersion` **only** when the embedded manual changes — it is the sole trigger that
+forces re-authoring, and it is independent of pylon's CalVer release version.
 
 ## Build / test / lint
 
@@ -49,6 +58,7 @@ from `internal/cli/`** (`//go:embed` directives in `init_cmd.go`, `launch_comman
 - `internal/cli/commands/*.md`  → `/pl:*` slash commands
 - `internal/cli/scripts/bash/*.sh` → atomic pipeline steps
 - `internal/cli/skills/*.md`    → agent skills
+- `internal/cli/reference/*.md` → the pylon usage manual the session reads to author `AGENTS.md`
 - `internal/cli/hooks.json`     → Claude Code session hooks
 
 **To change agent behavior, pipeline steps, or slash commands, edit these embedded files** — not any
@@ -60,10 +70,10 @@ workspaces against the embedded versions.
 In a *runtime workspace*, `.pylon/` holds config + resources and `.claude/` is regenerated on every launch:
 CLAUDE.md, `.claude/agents/` symlinks into `.pylon/agents/`, `.claude/commands/`, and
 `.claude/settings.json` hooks. `generateClaudeDir` (`launch.go`) is the generator. `runLaunch` also appends
-`.claude/`, `CLAUDE.md`, `.pylon/logs/` to `.gitignore`.
+`.claude/`, `CLAUDE.md`, `AGENTS.md`, `.pylon/logs/` to `.gitignore`.
 
 **Ownership contract for `.pylon/` resources** (`syncPylonResources` in `doctor.go`, shared by launch and
-doctor): a file in `.pylon/{agents,skills,commands,scripts/bash}/` **whose name ships with the binary is
+doctor): a file in `.pylon/{agents,skills,commands,scripts/bash,reference}/` **whose name ships with the binary is
 pylon-owned** — it is refreshed to the embedded content on every launch and on `pylon doctor`, so editing
 one in place is not a supported customization and the edit is reverted. `pylon doctor` lists the reverted
 files by name; the launch path writes the same notice to stderr, but the Claude Code TUI takes over the
