@@ -152,6 +152,97 @@ func TestEnsureRootAgentFilesDoesNotBackUpPylonAuthoredFiles(t *testing.T) {
 	}
 }
 
+// 버전 스탬프를 올렸을 때, 세션이 저작한 가이드는 stale이지만 버려서는 안 된다.
+func TestEnsureRootAgentFilesBacksUpStaleAuthoredAgentsMD(t *testing.T) {
+	root := t.TempDir()
+	authored := "<!-- pylon-usage-version: 0 -->\n# 세션이 저작한 소중한 가이드\n상세 운영 규칙"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bootstrapped {
+		t.Error("stale AGENTS.md should be re-bootstrapped")
+	}
+	if len(backedUp) != 1 || backedUp[0] != "AGENTS.md" {
+		t.Errorf("stale authored AGENTS.md should be reported as backed up, got %v", backedUp)
+	}
+	got, err := os.ReadFile(layout.RootAgentsPath(root) + rootFileBackupSuffix)
+	if err != nil {
+		t.Fatalf("authored guide destroyed without backup: %v", err)
+	}
+	if string(got) != authored {
+		t.Errorf("backup content differs: %q", got)
+	}
+}
+
+// 반대로, 저작되지 않은 부트스트랩 스텁은 버전이 올라도 백업 쓰레기를 남기지 않는다.
+func TestEnsureRootAgentFilesDoesNotBackUpStaleBootstrapStub(t *testing.T) {
+	root := t.TempDir()
+	stub := strings.Replace(buildBootstrapAgentsMD(root, nil),
+		"pylon-usage-version: 1", "pylon-usage-version: 0", 1)
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(stub), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backedUp) != 0 {
+		t.Errorf("an unauthored bootstrap stub should not be backed up, got %v", backedUp)
+	}
+}
+
+// PR 이전 워크스페이스의 생성된 CLAUDE.md(하드코딩 프롬프트)는 pylon 산출물이므로
+// 백업 없이 마커로 교체되어야 한다 — 아니면 업그레이드마다 .pylon-bak이 생긴다.
+func TestEnsureRootAgentFilesReplacesLegacyGeneratedClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	legacy := legacyClaudeMDHeading + "\n\n당신은 Pylon 워크스페이스의 루트 에이전트입니다.\n"
+	if err := os.WriteFile(layout.RootClaudePath(root), []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backedUp) != 0 {
+		t.Errorf("legacy generated CLAUDE.md should be replaced silently, got %v", backedUp)
+	}
+	got, _ := os.ReadFile(layout.RootClaudePath(root))
+	if strings.TrimSpace(string(got)) != "@AGENTS.md" {
+		t.Errorf("CLAUDE.md should be the marker, got %q", got)
+	}
+}
+
+// 백업이 두 번 필요하면 이전 백업을 덮어쓰지 않는다.
+func TestBackupIfHandWrittenDoesNotClobber(t *testing.T) {
+	root := t.TempDir()
+	path := layout.RootAgentsPath(root)
+	never := func([]byte) bool { return false }
+
+	if err := os.WriteFile(path, []byte("첫 번째"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backupIfHandWritten(path, never); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("두 번째"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backupIfHandWritten(path, never); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := os.ReadFile(path + rootFileBackupSuffix); string(got) != "첫 번째" {
+		t.Errorf("first backup was clobbered: %q", got)
+	}
+	if got, _ := os.ReadFile(path + rootFileBackupSuffix + ".1"); string(got) != "두 번째" {
+		t.Errorf("second backup not written to a free name: %q", got)
+	}
+}
+
 func TestEnsureRootAgentFilesPreservesFreshAgentsMD(t *testing.T) {
 	root := t.TempDir()
 	authored := "<!-- pylon-usage-version: 1 -->\n# 사용자 세션이 저작한 가이드"

@@ -31,10 +31,21 @@ func buildClaudeMDPointer() string {
 // file is missing or stale. Its job is to make the launched session author the real
 // guide on its first turn; it also stands on its own as a minimal fallback if
 // authoring never happens.
+// bootstrapAgentsMDHeading is the heading buildBootstrapAgentsMD emits. It is the
+// signature that tells an unauthored stub apart from a guide a session actually wrote:
+// only the stub may be discarded without a backup.
+const bootstrapAgentsMDHeading = "# pylon 워크스페이스 — 운영 가이드 (자동 생성 부트스트랩)"
+
+// legacyClaudeMDHeading is the first line the pre-AGENTS.md generator (buildRootCLAUDEMD,
+// removed in this change) wrote into workspace CLAUDE.md. Kept as a migration recognizer:
+// every workspace created before this change has such a file, and it is pylon's own
+// output, so it is replaced by the marker without a backup. Do not delete as unused.
+const legacyClaudeMDHeading = "# Pylon — AI 멀티도메인 워크스페이스"
+
 func buildBootstrapAgentsMD(root string, projects []config.ProjectInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<!-- pylon-usage-version: %d -->\n", pylonUsageVersion)
-	b.WriteString("# pylon 워크스페이스 — 운영 가이드 (자동 생성 부트스트랩)\n\n")
+	b.WriteString(bootstrapAgentsMDHeading + "\n\n")
 	b.WriteString("이 파일은 아직 이 워크스페이스에 맞게 저작되지 않았습니다.\n")
 	b.WriteString("**다른 작업을 하기 전에**, `.pylon/reference/pylon-usage.md`와 실제 리포지토리·`.pylon/`을 읽고\n")
 	b.WriteString("이 파일(AGENTS.md)을 이 워크스페이스의 운영 가이드로 다시 작성하세요.\n")
@@ -80,10 +91,14 @@ func agentsMDStale(root string) bool {
 // otherwise be unrecoverable.
 const rootFileBackupSuffix = ".pylon-bak"
 
+// maxRootFileBackups bounds the .pylon-bak / .pylon-bak.1 / ... search so a pathological
+// workspace cannot spin forever instead of reporting a problem.
+const maxRootFileBackups = 100
+
 // backupIfHandWritten renames path aside when it exists and was not written by pylon.
-// pylonAuthored decides that from the current content; a file pylon itself wrote is
-// replaced in place, so repeated launches never churn out backups. Reports whether a
-// backup was taken.
+// pylonAuthored decides that from the current content; a file pylon itself produced is
+// replaced in place, so ordinary launches never churn out backups. An existing backup is
+// never clobbered — the next free suffix is used. Reports whether a backup was taken.
 func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -92,7 +107,18 @@ func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, er
 	if pylonAuthored(data) {
 		return false, nil
 	}
-	if err := os.Rename(path, path+rootFileBackupSuffix); err != nil {
+	dest := path + rootFileBackupSuffix
+	for i := 1; ; i++ {
+		if _, err := os.Lstat(dest); os.IsNotExist(err) {
+			break
+		}
+		if i > maxRootFileBackups {
+			return false, fmt.Errorf("%s 백업 실패: 백업 파일이 너무 많습니다 (%s*)",
+				filepath.Base(path), filepath.Base(path)+rootFileBackupSuffix)
+		}
+		dest = fmt.Sprintf("%s%s.%d", path, rootFileBackupSuffix, i)
+	}
+	if err := os.Rename(path, dest); err != nil {
 		return false, fmt.Errorf("%s 백업 실패: %w", filepath.Base(path), err)
 	}
 	return true, nil
@@ -108,9 +134,12 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 	var backedUp []string
 
 	claudePath := layout.RootClaudePath(root)
-	// pylon이 쓴 CLAUDE.md는 마커 한 줄뿐이다 — 그 외 내용은 사용자 것이다.
+	// pylon이 쓴 CLAUDE.md는 두 가지뿐이다: 현재의 마커, 그리고 이 변경 이전 워크스페이스에
+	// 남아 있는 하드코딩 프롬프트. 둘 다 pylon 산출물이므로 백업 없이 교체한다.
 	ok, err := backupIfHandWritten(claudePath, func(b []byte) bool {
-		return strings.TrimSpace(string(b)) == strings.TrimSpace(buildClaudeMDPointer())
+		s := strings.TrimSpace(string(b))
+		return s == strings.TrimSpace(buildClaudeMDPointer()) ||
+			strings.HasPrefix(s, legacyClaudeMDHeading)
 	})
 	if err != nil {
 		return false, backedUp, err
@@ -127,9 +156,11 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 	}
 
 	agentsPath := layout.RootAgentsPath(root)
-	// 스탬프가 있으면 pylon/세션이 저작한 것이다. 스탬프 없는 파일만 사용자 것으로 본다.
+	// 여기 도달했다는 건 이 파일을 버리려 한다는 뜻이다. pylon 산출물은 저작되지 않은
+	// 부트스트랩 스텁뿐이므로 그것만 그냥 덮어쓴다. 스탬프 유무로 판단하면 안 된다 —
+	// 버전을 올렸을 때 스탬프를 가진 세션 저작 가이드까지 조용히 사라진다.
 	ok, err = backupIfHandWritten(agentsPath, func(b []byte) bool {
-		return usageVersionRe.Find(b) != nil
+		return strings.Contains(string(b), bootstrapAgentsMDHeading)
 	})
 	if err != nil {
 		return false, backedUp, err
