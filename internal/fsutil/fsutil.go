@@ -4,13 +4,17 @@ package fsutil
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
+
+// errLockContended은 잠금이 다른 보유자에게 잡혀 있어 재시도해야 함을 뜻한다.
+// OS별 tryLockFile 구현이 경합 에러를 이 값으로 감싸 반환한다.
+var errLockContended = errors.New("file lock contended")
 
 // AcquireLock creates a mkdir-based advisory lock and returns an unlock
 // function. Waits up to timeout, polling every 25ms.
@@ -31,6 +35,7 @@ func AcquireLock(path string, timeout time.Duration) (func(), error) {
 
 // AcquireFileLock obtains a process-scoped advisory file lock. The kernel
 // releases the lock automatically if the process exits unexpectedly.
+// The locking primitive is OS-specific: see filelock_unix.go / filelock_windows.go.
 func AcquireFileLock(path string, timeout time.Duration) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
@@ -41,14 +46,14 @@ func AcquireFileLock(path string, timeout time.Duration) (func(), error) {
 	}
 	deadline := time.Now().Add(timeout)
 	for {
-		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		unlock, err := tryLockFile(file)
 		if err == nil {
 			return func() {
-				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				unlock()
 				_ = file.Close()
 			}, nil
 		}
-		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+		if !errors.Is(err, errLockContended) {
 			_ = file.Close()
 			return nil, err
 		}
