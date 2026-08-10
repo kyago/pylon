@@ -1,3 +1,4 @@
+// Package runstate persists durable run and task state transitions.
 package runstate
 
 import (

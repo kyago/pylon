@@ -1,3 +1,4 @@
+// Package evaluator prepares isolated held-out verification bundles.
 package evaluator
 
 import (

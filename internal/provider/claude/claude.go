@@ -1,3 +1,4 @@
+// Package claude implements the Claude CLI provider adapter.
 package claude
 
 import (

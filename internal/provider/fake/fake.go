@@ -1,3 +1,4 @@
+// Package fake provides a configurable provider adapter for tests.
 package fake
 
 import (

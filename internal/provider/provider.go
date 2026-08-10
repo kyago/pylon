@@ -1,3 +1,4 @@
+// Package provider defines provider-neutral execution interfaces and capabilities.
 package provider
 
 import (

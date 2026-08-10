@@ -58,24 +58,24 @@ func ParseCapabilities(names []string) (CapabilitySet, error) {
 	return result, nil
 }
 
-func (available CapabilitySet) Satisfies(required CapabilitySet) bool {
-	return len(available.Missing(required)) == 0
+func (capabilities CapabilitySet) Satisfies(required CapabilitySet) bool {
+	return len(capabilities.Missing(required)) == 0
 }
 
-func (available CapabilitySet) Missing(required CapabilitySet) []Capability {
+func (capabilities CapabilitySet) Missing(required CapabilitySet) []Capability {
 	missing := make([]Capability, 0)
 	for _, capability := range knownCapabilities {
-		if required.has(capability) && !available.has(capability) {
+		if required.has(capability) && !capabilities.has(capability) {
 			missing = append(missing, capability)
 		}
 	}
 	return missing
 }
 
-func (set CapabilitySet) Names() []string {
+func (capabilities CapabilitySet) Names() []string {
 	names := make([]string, 0)
 	for _, capability := range knownCapabilities {
-		if set.has(capability) {
+		if capabilities.has(capability) {
 			names = append(names, string(capability))
 		}
 	}
@@ -92,54 +92,54 @@ func isKnownCapability(capability Capability) bool {
 	return false
 }
 
-func (set CapabilitySet) has(capability Capability) bool {
+func (capabilities CapabilitySet) has(capability Capability) bool {
 	switch capability {
 	case CapabilityReadFiles:
-		return set.ReadFiles
+		return capabilities.ReadFiles
 	case CapabilityEditFiles:
-		return set.EditFiles
+		return capabilities.EditFiles
 	case CapabilityRunShell:
-		return set.RunShell
+		return capabilities.RunShell
 	case CapabilitySpawnSubagents:
-		return set.SpawnSubagents
+		return capabilities.SpawnSubagents
 	case CapabilityBackgroundExecution:
-		return set.BackgroundExecution
+		return capabilities.BackgroundExecution
 	case CapabilitySessionResume:
-		return set.SessionResume
+		return capabilities.SessionResume
 	case CapabilityWorktreeIsolation:
-		return set.WorktreeIsolation
+		return capabilities.WorktreeIsolation
 	case CapabilityStructuredOutput:
-		return set.StructuredOutput
+		return capabilities.StructuredOutput
 	case CapabilityToolRestrictions:
-		return set.ToolRestrictions
+		return capabilities.ToolRestrictions
 	case CapabilityWebResearch:
-		return set.WebResearch
+		return capabilities.WebResearch
 	default:
 		return false
 	}
 }
 
-func (set *CapabilitySet) set(capability Capability, value bool) {
+func (capabilities *CapabilitySet) set(capability Capability, value bool) {
 	switch capability {
 	case CapabilityReadFiles:
-		set.ReadFiles = value
+		capabilities.ReadFiles = value
 	case CapabilityEditFiles:
-		set.EditFiles = value
+		capabilities.EditFiles = value
 	case CapabilityRunShell:
-		set.RunShell = value
+		capabilities.RunShell = value
 	case CapabilitySpawnSubagents:
-		set.SpawnSubagents = value
+		capabilities.SpawnSubagents = value
 	case CapabilityBackgroundExecution:
-		set.BackgroundExecution = value
+		capabilities.BackgroundExecution = value
 	case CapabilitySessionResume:
-		set.SessionResume = value
+		capabilities.SessionResume = value
 	case CapabilityWorktreeIsolation:
-		set.WorktreeIsolation = value
+		capabilities.WorktreeIsolation = value
 	case CapabilityStructuredOutput:
-		set.StructuredOutput = value
+		capabilities.StructuredOutput = value
 	case CapabilityToolRestrictions:
-		set.ToolRestrictions = value
+		capabilities.ToolRestrictions = value
 	case CapabilityWebResearch:
-		set.WebResearch = value
+		capabilities.WebResearch = value
 	}
 }

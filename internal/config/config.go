@@ -61,11 +61,11 @@ type RoutingConfig struct {
 	RequireResumeForBackground bool   `yaml:"require_resume_for_background,omitempty"`
 }
 
-func (runtime RuntimeConfig) EffectiveProvider() (string, bool) {
-	if providerName := strings.TrimSpace(runtime.Provider); providerName != "" {
+func (r RuntimeConfig) EffectiveProvider() (string, bool) {
+	if providerName := strings.TrimSpace(r.Provider); providerName != "" {
 		return providerName, false
 	}
-	if backendName := strings.TrimSpace(runtime.Backend); backendName != "" {
+	if backendName := strings.TrimSpace(r.Backend); backendName != "" {
 		return backendName, true
 	}
 	return "auto", false

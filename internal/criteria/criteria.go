@@ -1,3 +1,4 @@
+// Package criteria creates and validates immutable verification criteria snapshots.
 package criteria
 
 import (

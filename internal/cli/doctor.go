@@ -267,10 +267,9 @@ func doctorProviderConfig() (*config.Config, error) {
 }
 
 func newProviderCheck(cfg *config.Config, configErr error) Check {
-	providerName := "auto"
 	installURL := claudeInstallURL
 	if cfg != nil {
-		providerName, _ = cfg.Runtime.EffectiveProvider()
+		providerName, _ := cfg.Runtime.EffectiveProvider()
 		if catalog, err := newProviderCatalog(cfg); err == nil {
 			installURL = catalog.installURL(providerName)
 		}

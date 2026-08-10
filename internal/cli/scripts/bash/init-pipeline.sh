@@ -12,8 +12,8 @@ require_cmd git jq
 
 REQUIREMENT="${1:?Usage: init-pipeline.sh <requirement> [--git-root <repo-rel-path>] [--pipeline-dir <root-pipeline-dir>]}"
 
-# Generate slug from requirement
-SLUG=$(echo "$REQUIREMENT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9가-힣]/-/g' | sed 's/--*/-/g' | cut -c1-30 | sed 's/-$//')
+# Generate a locale-independent slug from requirement.
+SLUG=$(printf '%s\n' "$REQUIREMENT" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-30 | sed 's/-$//')
 [[ -n "$SLUG" ]] || SLUG="run"
 PIPELINE_ID="$(date -u +%Y%m%dT%H%M%SZ)-${SLUG}-$$"
 
