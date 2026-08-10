@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "multi-repo-root-logical-run",
+  "category": "multi_repo",
+  "description": "A non-git workspace root remains a logical run and owns no branch.",
+  "required_capabilities": ["worktree_isolation"],
+  "input": {"workspace_git": false, "repos": ["service-a", "service-b"]},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "succeeded",
+    "required_artifacts": ["status.json", "repos/service-a/status.json", "repos/service-b/status.json"],
+    "forbidden_mutations": ["root-branch"],
+    "required_events": ["repo_pipeline_created:service-a", "repo_pipeline_created:service-b"],
+    "cleanup_status": "completed"
+  }
+}

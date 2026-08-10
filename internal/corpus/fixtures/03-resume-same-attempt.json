@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "resume-same-attempt",
+  "category": "resume",
+  "description": "A resumable provider continues the same attempt while rotating the fencing token.",
+  "required_capabilities": ["session_resume"],
+  "input": {"attempt": 2, "provider_resume": true, "lease_expired": true},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "succeeded",
+    "task_statuses": {"T001": "succeeded"},
+    "required_artifacts": ["tasks/T001/attempts/002/provider.json"],
+    "required_events": ["task_interrupted", "task_resumed", "fence_rotated"],
+    "cleanup_status": "completed"
+  }
+}

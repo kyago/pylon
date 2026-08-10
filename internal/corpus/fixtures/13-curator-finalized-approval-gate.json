@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "curator-finalized-approval-gate",
+  "category": "curator",
+  "description": "Only finalized evidence creates a candidate, and active knowledge remains unchanged before approval and corpus gating.",
+  "required_capabilities": [],
+  "input": {"checkpoint_phase": "completed", "evaluator_status": "pass", "human_approval": false},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "succeeded",
+    "task_statuses": {"candidate": "pending_review"},
+    "required_artifacts": ["proposal.md", "evidence.json", "source-runs.json", "target-files.json", "status.json"],
+    "forbidden_mutations": [".pylon/memory/active.md", ".pylon/skills/active.md"],
+    "required_events": ["candidate_created:pending_review"],
+    "cleanup_status": "completed"
+  }
+}

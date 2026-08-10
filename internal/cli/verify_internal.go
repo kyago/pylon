@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,105 +13,137 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/criteria"
+	"github.com/kyago/pylon/internal/fsutil"
 )
 
 type verificationCheck struct {
-	Name   string `json:"name"`
-	OK     bool   `json:"ok"`
-	Output string `json:"output"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind,omitempty"`
+	Command    string `json:"command,omitempty"`
+	OK         bool   `json:"ok"`
+	ExitCode   int    `json:"exit_code"`
+	TimedOut   bool   `json:"timed_out,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Output     string `json:"output"`
 }
 
 type verificationResult struct {
-	OK        bool                `json:"ok"`
-	Checks    []verificationCheck `json:"checks"`
-	Skipped   bool                `json:"skipped,omitempty"`
-	Reason    string              `json:"reason,omitempty"`
-	Timestamp string              `json:"timestamp"`
+	OK             bool                `json:"ok"`
+	Checks         []verificationCheck `json:"checks"`
+	Skipped        bool                `json:"skipped,omitempty"`
+	Reason         string              `json:"reason,omitempty"`
+	CriteriaDigest string              `json:"criteria_digest,omitempty"`
+	IntegrityOK    bool                `json:"integrity_ok,omitempty"`
+	SourceChanged  bool                `json:"source_changed,omitempty"`
+	Timestamp      string              `json:"timestamp"`
 }
 
 func newInternalCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "internal", Hidden: true}
 	cmd.AddCommand(newInternalVerifyCmd())
+	cmd.AddCommand(newInternalCriteriaCmd())
+	cmd.AddCommand(newInternalEvaluatorCmd())
+	cmd.AddCommand(newInternalStateCmd())
+	cmd.AddCommand(newInternalTrajectoryCmd())
+	cmd.AddCommand(newInternalCorpusCmd())
+	cmd.AddCommand(newInternalCuratorCmd())
 	return cmd
 }
 
 func newInternalVerifyCmd() *cobra.Command {
 	var workDir, configPath, outputPath string
+	var snapshotPath, manifestPath, liveConfigPath string
 	cmd := &cobra.Command{
 		Use:          "verify",
 		Short:        "Run project verification commands",
 		Hidden:       true,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			steps, skipped, err := loadVerificationSteps(workDir, configPath)
+			var steps []config.NamedVerifyStep
+			var skipped bool
+			result := verificationResult{Checks: []verificationCheck{}, Timestamp: time.Now().UTC().Format(time.RFC3339)}
+
+			if snapshotPath != "" {
+				snapshot, err := criteria.Load(snapshotPath)
+				if err != nil {
+					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
+				}
+				result.CriteriaDigest = snapshot.Digest
+				if manifestPath == "" {
+					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("--manifest is required with --snapshot"))
+				}
+				if err := criteria.ValidateManifest(manifestPath, snapshotPath, snapshot); err != nil {
+					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
+				}
+				result.IntegrityOK = true
+				steps = snapshot.Verification
+				changed, actualDigest, err := criteria.LiveSourceChanged(snapshot, liveConfigPath)
+				if err != nil {
+					return failVerification(cmd, outputPath, manifestPath, result, "criteria_source_check_failed", err)
+				}
+				result.SourceChanged = changed
+				if changed {
+					if err := recordCriteriaEvent(manifestPath, criteria.Event{
+						Type:     "criteria_source_changed",
+						Expected: snapshot.Source.Digest,
+						Actual:   actualDigest,
+						Message:  "live verification config changed after criteria snapshot",
+					}); err != nil {
+						return failVerification(cmd, outputPath, manifestPath, result, "criteria_event_write_failed", err)
+					}
+				}
+			} else {
+				var err error
+				steps, skipped, err = loadVerificationSteps(workDir, configPath)
+				if err != nil {
+					return err
+				}
+			}
+
+			executed, err := executeVerification(workDir, steps, time.Now)
 			if err != nil {
 				return err
 			}
-			result, err := executeVerification(workDir, steps, time.Now)
-			if err != nil {
-				return err
-			}
-			result.Skipped = skipped
-			// 검증할 것이 하나도 없으면 통과로 보고하지 않는다. 조용한 초록불은
-			// 검증 실패보다 나쁘다 — 호출자가 잘못된 디렉토리를 가리켜도 알 수 없다.
+			executed.Skipped = skipped
+			executed.CriteriaDigest = result.CriteriaDigest
+			executed.IntegrityOK = result.IntegrityOK
+			executed.SourceChanged = result.SourceChanged
 			if len(steps) == 0 {
-				result.OK = false
+				executed.OK = false
 				if skipped {
-					result.Reason = fmt.Sprintf("검증 설정을 찾을 수 없습니다: %s 를 작성하거나 --config로 올바른 경로를 지정하세요 (workdir: %s)", configPath, workDir)
+					executed.Reason = fmt.Sprintf("검증 설정을 찾을 수 없습니다: %s 를 작성하거나 --config로 올바른 경로를 지정하세요 (workdir: %s)", configPath, workDir)
 				} else {
-					result.Reason = fmt.Sprintf("verify.yml에 실행 가능한 검증 명령이 없습니다: %s", configPath)
+					executed.Reason = fmt.Sprintf("verify.yml에 실행 가능한 검증 명령이 없습니다: %s", configPath)
 				}
 			}
-			data, err := json.Marshal(result)
-			if err != nil {
-				return err
+			if executed.SourceChanged {
+				executed.OK = false
+				executed.Reason = "live verification config changed after criteria snapshot; snapshot commands were executed but the run must be re-approved"
+				executed.Checks = append(executed.Checks, verificationCheck{
+					Name:     "criteria_source_unchanged",
+					Kind:     "integrity",
+					OK:       false,
+					ExitCode: 1,
+					Output:   executed.Reason,
+				})
 			}
-			if outputPath != "" {
-				if err := os.WriteFile(outputPath, append(data, '\n'), 0o644); err != nil {
-					return fmt.Errorf("failed to write verification result: %w", err)
-				}
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), string(data))
-			if !result.OK {
-				if result.Reason != "" {
-					return errors.New(result.Reason)
-				}
-				return errors.New("verification failed")
-			}
-			return nil
+			return emitVerificationResult(cmd, outputPath, executed)
 		},
 	}
 	cmd.Flags().StringVar(&workDir, "workdir", "", "project working directory")
-	cmd.Flags().StringVar(&configPath, "config", "", "verify.yml path")
+	cmd.Flags().StringVar(&configPath, "config", "", "legacy live verify.yml path")
+	cmd.Flags().StringVar(&snapshotPath, "snapshot", "", "criteria snapshot path")
+	cmd.Flags().StringVar(&manifestPath, "manifest", "", "run manifest bound to the criteria snapshot")
+	cmd.Flags().StringVar(&liveConfigPath, "live-config", "", "live verify.yml path used only for change detection")
 	cmd.Flags().StringVar(&outputPath, "output", "", "verification result path")
 	_ = cmd.MarkFlagRequired("workdir")
 	return cmd
 }
 
 func loadVerificationSteps(workDir, configPath string) ([]config.NamedVerifyStep, bool, error) {
-	if configPath == "" {
-		configPath = filepath.Join(workDir, ".pylon", "verify.yml")
-	}
-	if _, err := os.Stat(configPath); err == nil {
-		verifyConfig, err := config.LoadVerifyConfig(configPath)
-		if err != nil {
-			return nil, false, err
-		}
-		return verifyConfig.OrderedSteps(), false, nil
-	} else if !os.IsNotExist(err) {
-		return nil, false, fmt.Errorf("failed to inspect verify config: %w", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(workDir, "go.mod")); err == nil {
-		return []config.NamedVerifyStep{
-			{Name: "build", Command: "go build ./...", Timeout: "5m"},
-			{Name: "vet", Command: "go vet ./...", Timeout: "5m"},
-			{Name: "test", Command: "go test ./...", Timeout: "10m"},
-		}, false, nil
-	} else if !os.IsNotExist(err) {
-		return nil, false, fmt.Errorf("failed to inspect Go project: %w", err)
-	}
-	return nil, true, nil
+	steps, skipped, _, err := criteria.ResolveVerification(workDir, configPath)
+	return steps, skipped, err
 }
 
 func executeVerification(workDir string, steps []config.NamedVerifyStep, now func() time.Time) (verificationResult, error) {
@@ -129,9 +160,10 @@ func executeVerification(workDir string, steps []config.NamedVerifyStep, now fun
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		command := exec.CommandContext(ctx, "bash", "-lc", step.Command)
 		command.Dir = workDir
-		// 살아남은 자식 프로세스가 출력 파이프를 물고 있어도 타임아웃 후 무한정 대기하지 않도록 한다.
 		command.WaitDelay = 2 * time.Second
+		startedAt := time.Now()
 		output, runErr := command.CombinedOutput()
+		duration := time.Since(startedAt)
 		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		cancel()
 
@@ -142,11 +174,82 @@ func executeVerification(workDir string, steps []config.NamedVerifyStep, now fun
 			}
 			outputText += "timed out after " + timeout.String()
 		}
-		check := verificationCheck{Name: step.Name, OK: runErr == nil && !timedOut, Output: outputText}
+		exitCode := 0
+		if runErr != nil {
+			exitCode = 1
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			}
+		}
+		kind := step.Kind
+		if kind == "" {
+			kind = config.VerifyKindDeterministic
+		}
+		check := verificationCheck{
+			Name:       step.Name,
+			Kind:       kind,
+			Command:    step.Command,
+			OK:         runErr == nil && !timedOut,
+			ExitCode:   exitCode,
+			TimedOut:   timedOut,
+			DurationMS: duration.Milliseconds(),
+			Output:     outputText,
+		}
 		if !check.OK {
 			result.OK = false
 		}
 		result.Checks = append(result.Checks, check)
 	}
 	return result, nil
+}
+
+func failVerification(cmd *cobra.Command, outputPath, manifestPath string, result verificationResult, eventType string, cause error) error {
+	result.OK = false
+	result.IntegrityOK = false
+	result.Reason = cause.Error()
+	if result.Timestamp == "" {
+		result.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	if manifestPath != "" {
+		if err := recordCriteriaEvent(manifestPath, criteria.Event{Type: eventType, Message: cause.Error()}); err != nil {
+			cause = errors.Join(cause, fmt.Errorf("failed to record criteria event: %w", err))
+			result.Reason = cause.Error()
+		}
+	}
+	if err := writeVerificationResult(cmd, outputPath, result); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
+}
+
+func emitVerificationResult(cmd *cobra.Command, outputPath string, result verificationResult) error {
+	if err := writeVerificationResult(cmd, outputPath, result); err != nil {
+		return err
+	}
+	if !result.OK {
+		if result.Reason != "" {
+			return errors.New(result.Reason)
+		}
+		return errors.New("verification failed")
+	}
+	return nil
+}
+
+func writeVerificationResult(cmd *cobra.Command, outputPath string, result verificationResult) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	if outputPath != "" {
+		if err := fsutil.WriteFileAtomic(outputPath, append(data, '\n'), 0644); err != nil {
+			return fmt.Errorf("failed to write verification result: %w", err)
+		}
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), string(data))
+	return nil
+}
+
+func recordCriteriaEvent(manifestPath string, event criteria.Event) error {
+	return criteria.AppendEvent(filepath.Join(filepath.Dir(manifestPath), "criteria-events.jsonl"), event)
 }

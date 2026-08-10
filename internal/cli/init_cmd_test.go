@@ -51,6 +51,17 @@ func TestRunInit_DoesNotGitInitWorkspace(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".git")); err == nil {
 		t.Errorf("expected workspace to NOT be a git repo, but .git/ exists")
 	}
+	configData, err := os.ReadFile(filepath.Join(tmp, ".pylon", "config.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configText := string(configData)
+	if !strings.Contains(configText, `version: "0.2"`) || !strings.Contains(configText, "provider: auto") {
+		t.Fatalf("init did not create provider-neutral config:\n%s", configText)
+	}
+	if strings.Contains(configText, "backend:") {
+		t.Fatalf("new config must not emit deprecated backend:\n%s", configText)
+	}
 }
 
 func TestInitSetsUpTrackedMemoryDir(t *testing.T) {

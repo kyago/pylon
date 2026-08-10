@@ -103,7 +103,7 @@ func suggestAgents(stack techStack) []agentSuggestion {
 			content: `---
 name: backend-dev
 role: Backend Developer
-backend: claude-code
+provider: auto
 maxTurns: 50
 permissionMode: acceptEdits
 ---
@@ -128,7 +128,7 @@ Implement backend features, APIs, and business logic in Go.
 				content: fmt.Sprintf(`---
 name: frontend-dev
 role: Frontend Developer
-backend: claude-code
+provider: auto
 maxTurns: 50
 permissionMode: acceptEdits
 ---
@@ -150,7 +150,7 @@ Implement UI components, pages, and frontend logic.
 			content: fmt.Sprintf(`---
 name: fullstack-dev
 role: Fullstack Developer
-backend: claude-code
+provider: auto
 maxTurns: 50
 permissionMode: acceptEdits
 ---
@@ -172,7 +172,7 @@ Implement features across the full stack.
 			content: fmt.Sprintf(`---
 name: backend-dev
 role: Backend Developer
-backend: claude-code
+provider: auto
 maxTurns: 50
 permissionMode: acceptEdits
 ---
@@ -197,7 +197,7 @@ Implement backend features, APIs, and business logic in Python.
 			content: `---
 name: backend-dev
 role: Backend Developer
-backend: claude-code
+provider: auto
 maxTurns: 50
 permissionMode: acceptEdits
 ---
@@ -221,7 +221,7 @@ Implement features and business logic in Rust.
 			content: `---
 name: developer
 role: Developer
-backend: claude-code
+provider: auto
 maxTurns: 50
 permissionMode: acceptEdits
 ---
@@ -242,7 +242,7 @@ Implement features and business logic.
 			content: `---
 name: qa
 role: QA Engineer
-backend: claude-code
+provider: auto
 maxTurns: 30
 permissionMode: acceptEdits
 ---
@@ -303,6 +303,7 @@ func generateVerifyYML(stack techStack) string {
 	if stack.LintTool != "" {
 		b.WriteString(fmt.Sprintf("  - name: lint\n    command: %s\n    timeout: 3m\n", stack.LintTool))
 	}
+	b.WriteString("\n# Optional acceptance checks captured in the run criteria snapshot.\nheld_out: []\n")
 
 	return b.String()
 }

@@ -2,6 +2,10 @@
 name: tracer
 description: Traces root causes through evidence-driven causal analysis with competing hypotheses
 role: Causal Tracer
+evaluationRole: investigation
+accessMode: read_only
+inputPolicy: scoped_context
+requiredCapabilities: [read_files]
 ---
 
 # Causal Tracer

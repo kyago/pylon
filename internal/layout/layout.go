@@ -35,6 +35,16 @@ func HistoryDir(root string) string {
 	return filepath.Join(PylonDir(root), "history")
 }
 
+// LearningDir returns the approval-gated learning workflow root.
+func LearningDir(root string) string {
+	return filepath.Join(PylonDir(root), "learning")
+}
+
+// LearningCandidatesDir returns the curator candidate queue directory.
+func LearningCandidatesDir(root string) string {
+	return filepath.Join(LearningDir(root), "candidates")
+}
+
 // CommandsDir returns the pipeline command directory (.pylon/commands).
 func CommandsDir(root string) string {
 	return filepath.Join(PylonDir(root), "commands")

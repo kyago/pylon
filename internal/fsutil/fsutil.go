@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -23,6 +24,37 @@ func AcquireLock(path string, timeout time.Duration) (func(), error) {
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("잠금 시간 초과: %s (실행 중인 pylon 프로세스가 없다면 이 디렉토리를 제거한 뒤 다시 시도하세요)", path)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// AcquireFileLock obtains a process-scoped advisory file lock. The kernel
+// releases the lock automatically if the process exits unexpectedly.
+func AcquireFileLock(path string, timeout time.Duration) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return func() {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+			}, nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			_ = file.Close()
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			_ = file.Close()
+			return nil, fmt.Errorf("파일 잠금 시간 초과: %s", path)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

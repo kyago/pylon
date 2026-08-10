@@ -2,6 +2,12 @@
 name: critic
 description: Critically evaluates plans and proposals, identifying risks and weaknesses
 role: Plan Critic
+evaluationRole: decision
+accessMode: read_only
+inputPolicy: isolated_evidence
+requiredCapabilities: [read_files, structured_output, tool_restrictions]
+tools: [Read, Grep, Glob]
+disallowedTools: [Edit, Write, NotebookEdit, Bash]
 ---
 
 # Plan Critic

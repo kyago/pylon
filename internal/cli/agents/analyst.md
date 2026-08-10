@@ -2,6 +2,10 @@
 name: analyst
 description: Elicits and clarifies requirements, translating stakeholder needs into actionable specifications
 role: Requirements Analyst
+evaluationRole: investigation
+accessMode: read_only
+inputPolicy: scoped_context
+requiredCapabilities: [read_files]
 ---
 
 # Requirements Analyst

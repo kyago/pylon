@@ -20,13 +20,20 @@ type VerifyConfig struct {
 	Test     *VerifyStep       `yaml:"test"`
 	Lint     *VerifyStep       `yaml:"lint"`
 	Commands []NamedVerifyStep `yaml:"commands"`
+	HeldOut  []NamedVerifyStep `yaml:"held_out"`
 }
+
+const (
+	VerifyKindDeterministic = "deterministic"
+	VerifyKindHeldOut       = "held_out"
+)
 
 // NamedVerifyStep is a verify step with its category name.
 type NamedVerifyStep struct {
-	Name    string `yaml:"name"`
-	Command string `yaml:"command"`
-	Timeout string `yaml:"timeout"`
+	Name    string `yaml:"name" json:"name"`
+	Kind    string `yaml:"-" json:"kind"`
+	Command string `yaml:"command" json:"command"`
+	Timeout string `yaml:"timeout" json:"timeout"`
 }
 
 // LoadVerifyConfig reads and parses a verify.yml file.
@@ -57,6 +64,7 @@ func (vc *VerifyConfig) OrderedSteps() []NamedVerifyStep {
 			if step.Timeout == "" {
 				step.Timeout = "60s"
 			}
+			step.Kind = VerifyKindDeterministic
 			steps = append(steps, step)
 		}
 		return steps
@@ -83,10 +91,26 @@ func (vc *VerifyConfig) OrderedSteps() []NamedVerifyStep {
 		}
 		steps = append(steps, NamedVerifyStep{
 			Name:    s.name,
+			Kind:    VerifyKindDeterministic,
 			Command: s.step.Command,
 			Timeout: timeout,
 		})
 	}
 
+	return steps
+}
+
+func (vc *VerifyConfig) OrderedHeldOutSteps() []NamedVerifyStep {
+	steps := make([]NamedVerifyStep, 0, len(vc.HeldOut))
+	for _, step := range vc.HeldOut {
+		if step.Command == "" {
+			continue
+		}
+		if step.Timeout == "" {
+			step.Timeout = "60s"
+		}
+		step.Kind = VerifyKindHeldOut
+		steps = append(steps, step)
+	}
 	return steps
 }

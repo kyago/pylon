@@ -298,6 +298,26 @@ func (m *Manager) Show(ref string) (*Manifest, []string, error) {
 	return manifest, files, nil
 }
 
+// Validate verifies that a checkpoint contains exactly the artifacts recorded
+// by its manifest and that both per-file and combined digests still match.
+func (m *Manager) Validate(ref string) (*Manifest, error) {
+	dir, err := m.resolveRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	manifest, err := readManifest(dir)
+	if err != nil {
+		return nil, err
+	}
+	if manifest == nil {
+		return nil, fmt.Errorf("manifest.json이 없습니다: %s", ref)
+	}
+	if err := validateDigestTree(dir, *manifest); err != nil {
+		return nil, fmt.Errorf("checkpoint integrity failure (%s): %w", ref, err)
+	}
+	return manifest, nil
+}
+
 // Diff runs POSIX diff -ru between two checkpoint snapshots.
 func (m *Manager) Diff(from, to string) (string, error) {
 	fromDir, err := m.resolveRef(from)

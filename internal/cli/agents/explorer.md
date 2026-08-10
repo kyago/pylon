@@ -2,6 +2,10 @@
 name: explorer
 description: Explores and maps codebases to answer structural and navigational questions
 role: Codebase Explorer
+evaluationRole: investigation
+accessMode: read_only
+inputPolicy: scoped_context
+requiredCapabilities: [read_files]
 ---
 
 # Codebase Explorer

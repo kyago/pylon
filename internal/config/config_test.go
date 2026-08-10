@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseConfig_FullConfig(t *testing.T) {
@@ -180,11 +182,63 @@ func TestParseConfig_VersionOnly(t *testing.T) {
 	}
 
 	// All defaults should be applied
-	if cfg.Runtime.Backend != "claude-code" {
-		t.Errorf("expected default backend claude-code, got %q", cfg.Runtime.Backend)
+	if cfg.Runtime.Provider != "auto" || cfg.Runtime.Backend != "" {
+		t.Errorf("expected default provider auto without backend alias, got provider=%q backend=%q", cfg.Runtime.Provider, cfg.Runtime.Backend)
 	}
 	if cfg.Runtime.MaxConcurrent != 5 {
 		t.Errorf("expected default max_concurrent 5, got %d", cfg.Runtime.MaxConcurrent)
+	}
+}
+
+func TestRuntimeConfigEffectiveProviderCompatibility(t *testing.T) {
+	tests := []struct {
+		name       string
+		runtime    RuntimeConfig
+		provider   string
+		deprecated bool
+	}{
+		{name: "provider wins", runtime: RuntimeConfig{Provider: "provider-b", Backend: "claude-code"}, provider: "provider-b"},
+		{name: "backend alias", runtime: RuntimeConfig{Backend: "claude-code"}, provider: "claude-code", deprecated: true},
+		{name: "implicit auto", runtime: RuntimeConfig{}, provider: "auto"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider, deprecated := tt.runtime.EffectiveProvider()
+			if provider != tt.provider || deprecated != tt.deprecated {
+				t.Fatalf("EffectiveProvider() = %q, %v; want %q, %v", provider, deprecated, tt.provider, tt.deprecated)
+			}
+		})
+	}
+}
+
+func TestParseConfigProviderNeutralRuntime(t *testing.T) {
+	data := []byte(`version: "0.2"
+runtime:
+  provider: provider-b
+  execution_mode: managed-adapter
+providers:
+  provider-b:
+    enabled: auto
+    command: provider-b
+routing:
+  fallback: serial
+  require_resume_for_background: false
+`)
+
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runtime.Provider != "provider-b" || cfg.Runtime.ExecutionMode != "managed-adapter" {
+		t.Fatalf("runtime = %+v", cfg.Runtime)
+	}
+	providerConfig, ok := cfg.Providers["provider-b"]
+	if !ok || providerConfig.Enabled != "auto" || providerConfig.Command != "provider-b" {
+		t.Fatalf("provider config = %+v, exists=%v", providerConfig, ok)
+	}
+	if cfg.Routing.Fallback != "serial" || cfg.Routing.RequireResumeForBackground {
+		t.Fatalf("routing = %+v", cfg.Routing)
 	}
 }
 
@@ -426,6 +480,36 @@ workflow:
 
 	if !addedSet["skills"] {
 		t.Errorf("expected 'skills' in added list, got: %v", added)
+	}
+}
+
+func TestSyncConfigDefaultsDoesNotRewriteBackendAliasToProvider(t *testing.T) {
+	content := []byte(`version: "0.1"
+runtime:
+  backend: claude-code
+  max_concurrent: 5
+  max_turns: 50
+  permission_mode: acceptEdits
+`)
+
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := SyncConfigDefaults(path); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(updated, &raw); err != nil {
+		t.Fatal(err)
+	}
+	runtime := raw["runtime"].(map[string]any)
+	if _, exists := runtime["provider"]; exists {
+		t.Fatalf("deprecated backend alias was rewritten to provider: %s", updated)
 	}
 }
 

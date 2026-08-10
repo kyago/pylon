@@ -2,6 +2,12 @@
 name: fact-checker
 description: Verifies claims and cross-validates information across sources for accuracy
 role: Fact Checker & Cross-Validator
+evaluationRole: decision
+accessMode: read_only
+inputPolicy: isolated_evidence
+requiredCapabilities: [read_files, structured_output, tool_restrictions]
+tools: [Read, Grep, Glob]
+disallowedTools: [Edit, Write, NotebookEdit, Bash]
 domain: research
 skills:
   - research-methodology

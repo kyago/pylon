@@ -2,6 +2,12 @@
 name: content-reviewer
 description: Performs QA review of content for accuracy, tone, and quality standards
 role: Content QA Reviewer
+evaluationRole: decision
+accessMode: read_only
+inputPolicy: isolated_evidence
+requiredCapabilities: [read_files, structured_output, tool_restrictions]
+tools: [Read, Grep, Glob]
+disallowedTools: [Edit, Write, NotebookEdit, Bash]
 domain: content
 skills:
   - content-writing-guide

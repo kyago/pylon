@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -14,14 +15,16 @@ import (
 // Config represents the full pylon workspace configuration.
 // Spec Reference: Section 16 "Full Schema"
 type Config struct {
-	Version  string                   `yaml:"version"`
-	Runtime  RuntimeConfig            `yaml:"runtime"`
-	Git      GitConfig                `yaml:"git"`
-	Projects map[string]ProjectConfig `yaml:"projects"`
-	Wiki     WikiConfig               `yaml:"wiki"`
-	Memory   MemoryConfig             `yaml:"memory"`
-	Workflow WorkflowConfig           `yaml:"workflow"`
-	Skills   SkillsConfig             `yaml:"skills"`
+	Version   string                    `yaml:"version"`
+	Runtime   RuntimeConfig             `yaml:"runtime"`
+	Providers map[string]ProviderConfig `yaml:"providers,omitempty"`
+	Routing   RoutingConfig             `yaml:"routing,omitempty"`
+	Git       GitConfig                 `yaml:"git"`
+	Projects  map[string]ProjectConfig  `yaml:"projects"`
+	Wiki      WikiConfig                `yaml:"wiki"`
+	Memory    MemoryConfig              `yaml:"memory"`
+	Workflow  WorkflowConfig            `yaml:"workflow"`
+	Skills    SkillsConfig              `yaml:"skills"`
 }
 
 // SkillsConfig defines agent skill management settings.
@@ -34,7 +37,9 @@ type SkillsConfig struct {
 // RuntimeConfig defines agent runtime settings.
 // Spec Reference: Section 16 "runtime"
 type RuntimeConfig struct {
-	Backend               string            `yaml:"backend"`
+	Provider              string            `yaml:"provider,omitempty"`
+	Backend               string            `yaml:"backend,omitempty"`
+	ExecutionMode         string            `yaml:"execution_mode,omitempty"`
 	MaxConcurrent         int               `yaml:"max_concurrent"`
 	MaxPipelines          int               `yaml:"max_pipelines"`
 	TaskTimeout           string            `yaml:"task_timeout"`
@@ -44,6 +49,26 @@ type RuntimeConfig struct {
 	AutoApproveTaskReview bool              `yaml:"auto_approve_task_review"`
 	Env                   map[string]string `yaml:"env"`
 	WorkerLimits          map[string]int    `yaml:"worker_limits"` // model → max concurrent
+}
+
+type ProviderConfig struct {
+	Enabled string `yaml:"enabled,omitempty"`
+	Command string `yaml:"command,omitempty"`
+}
+
+type RoutingConfig struct {
+	Fallback                   string `yaml:"fallback,omitempty"`
+	RequireResumeForBackground bool   `yaml:"require_resume_for_background,omitempty"`
+}
+
+func (runtime RuntimeConfig) EffectiveProvider() (string, bool) {
+	if providerName := strings.TrimSpace(runtime.Provider); providerName != "" {
+		return providerName, false
+	}
+	if backendName := strings.TrimSpace(runtime.Backend); backendName != "" {
+		return backendName, true
+	}
+	return "auto", false
 }
 
 // GitConfig defines git integration settings.
@@ -159,6 +184,15 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 	defaultBytes, _ := yaml.Marshal(cfg)
 	var defaultMap map[string]any
 	_ = yaml.Unmarshal(defaultBytes, &defaultMap)
+	if rawRuntime, ok := rawMap["runtime"].(map[string]any); ok {
+		if _, hasBackend := rawRuntime["backend"]; hasBackend {
+			if _, hasProvider := rawRuntime["provider"]; !hasProvider {
+				if defaultRuntime, ok := defaultMap["runtime"].(map[string]any); ok {
+					delete(defaultRuntime, "provider")
+				}
+			}
+		}
+	}
 
 	// Sort keys for deterministic output
 	sortedKeys := make([]string, 0, len(defaultMap))
@@ -306,6 +340,9 @@ func ParseConfig(data []byte) (*Config, error) {
 			PreloadToAgents:       true,
 			ProgressiveDisclosure: true,
 		},
+		Routing: RoutingConfig{
+			RequireResumeForBackground: true,
+		},
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
@@ -327,8 +364,11 @@ func ParseConfig(data []byte) (*Config, error) {
 // Spec Reference: Section 16 default values
 func applyDefaults(cfg *Config) {
 	// Runtime defaults
-	if cfg.Runtime.Backend == "" {
-		cfg.Runtime.Backend = "claude-code"
+	if cfg.Runtime.Provider == "" && cfg.Runtime.Backend == "" {
+		cfg.Runtime.Provider = "auto"
+	}
+	if cfg.Runtime.ExecutionMode == "" {
+		cfg.Runtime.ExecutionMode = "session-native"
 	}
 	if cfg.Runtime.MaxConcurrent == 0 {
 		cfg.Runtime.MaxConcurrent = 5
@@ -350,6 +390,9 @@ func applyDefaults(cfg *Config) {
 			"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
 			"CLAUDE_CODE_EFFORT_LEVEL":        "high",
 		}
+	}
+	if cfg.Routing.Fallback == "" {
+		cfg.Routing.Fallback = "serial"
 	}
 
 	// Git defaults

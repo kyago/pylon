@@ -18,10 +18,13 @@ description: "빌드/테스트/린트 검증 실행"
 .pylon/scripts/bash/run-verification.sh "$ARGUMENTS" --git-root <프로젝트 상대경로>
 ```
 
+`$ARGUMENTS` repo pipeline에는 worker 실행 전에 생성된 `criteria.json`과 digest를 가진 `status.json`이
+있어야 합니다. 이 명령은 live `verify.yml`을 실행 기준으로 사용하지 않습니다.
+
 ## 결과 분석
 
-`{"ok":false, "reason":"검증 설정을 찾을 수 없습니다..."}`인 경우 검증이 **수행되지 않은** 것입니다.
-통과로 처리하지 말고 `.pylon/verify.yml`을 작성하거나 `--git-root`를 바로잡아 재실행합니다.
+snapshot/manifest 무결성 실패 또는 snapshot 이후 live config 변경은 fail-closed입니다. 기준 변경이
+필요하면 현재 run의 snapshot을 덮어쓰지 말고 새 run에서 다시 승인·생성합니다.
 
 검증 실패 시:
 1. `verification.json`의 실패 항목을 분석합니다

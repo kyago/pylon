@@ -224,6 +224,86 @@ role: Test Agent
 	}
 }
 
+func TestParseAgentDataProviderAndCapabilities(t *testing.T) {
+	data := []byte(`---
+name: verifier
+role: Verifier
+provider: auto
+requiredCapabilities:
+  - read_files
+  - run_shell
+---
+
+# Verifier
+`)
+	agent, err := ParseAgentData(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerName, deprecated := agent.EffectiveProvider()
+	if providerName != "auto" || deprecated {
+		t.Fatalf("effective provider = %q, deprecated=%v", providerName, deprecated)
+	}
+	capabilities, err := agent.RequiredCapabilitySet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !capabilities.ReadFiles || !capabilities.RunShell || capabilities.EditFiles {
+		t.Fatalf("capabilities = %+v", capabilities)
+	}
+}
+
+func TestDecisionEvaluatorPolicyRejectsWriteAndShell(t *testing.T) {
+	data := []byte(`---
+name: verifier
+role: Verifier
+evaluationRole: decision
+accessMode: read_only
+inputPolicy: isolated_evidence
+tools: [Read, Bash]
+---
+Verifier
+`)
+	if _, err := ParseAgentData(data); err == nil {
+		t.Fatal("decision evaluator allowing Bash was accepted")
+	}
+}
+
+func TestAgentConfigDecisionDefaultsEnforceIsolation(t *testing.T) {
+	cfg := &Config{Runtime: RuntimeConfig{Provider: "claude-code", PermissionMode: "bypassPermissions"}}
+	agent := &AgentConfig{
+		Name:                 "verifier",
+		Role:                 "Verifier",
+		RequiredCapabilities: []string{"run_shell", "edit_files"},
+		Tools:                []string{"Read", "Bash", "Write"},
+	}
+	agent.ResolveDefaults(cfg)
+	if !agent.CanIssueFinalVerdict() || agent.AccessMode != AccessModeReadOnly || agent.InputPolicy != InputPolicyIsolatedEvidence {
+		t.Fatalf("decision policy = %+v", agent)
+	}
+	if agent.PermissionMode != "default" || agent.Isolation != "readonly" {
+		t.Fatalf("decision execution boundary = permission %q isolation %q", agent.PermissionMode, agent.Isolation)
+	}
+	capabilities, err := agent.RequiredCapabilitySet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !capabilities.ReadFiles || !capabilities.StructuredOutput || !capabilities.ToolRestrictions || capabilities.RunShell || capabilities.EditFiles {
+		t.Fatalf("decision capabilities = %+v", capabilities)
+	}
+	if len(agent.Tools) != 1 || agent.Tools[0] != "Read" {
+		t.Fatalf("decision tools = %v", agent.Tools)
+	}
+}
+
+func TestInvestigationAgentCannotIssueFinalVerdict(t *testing.T) {
+	agent := &AgentConfig{Name: "explorer", Role: "Explorer"}
+	agent.ResolveDefaults(&Config{})
+	if agent.EvaluationRole != EvaluationRoleInvestigation || agent.CanIssueFinalVerdict() {
+		t.Fatalf("investigation policy = %+v", agent)
+	}
+}
+
 func TestParseAgentData_MissingClosingDelimiter(t *testing.T) {
 	data := []byte(`---
 name: broken
@@ -239,7 +319,7 @@ role: Broken Agent
 func TestAgentConfig_ResolveDefaults(t *testing.T) {
 	cfg := &Config{
 		Runtime: RuntimeConfig{
-			Backend:        "claude-code",
+			Provider:       "claude-code",
 			MaxTurns:       50,
 			PermissionMode: "acceptEdits",
 			Env: map[string]string{
@@ -256,12 +336,12 @@ func TestAgentConfig_ResolveDefaults(t *testing.T) {
 		expected string
 	}{
 		{
-			name:  "inherits backend from config",
+			name:  "inherits provider from config",
 			agent: &AgentConfig{Name: "test", Role: "Test"},
 			checkFn: func(a *AgentConfig) bool {
-				return a.Backend == "claude-code"
+				return a.Provider == "claude-code"
 			},
-			expected: "backend should be claude-code",
+			expected: "provider should be claude-code",
 		},
 		{
 			name:  "inherits maxTurns from config",
@@ -288,12 +368,13 @@ func TestAgentConfig_ResolveDefaults(t *testing.T) {
 			expected: "isolation should be worktree",
 		},
 		{
-			name:  "agent backend overrides config",
+			name:  "agent backend alias overrides config",
 			agent: &AgentConfig{Name: "test", Role: "Test", Backend: "openai"},
 			checkFn: func(a *AgentConfig) bool {
-				return a.Backend == "openai"
+				provider, deprecated := a.EffectiveProvider()
+				return provider == "openai" && deprecated
 			},
-			expected: "backend should remain openai",
+			expected: "backend alias should remain effective",
 		},
 		{
 			name:  "agent maxTurns overrides config",

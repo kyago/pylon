@@ -2,6 +2,10 @@
 name: researcher
 description: Conducts deep, multi-hop research investigations across diverse sources
 role: Deep Researcher
+evaluationRole: investigation
+accessMode: read_only
+inputPolicy: scoped_context
+requiredCapabilities: [read_files]
 ---
 
 # Deep Researcher

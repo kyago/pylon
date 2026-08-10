@@ -3,10 +3,69 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kyago/pylon/internal/config"
 )
+
+func TestPipelineCommandUsesRepoOwnedBranches(t *testing.T) {
+	content, err := embeddedCommands.ReadFile("commands/pl-pipeline.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(content)
+	if strings.Contains(command, `BRANCH=$(echo "$INIT_RESULT" | jq -r '.branch')`) {
+		t.Fatal("root pipeline still reads a global branch from init output")
+	}
+	for _, required := range []string{
+		`--pipeline-dir "$ROOT_PIPELINE_DIR"`,
+		`.sub_pipelines[] | select(.repo == $repo) | .branch`,
+		`--terminal-phase completed`,
+		`pylon internal trajectory failure`,
+		`--terminal-phase failed`,
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("pipeline command is missing repo-owned lifecycle instruction %q", required)
+		}
+	}
+}
+
+func TestExecuteCommandRequiresStructuredTaskReports(t *testing.T) {
+	content, err := embeddedCommands.ReadFile("commands/pl-execute.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(content)
+	for _, required := range []string{
+		`pylon internal trajectory task-report`,
+		`hypotheses_rejected`,
+		`remaining_unknowns`,
+		`attempts/$ATTEMPT/task-report.json`,
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("execute command is missing trajectory instruction %q", required)
+		}
+	}
+}
+
+func TestPipelineOnlyCreatesCuratorCandidatesAfterCheckpoint(t *testing.T) {
+	content, err := embeddedCommands.ReadFile("commands/pl-pipeline.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(content)
+	checkpoint := strings.Index(command, `pylon history checkpoint --pipeline "$PIPELINE_ID" --phase completed`)
+	curator := strings.Index(command, `pylon internal curator propose`)
+	if checkpoint < 0 || curator < 0 || curator < checkpoint {
+		t.Fatalf("curator candidate must follow finalized checkpoint: checkpoint=%d curator=%d", checkpoint, curator)
+	}
+	for _, required := range []string{"active 파일을 자동 수정하지", "curator review", "curator gate"} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("pipeline command is missing curator guard %q", required)
+		}
+	}
+}
 
 // 소유권 계약: 내장 리소스와 같은 이름의 파일은 pylon 소유이므로 내장 버전으로 되돌아간다.
 func TestSyncPylonResources_RevertsShippedFiles(t *testing.T) {

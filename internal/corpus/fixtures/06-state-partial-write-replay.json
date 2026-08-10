@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "state-partial-write-replay",
+  "category": "state",
+  "description": "An event committed before a materialization crash reconstructs derived state on replay.",
+  "required_capabilities": [],
+  "input": {"crash_after_event_fsync": true, "materialized_state_missing": true},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "succeeded",
+    "task_statuses": {"T001": "running"},
+    "required_artifacts": ["events.jsonl", "tasks/T001/state.json"],
+    "required_events": ["event_replayed", "state_repaired"],
+    "cleanup_status": "preserved",
+    "runtime_preserved": true
+  }
+}

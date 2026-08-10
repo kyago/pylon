@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "failure-history-rejected-hypotheses",
+  "category": "failure_history",
+  "description": "Three failed attempts preserve evidence, rejected hypotheses, and remaining uncertainty in history.",
+  "required_capabilities": [],
+  "input": {"attempts": 3, "terminal_cause": "test_failure", "rejected_hypotheses": 2},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "failed",
+    "task_statuses": {"T001": "failed"},
+    "required_artifacts": ["failure-record.json", "task-reports-summary.json", "failure-records-summary.json"],
+    "required_events": ["task_retried", "failure_recorded", "failed_checkpoint_created"],
+    "cleanup_status": "preserved",
+    "runtime_preserved": true
+  }
+}

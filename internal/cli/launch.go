@@ -1,9 +1,9 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -11,11 +11,15 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
+	"github.com/kyago/pylon/internal/provider"
 )
 
+var buildLaunchProviderCatalog = newProviderCatalog
+var replaceLaunchProcess = syscall.Exec
+
 // runLaunch is the main entry point when `pylon` is invoked without subcommands.
-// It generates .claude/ artifacts from .pylon/ (source of truth) and launches
-// Claude Code TUI directly via syscall.Exec.
+// It selects an interactive provider, materializes provider-owned resources from
+// .pylon/, and replaces the current process with the provider executable.
 func runLaunch() error {
 	// Step 1: Find workspace
 	root, err := resolveRoot()
@@ -36,45 +40,52 @@ func runLaunch() error {
 		projects = nil
 	}
 
-	// Step 4: Generate .claude/ directory structure
-	if err := generateClaudeDir(root, cfg, projects); err != nil {
-		return fmt.Errorf(".claude/ 생성 실패: %w", err)
-	}
-
-	// Ensure .claude/ and CLAUDE.md are in .gitignore
-	ensureGitignore(root)
-
-	// Step 5: Select permission mode
-	permMode, err := selectPermissionMode(cfg.Runtime.PermissionMode)
+	// Step 4: Select an interactive provider
+	catalog, err := buildLaunchProviderCatalog(cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("provider catalog 구성 실패: %w", err)
 	}
-
-	// Step 6: Launch Claude Code (replace process)
-	claudePath, err := exec.LookPath("claude")
+	entry, selection, err := catalog.selectInteractive(context.Background(), cfg)
 	if err != nil {
-		return fmt.Errorf("claude 실행 파일을 찾을 수 없습니다: %w", err)
+		return fmt.Errorf("interactive provider 선택 실패: %w", err)
 	}
 
-	args := append([]string{"claude"}, buildClaudeArgs(cfg, permMode)...)
-
-	// Build env with config overrides (deduplicated — config wins over existing)
-	envMap := make(map[string]string)
-	for _, e := range os.Environ() {
-		if k, v, ok := strings.Cut(e, "="); ok {
-			envMap[k] = v
+	// Step 5: Materialize provider-owned workspace resources
+	if entry.prepareWorkspace != nil {
+		if err := entry.prepareWorkspace(root, cfg, projects); err != nil {
+			return fmt.Errorf("provider %s workspace 준비 실패: %w", selection.Adapter.Name(), err)
 		}
 	}
-	for k, v := range cfg.Runtime.Env {
-		envMap[k] = v
-	}
-	env := make([]string, 0, len(envMap))
-	for k, v := range envMap {
-		env = append(env, k+"="+v)
+
+	// Ensure generated provider resources are ignored where applicable.
+	ensureGitignore(root)
+
+	// Step 6: Select provider permission mode
+	permissionMode := cfg.Runtime.PermissionMode
+	if entry.selectPermission != nil {
+		permissionMode, err = entry.selectPermission(permissionMode)
+		if err != nil {
+			return err
+		}
 	}
 
-	fmt.Println("Claude Code를 시작합니다...")
-	return syscall.Exec(claudePath, args, env)
+	// Step 7: Build and launch the provider process.
+	interactiveAdapter, ok := selection.Adapter.(provider.InteractiveAdapter)
+	if !ok {
+		return fmt.Errorf("provider %s does not support interactive launch", selection.Adapter.Name())
+	}
+	process, err := interactiveAdapter.PrepareInteractive(context.Background(), provider.InteractiveSpec{
+		MaxTurns:            cfg.Runtime.MaxTurns,
+		PermissionMode:      permissionMode,
+		Environment:         os.Environ(),
+		EnvironmentOverride: cfg.Runtime.Env,
+	})
+	if err != nil {
+		return fmt.Errorf("provider %s 실행 준비 실패: %w", selection.Adapter.Name(), err)
+	}
+
+	fmt.Printf("%s를 시작합니다...\n", process.DisplayName)
+	return replaceLaunchProcess(process.Executable, process.Args, process.Environment)
 }
 
 // openWorkspace finds the workspace root and loads config.
@@ -126,18 +137,6 @@ func selectPermissionMode(defaultMode string) (string, error) {
 	}
 
 	return selected, nil
-}
-
-// buildClaudeArgs constructs the claude CLI arguments as a string slice.
-func buildClaudeArgs(cfg *config.Config, permMode string) []string {
-	var args []string
-
-	if cfg.Runtime.MaxTurns > 0 {
-		args = append(args, "--max-turns", fmt.Sprintf("%d", cfg.Runtime.MaxTurns))
-	}
-	args = append(args, "--permission-mode", permMode)
-
-	return args
 }
 
 // generateClaudeDir creates/updates the .claude/ directory from .pylon/ source of truth.

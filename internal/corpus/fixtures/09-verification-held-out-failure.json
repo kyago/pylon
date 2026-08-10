@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "verification-held-out-failure",
+  "category": "verification",
+  "description": "A held-out acceptance check failure cannot be overridden by worker self-report.",
+  "required_capabilities": ["run_shell"],
+  "input": {"deterministic_checks_pass": true, "held_out_pass": false, "worker_claim": "success"},
+  "expected": {
+    "verdict": "fail",
+    "run_status": "failed",
+    "task_statuses": {"verify": "failed"},
+    "required_artifacts": ["verification.json"],
+    "required_events": ["held_out_check_failed"],
+    "cleanup_status": "preserved",
+    "runtime_preserved": true
+  }
+}

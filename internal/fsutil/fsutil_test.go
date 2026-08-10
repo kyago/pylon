@@ -2,7 +2,10 @@
 package fsutil
 
 import (
+	"bufio"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,6 +29,68 @@ func TestAcquireLockBlocksSecondHolder(t *testing.T) {
 		t.Fatalf("해제 후 재획득 실패: %v", err)
 	}
 	unlock2()
+}
+
+func TestAcquireFileLockBlocksSecondHolder(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "state.lock")
+
+	unlock, err := AcquireFileLock(lockPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AcquireFileLock(lockPath, 100*time.Millisecond); err == nil {
+		t.Fatal("file lock allowed a second holder")
+	}
+	unlock()
+
+	unlockAgain, err := AcquireFileLock(lockPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlockAgain()
+}
+
+func TestAcquireFileLockReleasedAfterProcessKill(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "state.lock")
+	cmd := exec.Command(os.Args[0], "-test.run=TestFileLockHelperProcess", "--", lockPath)
+	cmd.Env = append(os.Environ(), "PYLON_FILE_LOCK_HELPER=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() || scanner.Text() != "locked" {
+		_ = cmd.Process.Kill()
+		t.Fatalf("helper did not acquire lock: %q, %v", scanner.Text(), scanner.Err())
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+
+	unlock, err := AcquireFileLock(lockPath, time.Second)
+	if err != nil {
+		t.Fatalf("lock was not released after process kill: %v", err)
+	}
+	unlock()
+}
+
+func TestFileLockHelperProcess(t *testing.T) {
+	if os.Getenv("PYLON_FILE_LOCK_HELPER") != "1" {
+		return
+	}
+	lockPath := os.Args[len(os.Args)-1]
+	unlock, err := AcquireFileLock(lockPath, time.Second)
+	if err != nil {
+		os.Exit(2)
+	}
+	defer unlock()
+	fmt.Println("locked")
+	_ = os.Stdout.Sync()
+	time.Sleep(30 * time.Second)
 }
 
 func TestWriteFileAtomicCreatesParentDirs(t *testing.T) {

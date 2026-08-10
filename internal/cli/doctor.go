@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
+	"github.com/kyago/pylon/internal/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -27,7 +29,7 @@ type Check struct {
 	BrewFormula string // Homebrew formula name; empty when brew install is not documented
 }
 
-var checks = []Check{
+var baseChecks = []Check{
 	{
 		Name:       "git",
 		Required:   true,
@@ -40,19 +42,13 @@ var checks = []Check{
 		Verify:     verifyGH,
 		InstallURL: "https://cli.github.com/",
 	},
-	{
-		Name:       "claude",
-		Required:   true,
-		Verify:     verifyClaude,
-		InstallURL: "https://docs.anthropic.com/en/docs/claude-code",
-	},
 }
 
 func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check required tool installations and versions",
-		Long: `Verify that all required tools (git, gh, claude) are installed and configured.
+		Long: `Verify that required tools and the selected runtime provider are installed and configured.
 
 Also refreshes the pylon-owned resources under .pylon/ (agents, skills, commands,
 scripts) to the versions shipped with this binary. Files you added yourself — a new
@@ -70,7 +66,7 @@ for any projects that are missing the local-scope ignore entry.`,
 }
 
 // runChecks executes all doctor checks and returns results.
-func runChecks() (allPassed bool, failures []Check) {
+func runChecks(checks []Check) (allPassed bool, failures []Check) {
 	allPassed = true
 	for _, check := range checks {
 		ver, err := check.Verify()
@@ -93,19 +89,18 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println("Pylon Doctor")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
-	allPassed, failures := runChecks()
+	allPassed, failures := runChecks(currentDoctorChecks())
 
 	// Sync config defaults if in a workspace
 	fmt.Println()
 	syncConfigIfWorkspace()
 
-	// Sync embedded resources (agents, skills, commands, scripts) if in a workspace
+	// Sync provider-neutral embedded resources if in a workspace.
 	syncResourcesIfWorkspace()
 
-	// Reconcile Claude Code slash commands (.claude/commands/) with confirmation.
-	// Runs after .pylon/commands/ is synced so the diff reflects the latest content.
+	// Reconcile resources owned by the selected provider.
 	autoYes, _ := cmd.Flags().GetBool("yes")
-	syncClaudeCommandsIfWorkspace(cmd.InOrStdin(), autoYes)
+	syncSelectedProviderResourcesIfWorkspace(cmd.InOrStdin(), autoYes)
 
 	// Check project repo .pylon/ exclude settings (skip if git is missing)
 	fixExcludes, _ := cmd.Flags().GetBool("fix-excludes")
@@ -247,7 +242,7 @@ func RunDoctorChecks() (bool, error) {
 	fmt.Println("Pylon Doctor")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
-	allPassed, failures := runChecks()
+	allPassed, failures := runChecks(currentDoctorChecks())
 
 	fmt.Println()
 	if !allPassed {
@@ -255,6 +250,59 @@ func RunDoctorChecks() (bool, error) {
 	}
 
 	return allPassed, nil
+}
+
+func currentDoctorChecks() []Check {
+	checks := append([]Check(nil), baseChecks...)
+	cfg, err := doctorProviderConfig()
+	return append(checks, newProviderCheck(cfg, err))
+}
+
+func doctorProviderConfig() (*config.Config, error) {
+	root, err := resolveRoot()
+	if err != nil {
+		return config.ParseConfig([]byte("version: \"0.2\"\n"))
+	}
+	return config.LoadConfig(layout.ConfigPath(root))
+}
+
+func newProviderCheck(cfg *config.Config, configErr error) Check {
+	providerName := "auto"
+	installURL := claudeInstallURL
+	if cfg != nil {
+		providerName, _ = cfg.Runtime.EffectiveProvider()
+		if catalog, err := newProviderCatalog(cfg); err == nil {
+			installURL = catalog.installURL(providerName)
+		}
+	}
+
+	return Check{
+		Name:       "provider",
+		Required:   true,
+		InstallURL: installURL,
+		Verify: func() (string, error) {
+			if configErr != nil {
+				return "", fmt.Errorf("provider config load failed: %w", configErr)
+			}
+			catalog, err := newProviderCatalog(cfg)
+			if err != nil {
+				return "", err
+			}
+			_, selection, err := catalog.selectInteractive(context.Background(), cfg)
+			if err != nil {
+				return "", err
+			}
+			versioned, ok := selection.Adapter.(provider.VersionedAdapter)
+			if !ok {
+				return selection.Adapter.Name(), nil
+			}
+			version, err := versioned.Version(context.Background())
+			if err != nil {
+				return "", err
+			}
+			return selection.Adapter.Name() + " " + version, nil
+		},
+	}
 }
 
 func verifyGit() (string, error) {
@@ -293,7 +341,7 @@ func syncConfigIfWorkspace() {
 	}
 
 	cfgPath := layout.ConfigPath(root)
-	_, added, err := config.SyncConfigDefaults(cfgPath)
+	cfg, added, err := config.SyncConfigDefaults(cfgPath)
 	if err != nil {
 		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)
 		return
@@ -305,6 +353,28 @@ func syncConfigIfWorkspace() {
 		}
 	} else {
 		fmt.Println("✓ config.yml 최신 상태")
+	}
+	if providerName, deprecated := cfg.Runtime.EffectiveProvider(); deprecated {
+		fmt.Printf("⚠ runtime.backend는 deprecated입니다 — runtime.provider: %s 로 전환하세요 (자동 rewrite하지 않음)\n", providerName)
+	}
+	warnDeprecatedAgentProviders(root)
+}
+
+func warnDeprecatedAgentProviders(root string) {
+	agentPaths, err := filepath.Glob(filepath.Join(layout.PylonDir(root), "agents", "*.md"))
+	if err != nil {
+		return
+	}
+	for _, path := range agentPaths {
+		agent, err := config.ParseAgentFile(path)
+		if err != nil {
+			continue
+		}
+		providerName, deprecated := agent.EffectiveProvider()
+		if !deprecated {
+			continue
+		}
+		fmt.Printf("⚠ agent %s의 backend는 deprecated입니다 — provider: %s 로 전환하세요 (자동 rewrite하지 않음)\n", filepath.Base(path), providerName)
 	}
 }
 
@@ -321,7 +391,7 @@ func reconcileRootAgentFiles(root string) (bool, []string, error) {
 	return ensureRootAgentFiles(root, projects)
 }
 
-// syncResourcesIfWorkspace syncs embedded agents, skills, commands, and scripts
+// syncResourcesIfWorkspace syncs provider-neutral embedded agents, skills, commands, and scripts
 // to the workspace if running inside a pylon workspace.
 // .pylon/ resources are pylon-managed: missing files are installed and files
 // whose content differs from the embedded version are refreshed, so upgrades
@@ -335,31 +405,6 @@ func syncResourcesIfWorkspace() {
 	pylonDir := layout.PylonDir(root)
 	totalWritten, overwritten := syncPylonResources(pylonDir)
 
-	bootstrapped, backedUp, err := reconcileRootAgentFiles(root)
-	if err != nil {
-		fmt.Printf("⚠ 루트 에이전트 파일 갱신 실패: %v\n", err)
-	} else {
-		for _, name := range backedUp {
-			fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
-		}
-		if bootstrapped {
-			fmt.Println("✓ AGENTS.md를 부트스트랩했습니다 — 다음 실행 시 세션이 이 워크스페이스에 맞게 재작성합니다.")
-		}
-	}
-
-	// Update .claude/agents/ with skill injection (consistent with pylon launch)
-	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
-	if err != nil {
-		// Fall back to plain symlinks if config can't be loaded
-		if linkErr := syncClaudeAgentLinks(root, pylonDir); linkErr != nil {
-			fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", linkErr)
-		}
-	} else {
-		if genErr := generateClaudeAgentsWithSkills(root, cfg); genErr != nil {
-			fmt.Printf("⚠ .claude/agents/ 생성 실패: %v\n", genErr)
-		}
-	}
-
 	if totalWritten > 0 {
 		fmt.Printf("✓ 내장 리소스 %d개 설치/갱신\n", totalWritten)
 	} else {
@@ -372,6 +417,64 @@ func syncResourcesIfWorkspace() {
 			fmt.Printf("    ~ .pylon/%s\n", name)
 		}
 	}
+}
+
+func syncSelectedProviderResourcesIfWorkspace(in io.Reader, autoYes bool) {
+	root, err := resolveRoot()
+	if err != nil {
+		return
+	}
+	cfg, err := config.LoadConfig(layout.ConfigPath(root))
+	if err != nil {
+		fmt.Printf("⚠ provider 리소스 동기화 건너뜀: %v\n", err)
+		return
+	}
+	catalog, err := newProviderCatalog(cfg)
+	if err != nil {
+		fmt.Printf("⚠ provider 리소스 동기화 건너뜀: %v\n", err)
+		return
+	}
+	entry, selection, err := catalog.selectInteractive(context.Background(), cfg)
+	if err != nil {
+		fmt.Printf("⚠ provider 리소스 동기화 건너뜀: %v\n", err)
+		return
+	}
+	if entry.syncDoctor == nil {
+		fmt.Printf("✓ provider %s 전용 리소스 동기화 불필요\n", selection.Adapter.Name())
+		return
+	}
+	entry.syncDoctor(in, autoYes)
+}
+
+func syncClaudeProviderResourcesIfWorkspace(in io.Reader, autoYes bool) {
+	root, err := resolveRoot()
+	if err != nil {
+		return
+	}
+	pylonDir := layout.PylonDir(root)
+
+	bootstrapped, backedUp, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		fmt.Printf("⚠ 루트 에이전트 파일 갱신 실패: %v\n", err)
+	} else {
+		for _, name := range backedUp {
+			fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+		}
+		if bootstrapped {
+			fmt.Println("✓ AGENTS.md를 부트스트랩했습니다 — 다음 실행 시 세션이 이 워크스페이스에 맞게 재작성합니다.")
+		}
+	}
+
+	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
+	if err != nil {
+		if linkErr := syncClaudeAgentLinks(root, pylonDir); linkErr != nil {
+			fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", linkErr)
+		}
+	} else if genErr := generateClaudeAgentsWithSkills(root, cfg); genErr != nil {
+		fmt.Printf("⚠ .claude/agents/ 생성 실패: %v\n", genErr)
+	}
+
+	syncClaudeCommandsIfWorkspace(in, autoYes)
 }
 
 // syncPylonResources refreshes the pylon-owned resources under .pylon/ from the
@@ -560,13 +663,4 @@ func syncClaudeCommandsIfWorkspace(in io.Reader, autoYes bool) {
 	}
 	total := len(diff.added) + len(diff.changed) + len(diff.removed)
 	fmt.Printf("✓ 커맨드 %d개 동기화 완료\n", total)
-}
-
-func verifyClaude() (string, error) {
-	out, err := exec.Command("claude", "--version").CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("claude not found: %w", err)
-	}
-	ver := strings.TrimSpace(string(out))
-	return ver, nil
 }

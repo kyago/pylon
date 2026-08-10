@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "verification-live-config-change",
+  "category": "verification",
+  "description": "Frozen commands still run when live verify config changes, but the overall gate fails.",
+  "required_capabilities": ["run_shell"],
+  "input": {"snapshot_valid": true, "live_config_changed": true},
+  "expected": {
+    "verdict": "fail",
+    "run_status": "failed",
+    "task_statuses": {"verify": "failed"},
+    "required_artifacts": ["verification.json", "criteria-events.jsonl"],
+    "required_events": ["frozen_verification_executed", "live_config_changed"],
+    "cleanup_status": "preserved",
+    "runtime_preserved": true
+  }
+}

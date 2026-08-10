@@ -169,3 +169,14 @@ func TestLoadVerifyConfig_CommandsSchema(t *testing.T) {
 		t.Errorf("unexpected command order: %+v", steps)
 	}
 }
+
+func TestVerifyConfig_OrderedHeldOutSteps(t *testing.T) {
+	vc := &VerifyConfig{HeldOut: []NamedVerifyStep{{Name: "acceptance", Command: "./acceptance.sh"}}}
+	steps := vc.OrderedHeldOutSteps()
+	if len(steps) != 1 {
+		t.Fatalf("got %d held-out steps, want 1", len(steps))
+	}
+	if steps[0].Kind != VerifyKindHeldOut || steps[0].Timeout != "60s" {
+		t.Fatalf("unexpected held-out step: %+v", steps[0])
+	}
+}

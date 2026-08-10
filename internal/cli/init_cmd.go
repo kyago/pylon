@@ -78,9 +78,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("Pylon Workspace Initialization")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
-	// Backend is fixed to claude-code in MVP
-	backendInput := "claude-code"
-	fmt.Printf("Agent backend: %s\n", backendInput)
+	providerInput := "auto"
+	fmt.Printf("Runtime provider: %s\n", providerInput)
 
 	// PR reviewer
 	fmt.Printf("PR reviewer GitHub username (Enter to skip): ")
@@ -114,10 +113,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		reviewerSection = fmt.Sprintf("    reviewers:\n      - %s", reviewerInput)
 	}
 
-	configContent := fmt.Sprintf(`version: "0.1"
+	configContent := fmt.Sprintf(`version: "0.2"
 
 runtime:
-  backend: %s
+  provider: %s
+  execution_mode: session-native
   max_concurrent: 5
   max_turns: 50
   permission_mode: acceptEdits
@@ -125,7 +125,7 @@ runtime:
 git:
   pr:
 %s
-`, backendInput, reviewerSection)
+`, providerInput, reviewerSection)
 
 	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to create config.yml: %w", err)
@@ -258,7 +258,7 @@ git:
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
 	fmt.Println("  2. Add projects: pylon add-project <name>")
-	fmt.Println("  3. Start working: /pl:pipeline in Claude Code TUI")
+	fmt.Println("  3. Start working: run 'pylon', then use /pl:pipeline")
 
 	return nil
 }

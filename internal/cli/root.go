@@ -24,7 +24,7 @@ func SetVersion(v string) {
 }
 
 // rootCmd is the base command for pylon.
-// When invoked without subcommands, it launches the Claude Code TUI session.
+// When invoked without subcommands, it launches the selected interactive provider.
 var rootCmd = &cobra.Command{
 	Use:   "pylon",
 	Short: "AI multi-agent development team orchestrator",

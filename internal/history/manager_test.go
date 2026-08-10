@@ -91,6 +91,19 @@ func TestCheckpointDeduplicatesByDigest(t *testing.T) {
 	}
 }
 
+func TestValidateDetectsCheckpointTampering(t *testing.T) {
+	m, root := newTestManager(t)
+	mustCheckpoint(t, m, "pipe-1", PhaseCompleted)
+	if _, err := m.Validate("pipe-1/completed"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".pylon", "history", "pipelines", "pipe-1", "completed", "status-summary.json")
+	mustWrite(t, path, `{"status":"tampered"}`)
+	if _, err := m.Validate("pipe-1/completed"); err == nil {
+		t.Fatal("tampered checkpoint validated")
+	}
+}
+
 func TestTerminalPhaseCopiesMemorySnapshot(t *testing.T) {
 	m, root := newTestManager(t)
 	memFile := filepath.Join(root, ".pylon", "memory", "app", "learning", "k.md")
@@ -194,6 +207,82 @@ func TestCheckpointKeepsVerificationReason(t *testing.T) {
 	}
 	if strings.Contains(string(data), "drop-me") {
 		t.Errorf("allowlist에 없는 키는 제거되어야 한다: %s", data)
+	}
+}
+
+func TestCheckpointCollectsRepoSubPipelineVerification(t *testing.T) {
+	m, root := newTestManager(t)
+	pipelineDir := filepath.Join(root, ".pylon", "runtime", "pipe-1")
+	mustWrite(t, filepath.Join(pipelineDir, "repos", "service-a", "verification.json"),
+		`{"ok":true,"checks":[{"name":"test","ok":true}]}`)
+	mustWrite(t, filepath.Join(pipelineDir, "repos", "service-b", "verification.json"),
+		`{"ok":false,"checks":[{"name":"test","ok":false}]}`)
+
+	if _, err := m.Checkpoint("pipe-1", PhaseCompleted); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".pylon", "history", "pipelines", "pipe-1", "completed", "verification-summary.json"))
+	if err != nil {
+		t.Fatalf("verification-summary.json이 있어야 한다: %v", err)
+	}
+	var summary struct {
+		Records []struct {
+			Pipeline string `json:"pipeline"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.Records) != 2 || summary.Records[0].Pipeline != "service-a" || summary.Records[1].Pipeline != "service-b" {
+		t.Fatalf("repo verification records = %#v", summary.Records)
+	}
+}
+
+func TestFailedCheckpointPreservesTrajectoryArtifacts(t *testing.T) {
+	m, root := newTestManager(t)
+	pipelineDir := filepath.Join(root, ".pylon", "runtime", "pipe-1")
+	mustWrite(t, filepath.Join(pipelineDir, "repos", "service-a", "criteria.json"),
+		`{"schema_version":1,"run_id":"pipe-1","repo_id":"service-a","base_revision":"abc","acceptance_criteria":[{"id":"AC-1","description":"works"}],"verification":[{"name":"test","kind":"deterministic","command":"go test ./..."}],"digest":"sha256:criteria","secret":"drop-me"}`)
+	mustWrite(t, filepath.Join(pipelineDir, "tasks", "T001", "attempts", "003", "task-report.json"),
+		`{"schema_version":1,"run_id":"pipe-1","task_id":"T001","attempt":3,"status":"failed","summary":"tests failed","hypotheses_rejected":[{"hypothesis":"wrong path","probe":"resolve path","result":"correct"}],"remaining_unknowns":["race"],"digest":"sha256:report","secret":"drop-me"}`)
+	mustWrite(t, filepath.Join(pipelineDir, "failure-record.json"),
+		`{"schema_version":1,"run_id":"pipe-1","task_id":"T001","attempt":3,"phase":"verification","terminal_cause":"test_failure","evidence_refs":["tasks/T001/attempts/003/stderr.log"],"hypotheses_rejected":[{"hypothesis":"wrong path","probe":"resolve path","result":"correct"}],"remaining_unknowns":["race"],"abandoned_reason":"attempts exhausted","recorded_at":"2026-08-10T04:00:00Z","digest":"sha256:failure","secret":"drop-me"}`)
+	mustWrite(t, filepath.Join(pipelineDir, "repos", "service-a", "evaluator-result.json"),
+		`{"schema_version":1,"request_digest":"sha256:req","status":"fail","summary":"criterion partial","criteria":[{"id":"AC-1","status":"partial","evidence":"change.diff"}],"evaluator":"verifier","secret":"drop-me"}`)
+	mustWrite(t, filepath.Join(pipelineDir, "tasks", "T001", "state.json"),
+		`{"schema_version":1,"run_id":"pipe-1","task_id":"T001","status":"failed","attempt":3,"message":"verification failed","secret":"drop-me"}`)
+	mustWrite(t, filepath.Join(pipelineDir, "tasks", "T001", "attempts", "003", "provider.json"),
+		`{"provider":"fake","external_id":"worker-3","attempt":3,"secret":"drop-me"}`)
+
+	if _, err := m.Checkpoint("pipe-1", PhaseFailed); err != nil {
+		t.Fatal(err)
+	}
+	snapshotDir := filepath.Join(root, ".pylon", "history", "pipelines", "pipe-1", "failed")
+	for _, name := range []string{
+		"criteria-summary.json",
+		"task-reports-summary.json",
+		"failure-records-summary.json",
+		"evaluator-summary.json",
+		"attempt-state-summary.json",
+		"provider-summary.json",
+	} {
+		data, err := os.ReadFile(filepath.Join(snapshotDir, name))
+		if err != nil {
+			t.Fatalf("%s missing: %v", name, err)
+		}
+		if strings.Contains(string(data), "drop-me") {
+			t.Fatalf("%s contains uncurated fields: %s", name, data)
+		}
+	}
+	failureSummary, err := os.ReadFile(filepath.Join(snapshotDir, "failure-records-summary.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"wrong path", "attempts exhausted", "tasks/T001/attempts/003/stderr.log"} {
+		if !strings.Contains(string(failureSummary), expected) {
+			t.Fatalf("failure trajectory missing %q: %s", expected, failureSummary)
+		}
 	}
 }
 

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "multi-repo-branch-isolation",
+  "category": "multi_repo",
+  "description": "Each repository owns its base revision, branch, verification, PR, and cleanup lifecycle.",
+  "required_capabilities": ["worktree_isolation"],
+  "input": {"repos": [{"id": "api", "base": "a1"}, {"id": "web", "base": "b1"}]},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "succeeded",
+    "task_statuses": {"api": "succeeded", "web": "succeeded"},
+    "required_artifacts": ["repos/api/verification.json", "repos/web/verification.json"],
+    "forbidden_mutations": ["cross-repo-merge", "shared-base-revision"],
+    "required_events": ["branch_owned:api", "branch_owned:web"],
+    "cleanup_status": "completed"
+  }
+}

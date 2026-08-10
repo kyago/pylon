@@ -52,6 +52,20 @@ func TestExecuteVerification_ReportsTimeout(t *testing.T) {
 	}
 }
 
+func TestExecuteVerification_HeldOutFailureFailsGate(t *testing.T) {
+	steps := []config.NamedVerifyStep{
+		{Name: "build", Kind: config.VerifyKindDeterministic, Command: "true", Timeout: "5s"},
+		{Name: "acceptance", Kind: config.VerifyKindHeldOut, Command: "false", Timeout: "5s"},
+	}
+	result, err := executeVerification(t.TempDir(), steps, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.OK || len(result.Checks) != 2 || result.Checks[1].Kind != config.VerifyKindHeldOut || result.Checks[1].OK {
+		t.Fatalf("held-out failure did not fail gate: %+v", result)
+	}
+}
+
 func TestExecuteVerification_TimeoutNotBlockedByOrphanChild(t *testing.T) {
 	steps := []config.NamedVerifyStep{{Name: "orphan", Command: "sleep 8 & sleep 8", Timeout: "100ms"}}
 	start := time.Now()
@@ -87,6 +101,13 @@ func TestLoadVerificationSteps_DefaultsAndSkip(t *testing.T) {
 	}
 	if !skipped || len(steps) != 0 {
 		t.Fatalf("unexpected non-Go fallback: skipped=%v steps=%+v", skipped, steps)
+	}
+}
+
+func TestGeneratedVerifyConfigIncludesHeldOutSection(t *testing.T) {
+	content := generateVerifyYML(techStack{Language: "go"})
+	if !strings.Contains(content, "held_out: []") {
+		t.Fatalf("generated verify.yml has no held_out section:\n%s", content)
 	}
 }
 
@@ -173,6 +194,118 @@ func TestInternalVerify_PassesWhenStepsSucceed(t *testing.T) {
 	}
 }
 
+func TestInternalVerify_UsesFrozenSnapshotAndRejectsLiveConfigChange(t *testing.T) {
+	workDir, runDir, configPath, snapshotPath, manifestPath := createCriteriaFixture(t)
+	markerPath := filepath.Join(workDir, "marker.txt")
+	initialConfig := "build:\n  command: \"printf snapshot > " + markerPath + "\"\n"
+	if err := os.WriteFile(configPath, []byte(initialConfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+	createCriteriaSnapshot(t, workDir, configPath, snapshotPath, manifestPath)
+	changedConfig := "build:\n  command: \"printf live > " + markerPath + "\"\n"
+	if err := os.WriteFile(configPath, []byte(changedConfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	outputPath := filepath.Join(runDir, "verification.json")
+	cmd := newInternalVerifyCmd()
+	var output strings.Builder
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs([]string{
+		"--workdir", workDir,
+		"--snapshot", snapshotPath,
+		"--manifest", manifestPath,
+		"--live-config", configPath,
+		"--output", outputPath,
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("live config change must fail closed")
+	}
+	marker, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(marker) != "snapshot" {
+		t.Fatalf("executed command = %q, want frozen snapshot command", marker)
+	}
+	var result verificationResult
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.OK || !result.IntegrityOK || !result.SourceChanged || result.CriteriaDigest == "" {
+		t.Fatalf("unexpected snapshot result: %+v", result)
+	}
+	events, err := os.ReadFile(filepath.Join(runDir, "criteria-events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(events), "criteria_source_changed") {
+		t.Fatalf("missing criteria source change event: %s", events)
+	}
+}
+
+func TestInternalVerify_RejectsTamperedSnapshotBeforeExecution(t *testing.T) {
+	workDir, runDir, configPath, snapshotPath, manifestPath := createCriteriaFixture(t)
+	markerPath := filepath.Join(workDir, "marker.txt")
+	configData := "build:\n  command: \"printf ran > " + markerPath + "\"\n"
+	if err := os.WriteFile(configPath, []byte(configData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	createCriteriaSnapshot(t, workDir, configPath, snapshotPath, manifestPath)
+
+	data, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	steps := snapshot["verification"].([]any)
+	steps[0].(map[string]any)["command"] = "printf tampered > " + markerPath
+	tampered, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapshotPath, append(tampered, '\n'), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	outputPath := filepath.Join(runDir, "verification.json")
+	cmd := newInternalVerifyCmd()
+	cmd.SetOut(&strings.Builder{})
+	cmd.SetErr(&strings.Builder{})
+	cmd.SetArgs([]string{
+		"--workdir", workDir,
+		"--snapshot", snapshotPath,
+		"--manifest", manifestPath,
+		"--live-config", configPath,
+		"--output", outputPath,
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("tampered criteria snapshot must fail closed")
+	}
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("tampered verification command executed: %v", err)
+	}
+	resultData, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result verificationResult
+	if err := json.Unmarshal(resultData, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.OK || result.IntegrityOK || !strings.Contains(result.Reason, "integrity") {
+		t.Fatalf("unexpected tamper result: %+v", result)
+	}
+}
+
 func TestNewInternalCmd_IsHidden(t *testing.T) {
 	cmd := newInternalCmd()
 	if !cmd.Hidden {
@@ -181,6 +314,51 @@ func TestNewInternalCmd_IsHidden(t *testing.T) {
 	verify, _, err := cmd.Find([]string{"verify"})
 	if err != nil || verify == nil || verify.Name() != "verify" {
 		t.Fatalf("verify command not registered: cmd=%v err=%v", verify, err)
+	}
+	criteriaCmd, _, err := cmd.Find([]string{"criteria", "snapshot"})
+	if err != nil || criteriaCmd == nil || criteriaCmd.Name() != "snapshot" {
+		t.Fatalf("criteria snapshot command not registered: cmd=%v err=%v", criteriaCmd, err)
+	}
+	evaluatorCmd, _, err := cmd.Find([]string{"evaluator", "prepare"})
+	if err != nil || evaluatorCmd == nil || evaluatorCmd.Name() != "prepare" {
+		t.Fatalf("evaluator prepare command not registered: cmd=%v err=%v", evaluatorCmd, err)
+	}
+	recordCmd, _, err := cmd.Find([]string{"evaluator", "record"})
+	if err != nil || recordCmd == nil || recordCmd.Name() != "record" {
+		t.Fatalf("evaluator record command not registered: cmd=%v err=%v", recordCmd, err)
+	}
+}
+
+func TestBuiltInEvaluatorAndInvestigatorPolicies(t *testing.T) {
+	decision := []string{"verifier", "critic", "code-reviewer", "security-reviewer", "fact-checker", "content-reviewer"}
+	for _, name := range decision {
+		data, err := embeddedAgents.ReadFile("agents/" + name + ".md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent, err := config.ParseAgentData(data)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		if agent.EvaluationRole != config.EvaluationRoleDecision || agent.AccessMode != config.AccessModeReadOnly || agent.InputPolicy != config.InputPolicyIsolatedEvidence {
+			t.Fatalf("decision agent %s policy = %+v", name, agent)
+		}
+		if !containsString(agent.DisallowedTools, "Bash") || containsString(agent.Tools, "Bash") {
+			t.Fatalf("decision agent %s tools=%v disallowed=%v", name, agent.Tools, agent.DisallowedTools)
+		}
+	}
+	for _, name := range []string{"explorer", "tracer", "analyst", "researcher", "doc-specialist"} {
+		data, err := embeddedAgents.ReadFile("agents/" + name + ".md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent, err := config.ParseAgentData(data)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		if agent.EvaluationRole != config.EvaluationRoleInvestigation || agent.CanIssueFinalVerdict() {
+			t.Fatalf("investigation agent %s policy = %+v", name, agent)
+		}
 	}
 }
 
@@ -233,6 +411,12 @@ printf '{"ok":true,"checks":[],"timestamp":"2026-07-23T00:00:00Z"}\n'
 	if err := os.MkdirAll(pipelineDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(pipelineDir, "criteria.json"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pipelineDir, "status.json"), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command(filepath.Join(scriptsDir, "run-verification.sh"), pipelineDir, "--git-root", "project")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "CAPTURE_PATH="+capturePath)
@@ -251,11 +435,71 @@ printf '{"ok":true,"checks":[],"timestamp":"2026-07-23T00:00:00Z"}\n'
 	if !strings.HasPrefix(got, resolvedProjectDir+"\ninternal\nverify\n") {
 		t.Fatalf("unexpected delegation:\n%s", got)
 	}
-	if !strings.Contains(got, "--config\n"+filepath.Join(resolvedProjectDir, ".pylon", "verify.yml")) {
-		t.Fatalf("verify config not forwarded:\n%s", got)
+	if !strings.Contains(got, "--snapshot\n"+filepath.Join(pipelineDir, "criteria.json")) {
+		t.Fatalf("criteria snapshot not forwarded:\n%s", got)
+	}
+	if !strings.Contains(got, "--manifest\n"+filepath.Join(pipelineDir, "status.json")) {
+		t.Fatalf("criteria manifest not forwarded:\n%s", got)
+	}
+	if !strings.Contains(got, "--live-config\n"+filepath.Join(resolvedProjectDir, ".pylon", "verify.yml")) {
+		t.Fatalf("live config change detector not forwarded:\n%s", got)
 	}
 }
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func createCriteriaFixture(t *testing.T) (workDir, runDir, configPath, snapshotPath, manifestPath string) {
+	t.Helper()
+	root := t.TempDir()
+	workDir = filepath.Join(root, "repo")
+	runDir = filepath.Join(root, "runtime", "run", "repos", "repo")
+	if err := os.MkdirAll(filepath.Join(workDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configPath = filepath.Join(workDir, ".pylon", "verify.yml")
+	snapshotPath = filepath.Join(runDir, "criteria.json")
+	manifestPath = filepath.Join(runDir, "status.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"repo_id":"repo","base_revision":"base"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return workDir, runDir, configPath, snapshotPath, manifestPath
+}
+
+func createCriteriaSnapshot(t *testing.T, workDir, configPath, snapshotPath, manifestPath string) {
+	t.Helper()
+	acceptancePath := filepath.Join(filepath.Dir(manifestPath), "acceptance-input.json")
+	if err := os.WriteFile(acceptancePath, []byte(`{"criteria":[{"id":"AC-1","description":"verification succeeds"}]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newInternalCriteriaSnapshotCmd()
+	var output strings.Builder
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs([]string{
+		"--run-id", "run",
+		"--repo-id", "repo",
+		"--base-revision", "base",
+		"--workdir", workDir,
+		"--config", configPath,
+		"--acceptance", acceptancePath,
+		"--output", snapshotPath,
+		"--manifest", manifestPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("criteria snapshot failed: %v (%s)", err, output.String())
+	}
 }

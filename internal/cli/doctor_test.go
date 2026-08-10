@@ -548,6 +548,95 @@ func TestNewDoctorCmd_FixExcludesFlag(t *testing.T) {
 	}
 }
 
+func TestProviderDoctorCheckUsesConfiguredCommand(t *testing.T) {
+	dir := t.TempDir()
+	command := filepath.Join(dir, "custom-claude")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\necho custom-version\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Runtime: config.RuntimeConfig{Provider: "claude-code"},
+		Providers: map[string]config.ProviderConfig{
+			"claude-code": {Command: command},
+		},
+	}
+
+	version, err := newProviderCheck(cfg, nil).Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(version, "claude-code") || !strings.Contains(version, "custom-version") {
+		t.Fatalf("provider version = %q", version)
+	}
+}
+
+func TestProviderDoctorCheckDoesNotFallbackForExplicitUnknownProvider(t *testing.T) {
+	cfg := &config.Config{Runtime: config.RuntimeConfig{Provider: "provider-b"}}
+	_, err := newProviderCheck(cfg, nil).Verify()
+	if err == nil || !strings.Contains(err.Error(), "provider-b") || !strings.Contains(err.Error(), "not registered") {
+		t.Fatalf("provider check error = %v", err)
+	}
+}
+
+func TestSyncConfigWarnsAboutDeprecatedBackend(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon", "agents"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".pylon", "config.yml"), []byte(`version: "0.1"
+runtime:
+  backend: claude-code
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".pylon", "agents", "legacy.md"), []byte(`---
+name: legacy
+role: Developer
+backend: claude-code
+---
+Legacy agent.
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = oldWorkspace })
+
+	output := captureStdout(t, syncConfigIfWorkspace)
+	if !strings.Contains(output, "runtime.backend는 deprecated") || !strings.Contains(output, "runtime.provider: claude-code") {
+		t.Fatalf("deprecated warning missing:\n%s", output)
+	}
+	if !strings.Contains(output, "agent legacy.md의 backend는 deprecated") || !strings.Contains(output, "provider: claude-code") {
+		t.Fatalf("agent deprecated warning missing:\n%s", output)
+	}
+}
+
+func TestUnknownProviderDoesNotMaterializeClaudeResources(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".pylon", "config.yml"), []byte(`version: "0.2"
+runtime:
+  provider: provider-b
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = oldWorkspace })
+
+	output := captureStdout(t, func() {
+		syncSelectedProviderResourcesIfWorkspace(bytes.NewBuffer(nil), true)
+	})
+	if !strings.Contains(output, "provider-b") || !strings.Contains(output, "건너뜀") {
+		t.Fatalf("provider sync failure not reported:\n%s", output)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("unselected Claude resources were materialized: %v", err)
+	}
+}
+
 func TestResolveGitExcludePath(t *testing.T) {
 	requireGit(t)
 	tmpDir := t.TempDir()

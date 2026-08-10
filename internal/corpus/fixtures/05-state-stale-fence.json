@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "state-stale-fence",
+  "category": "state",
+  "description": "Late writes from an old worker fencing token are rejected.",
+  "required_capabilities": ["background_execution"],
+  "input": {"active_fence": "new", "late_fence": "old"},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "succeeded",
+    "task_statuses": {"T001": "succeeded"},
+    "forbidden_mutations": ["state-write-from-old-fence"],
+    "required_events": ["stale_fence_rejected"],
+    "cleanup_status": "completed"
+  }
+}

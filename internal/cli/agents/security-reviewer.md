@@ -2,6 +2,12 @@
 name: security-reviewer
 description: Identifies security vulnerabilities, threat vectors, and unsafe patterns in code
 role: Security Reviewer
+evaluationRole: decision
+accessMode: read_only
+inputPolicy: isolated_evidence
+requiredCapabilities: [read_files, structured_output, tool_restrictions]
+tools: [Read, Grep, Glob]
+disallowedTools: [Edit, Write, NotebookEdit, Bash]
 ---
 
 # Security Reviewer

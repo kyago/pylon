@@ -65,7 +65,7 @@ func TestRunCancel_UnknownPipelineReturnsError(t *testing.T) {
 }
 
 // cleanup-pipeline.sh의 runtime 정리 분기를 직접 검증한다:
-// 세 번째 인자가 true면 디렉토리 삭제, 아니면 cleaned 마킹 후 보존.
+// 일치하는 terminal checkpoint가 있으면 삭제하고, 없으면 보존한다.
 func TestCleanupPipelineScript_RuntimeBranches(t *testing.T) {
 	for _, tool := range []string{"bash", "jq", "git"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -100,67 +100,69 @@ func TestCleanupPipelineScript_RuntimeBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runScript := func(pipelineDir, deleteRuntime string) {
+	runScript := func(pipelineDir string, terminalPhase ...string) ([]byte, error) {
 		t.Helper()
-		args := []string{script, pipelineDir, ""}
-		if deleteRuntime != "" {
-			args = append(args, deleteRuntime)
+		args := []string{script, pipelineDir}
+		if len(terminalPhase) > 0 {
+			args = append(args, "--terminal-phase", terminalPhase[0])
 		}
 		cmd := exec.Command("bash", args...)
 		cmd.Dir = tmp
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("script failed: %v\n%s", err, out)
-		}
+		return cmd.CombinedOutput()
 	}
 
-	// 분기 1: DELETE_RUNTIME=true → 디렉토리 삭제
+	// 분기 1: terminal checkpoint 확인 → 디렉토리 삭제
 	deleted := filepath.Join(tmp, "runtime-deleted")
 	if err := os.MkdirAll(deleted, 0755); err != nil {
 		t.Fatal(err)
 	}
-	runScript(deleted, "true")
+	if err := os.WriteFile(filepath.Join(deleted, "status.json"), []byte(`{"pipeline_id":"runtime-deleted","scope":"root"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifestDir := filepath.Join(pylonDir, "history", "pipelines", "runtime-deleted", "completed")
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "manifest.json"), []byte(`{"pipeline_id":"runtime-deleted","phase":"completed"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runScript(deleted, "completed"); err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
 	if _, err := os.Stat(deleted); !os.IsNotExist(err) {
-		t.Fatalf("runtime dir must be deleted when DELETE_RUNTIME=true: %v", err)
+		t.Fatalf("runtime dir must be deleted after checkpoint: %v", err)
 	}
 
-	// 분기 2: DELETE_RUNTIME 생략(기본 false) → cleaned 마킹 후 보존
+	// 분기 2: checkpoint 미지정 → preserved 마킹 후 보존
 	kept := filepath.Join(tmp, "runtime-kept")
 	if err := os.MkdirAll(kept, 0755); err != nil {
 		t.Fatal(err)
 	}
-	runScript(kept, "")
+	if err := os.WriteFile(filepath.Join(kept, "status.json"), []byte(`{"pipeline_id":"runtime-kept","scope":"root"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runScript(kept); err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
 	data, err := os.ReadFile(filepath.Join(kept, "status.json"))
 	if err != nil {
 		t.Fatalf("status.json must exist when runtime is kept: %v", err)
 	}
-	var sj map[string]string
+	var sj struct {
+		Cleanup struct {
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		} `json:"cleanup"`
+	}
 	if err := json.Unmarshal(data, &sj); err != nil {
 		t.Fatal(err)
 	}
-	if sj["status"] != "cleaned" {
-		t.Fatalf("status = %q, want cleaned", sj["status"])
+	if sj.Cleanup.Status != "preserved" || sj.Cleanup.Reason != "terminal_checkpoint_required" {
+		t.Fatalf("cleanup = %#v, want preserved checkpoint requirement", sj.Cleanup)
 	}
 
-	// 분기 3: 정리 대상 없음 → cleaned가 빈 배열이어야 한다.
-	// (bash 3.2 + set -u에서 빈 배열이 크래시하거나 [""]로 직렬화되던 회귀 방지)
-	cmd := exec.Command("bash", script, filepath.Join(tmp, "no-such-dir"), "")
-	cmd.Dir = tmp
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("script failed with nothing to clean: %v\n%s", err, out)
-	}
-	var result struct {
-		OK      bool     `json:"ok"`
-		Cleaned []string `json:"cleaned"`
-	}
-	if err := json.Unmarshal(out, &result); err != nil {
-		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
-	}
-	if !result.OK {
-		t.Errorf("ok = false, want true")
-	}
-	if result.Cleaned == nil || len(result.Cleaned) != 0 {
-		t.Errorf("cleaned = %v, want empty array", result.Cleaned)
+	// 분기 3: 상태가 없는 임의 경로는 정리 대상으로 인정하지 않는다.
+	if out, err := runScript(filepath.Join(tmp, "no-such-dir")); err == nil {
+		t.Fatalf("script accepted a directory without pipeline state: %s", out)
 	}
 }

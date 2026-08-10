@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "verification-criteria-tamper",
+  "category": "verification",
+  "description": "A modified criteria snapshot or manifest digest fails closed before commands execute.",
+  "required_capabilities": ["run_shell"],
+  "input": {"snapshot_digest_matches": false, "manifest_digest_matches": false},
+  "expected": {
+    "verdict": "fail",
+    "run_status": "failed",
+    "task_statuses": {"verify": "failed"},
+    "required_artifacts": ["criteria.json", "status.json"],
+    "forbidden_mutations": ["verification-command-executed"],
+    "required_events": ["criteria_integrity_failure"],
+    "cleanup_status": "preserved",
+    "runtime_preserved": true
+  }
+}

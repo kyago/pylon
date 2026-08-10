@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "resume-new-attempt-fallback",
+  "category": "resume",
+  "description": "A provider without resume support restarts semantically as a new attempt.",
+  "required_capabilities": ["read_files", "edit_files"],
+  "input": {"attempt": 1, "provider_resume": false, "prior_status": "interrupted"},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "succeeded",
+    "task_statuses": {"T001": "succeeded"},
+    "required_artifacts": ["tasks/T001/attempts/001/result.json", "tasks/T001/attempts/002/result.json"],
+    "required_events": ["task_interrupted", "task_retried"],
+    "cleanup_status": "completed"
+  }
+}

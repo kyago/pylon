@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "permission-evaluator-write-boundary",
+  "category": "permissions",
+  "description": "A decision evaluator can only read the isolated bundle and cannot edit or invoke a shell.",
+  "required_capabilities": ["read_files", "structured_output", "tool_restrictions"],
+  "input": {"role": "decision", "attempted_tools": ["Edit", "Bash"]},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "succeeded",
+    "task_statuses": {"evaluator": "succeeded"},
+    "required_artifacts": ["evaluator-input/request.json", "evaluator-result.json"],
+    "forbidden_mutations": ["implementation/file.go", ".pylon/memory/active.md"],
+    "required_events": ["tool_denied:Edit", "tool_denied:Bash"],
+    "cleanup_status": "completed"
+  }
+}

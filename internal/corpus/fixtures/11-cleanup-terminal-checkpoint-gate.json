@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "cleanup-terminal-checkpoint-gate",
+  "category": "cleanup",
+  "description": "Runtime and worktrees remain when the terminal checkpoint is missing or fails.",
+  "required_capabilities": ["worktree_isolation"],
+  "input": {"terminal_checkpoint": "failed_to_write", "dirty_worktree": true},
+  "expected": {
+    "verdict": "pass",
+    "run_status": "failed",
+    "required_artifacts": ["status.json", "failure-record.json", "worktree"],
+    "forbidden_mutations": ["runtime-deleted", "worktree-deleted", "branch-deleted"],
+    "required_events": ["cleanup_preserved:failed_checkpoint_failed"],
+    "cleanup_status": "preserved",
+    "runtime_preserved": true
+  }
+}

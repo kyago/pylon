@@ -2,6 +2,10 @@
 name: doc-specialist
 description: Creates and maintains technical documentation, API references, and user guides
 role: Documentation Specialist
+evaluationRole: investigation
+accessMode: read_only
+inputPolicy: scoped_context
+requiredCapabilities: [read_files]
 ---
 
 # Documentation Specialist
