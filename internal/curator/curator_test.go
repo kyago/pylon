@@ -1,6 +1,7 @@
 package curator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -83,15 +84,12 @@ func TestReviewAndRegressionGateOnlyChangeCandidateStatus(t *testing.T) {
 		t.Fatalf("unexpected approval: %+v", approved)
 	}
 	reportPath := filepath.Join(root, "corpus-report.json")
-	writeCuratorJSON(t, reportPath, corpus.Report{
-		SchemaVersion: corpus.SchemaVersion, Passed: true,
-		Cases: []corpus.CaseResult{{FixtureID: "failure-history-rejected-hypotheses", Passed: true}},
-	})
+	writeCuratorJSON(t, reportPath, passingCorpusReport(t))
 	gated, err := Gate(root, candidate.ID, reportPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gated.Status != "regression_passed" || gated.RegressionGate == nil || gated.RegressionGate.CaseCount != 1 {
+	if gated.Status != "regression_passed" || gated.RegressionGate == nil || gated.RegressionGate.CaseCount < 10 {
 		t.Fatalf("unexpected gate status: %+v", gated)
 	}
 	if _, err := os.Stat(filepath.Join(layout.LearningCandidatesDir(root), candidate.ID)); err != nil {
@@ -99,6 +97,25 @@ func TestReviewAndRegressionGateOnlyChangeCandidateStatus(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".pylon", "memory", "app", "learning", "new.md")); !os.IsNotExist(err) {
 		t.Fatalf("candidate workflow modified active target: %v", err)
+	}
+}
+
+func TestRegressionGateRejectsForgedSubsetReport(t *testing.T) {
+	root, ref := setupCheckpoint(t, history.PhaseFailed, false, "fail", true)
+	candidate, err := Create(CreateOptions{Root: root, CheckpointRef: ref, Proposal: validProposal()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Review(root, candidate.ID, "approve", "approved", nil); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(root, "forged-report.json")
+	writeCuratorJSON(t, reportPath, corpus.Report{
+		SchemaVersion: corpus.SchemaVersion, Passed: true,
+		Cases: []corpus.CaseResult{{FixtureID: "failure-history-rejected-hypotheses", Passed: true}},
+	})
+	if _, err := Gate(root, candidate.ID, reportPath, nil); err == nil {
+		t.Fatal("forged subset report passed regression gate")
 	}
 }
 
@@ -161,6 +178,36 @@ func validProposal() Proposal {
 		Summary: "Preserve failure evidence.", Rationale: "The run demonstrates the cleanup hazard.",
 		TargetFiles: []string{".pylon/memory/app/learning/new.md"},
 	}
+}
+
+type curatorFixtureExecutor struct{}
+
+func (curatorFixtureExecutor) Execute(_ context.Context, fixture corpus.Fixture, _ string) (corpus.Outcome, error) {
+	return corpus.Outcome{
+		SchemaVersion: corpus.SchemaVersion, FixtureID: fixture.ID,
+		Verdict: fixture.Expected.Verdict, RunStatus: fixture.Expected.RunStatus,
+		TaskStatuses:     fixture.Expected.TaskStatuses,
+		Artifacts:        append([]string(nil), fixture.Expected.RequiredArtifacts...),
+		Events:           append([]string(nil), fixture.Expected.RequiredEvents...),
+		CleanupStatus:    fixture.Expected.CleanupStatus,
+		RuntimePreserved: fixture.Expected.RuntimePreserved,
+	}, nil
+}
+
+func passingCorpusReport(t *testing.T) corpus.Report {
+	t.Helper()
+	fixtures, err := corpus.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := corpus.Run(context.Background(), corpus.RunOptions{
+		Fixtures: fixtures, Executor: curatorFixtureExecutor{}, Timeout: time.Second,
+		Now: func() time.Time { return time.Date(2026, 8, 10, 6, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
 }
 
 func writeCuratorFile(t *testing.T, path, content string) {

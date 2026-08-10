@@ -39,23 +39,32 @@ held_out:
 		t.Fatal(err)
 	}
 	outputPath := filepath.Join(runDir, "criteria.json")
+	heldOutPath := filepath.Join(runDir, "evaluator-only", "held-out.json")
 	now := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
 	snapshot, err := Create(CreateOptions{
-		RunID:          "run",
-		RepoID:         "repo",
-		BaseRevision:   "abc123",
-		WorkDir:        workDir,
-		ConfigPath:     configPath,
-		AcceptancePath: acceptancePath,
-		OutputPath:     outputPath,
-		ManifestPath:   manifestPath,
-		Now:            func() time.Time { return now },
+		RunID:             "run",
+		RepoID:            "repo",
+		BaseRevision:      "abc123",
+		WorkDir:           workDir,
+		ConfigPath:        configPath,
+		AcceptancePath:    acceptancePath,
+		OutputPath:        outputPath,
+		HeldOutOutputPath: heldOutPath,
+		ManifestPath:      manifestPath,
+		Now:               func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Verification) != 2 || snapshot.Verification[1].Kind != "held_out" {
+	if len(snapshot.Verification) != 1 || snapshot.Verification[0].Kind == "held_out" {
 		t.Fatalf("snapshot verification = %+v", snapshot.Verification)
+	}
+	heldOut, err := LoadHeldOut(heldOutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(heldOut.Verification) != 1 || heldOut.Verification[0].Kind != "held_out" || heldOut.CriteriaDigest != snapshot.Digest {
+		t.Fatalf("held-out snapshot = %+v", heldOut)
 	}
 	if len(snapshot.AcceptanceCriteria) != 1 || snapshot.AcceptanceCriteria[0].ID != "AC-1" {
 		t.Fatalf("snapshot acceptance criteria = %+v", snapshot.AcceptanceCriteria)
@@ -70,6 +79,9 @@ held_out:
 	if err := ValidateManifest(manifestPath, outputPath, loaded); err != nil {
 		t.Fatal(err)
 	}
+	if err := ValidateHeldOutManifest(manifestPath, heldOutPath, heldOut); err != nil {
+		t.Fatal(err)
+	}
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +93,10 @@ held_out:
 	reference := manifest["criteria"].(map[string]any)
 	if reference["path"] != "criteria.json" || reference["digest"] != snapshot.Digest {
 		t.Fatalf("manifest criteria reference = %#v", reference)
+	}
+	heldOutReference := manifest["held_out"].(map[string]any)
+	if heldOutReference["path"] != "evaluator-only/held-out.json" || heldOutReference["digest"] != heldOut.Digest {
+		t.Fatalf("manifest held-out reference = %#v", heldOutReference)
 	}
 }
 

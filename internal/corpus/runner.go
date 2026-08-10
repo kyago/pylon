@@ -3,12 +3,16 @@ package corpus
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -25,11 +29,12 @@ type CaseResult struct {
 }
 
 type Report struct {
-	SchemaVersion int          `json:"schema_version"`
-	Passed        bool         `json:"passed"`
-	StartedAt     time.Time    `json:"started_at"`
-	CompletedAt   time.Time    `json:"completed_at"`
-	Cases         []CaseResult `json:"cases"`
+	SchemaVersion    int          `json:"schema_version"`
+	FixtureSetDigest string       `json:"fixture_set_digest"`
+	Passed           bool         `json:"passed"`
+	StartedAt        time.Time    `json:"started_at"`
+	CompletedAt      time.Time    `json:"completed_at"`
+	Cases            []CaseResult `json:"cases"`
 }
 
 type RunOptions struct {
@@ -54,7 +59,10 @@ func Run(ctx context.Context, options RunOptions) (Report, error) {
 	if now == nil {
 		now = time.Now
 	}
-	report := Report{SchemaVersion: SchemaVersion, Passed: true, StartedAt: now().UTC()}
+	report := Report{
+		SchemaVersion: SchemaVersion, FixtureSetDigest: FixtureSetDigest(options.Fixtures),
+		Passed: true, StartedAt: now().UTC(),
+	}
 	for _, fixture := range options.Fixtures {
 		workDir, err := os.MkdirTemp(options.TempRoot, "pylon-corpus-"+fixture.ID+"-")
 		if err != nil {
@@ -81,6 +89,58 @@ func Run(ctx context.Context, options RunOptions) (Report, error) {
 	}
 	report.CompletedAt = now().UTC()
 	return report, nil
+}
+
+// FixtureSetDigest binds a report to the complete normalized fixture corpus.
+func FixtureSetDigest(fixtures []Fixture) string {
+	normalized := append([]Fixture(nil), fixtures...)
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].ID < normalized[j].ID })
+	data, _ := json.Marshal(normalized)
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// ValidateReport mechanically replays each reported outcome against the exact
+// expected fixture set. Subset, duplicate, missing, or internally inconsistent
+// reports are rejected even when their top-level passed flag is true.
+func ValidateReport(report Report, fixtures []Fixture) error {
+	if report.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("unsupported report schema version %d", report.SchemaVersion)
+	}
+	if !report.Passed {
+		return fmt.Errorf("corpus report did not pass")
+	}
+	if report.FixtureSetDigest != FixtureSetDigest(fixtures) {
+		return fmt.Errorf("fixture set digest mismatch")
+	}
+	if len(report.Cases) != len(fixtures) {
+		return fmt.Errorf("case count=%d want %d", len(report.Cases), len(fixtures))
+	}
+	expected := make(map[string]Fixture, len(fixtures))
+	for _, fixture := range fixtures {
+		expected[fixture.ID] = fixture
+	}
+	seen := make(map[string]bool, len(report.Cases))
+	for _, result := range report.Cases {
+		fixture, ok := expected[result.FixtureID]
+		if !ok {
+			return fmt.Errorf("unexpected fixture %q", result.FixtureID)
+		}
+		if seen[result.FixtureID] {
+			return fmt.Errorf("duplicate fixture %q", result.FixtureID)
+		}
+		seen[result.FixtureID] = true
+		if result.Category != fixture.Category {
+			return fmt.Errorf("fixture %s category=%q want %q", fixture.ID, result.Category, fixture.Category)
+		}
+		if !result.Passed || len(result.Mismatches) != 0 {
+			return fmt.Errorf("fixture %s did not pass", fixture.ID)
+		}
+		if mismatches := Compare(fixture, result.Outcome); len(mismatches) != 0 {
+			return fmt.Errorf("fixture %s outcome mismatch: %s", fixture.ID, strings.Join(mismatches, "; "))
+		}
+	}
+	return nil
 }
 
 type CommandExecutor struct {

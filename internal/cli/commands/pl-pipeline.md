@@ -117,13 +117,16 @@ jq -r '.repos[].path' "$ROOT_PIPELINE_DIR/repos.json" | while IFS= read -r REPO;
     --config "$REPO/.pylon/verify.yml" \
     --acceptance "$ROOT_PIPELINE_DIR/acceptance-criteria.json" \
     --output "$REPO_PIPELINE_DIR/criteria.json" \
+    --held-out-output "$REPO_PIPELINE_DIR/evaluator-only/held-out.json" \
     --manifest "$REPO_PIPELINE_DIR/status.json"
 done
 ```
 
 생성 결과는 `$ROOT_PIPELINE_DIR/status.json`의 `sub_pipelines`에 등록됩니다. 이후 단계에서는 전역
 `$BRANCH`를 만들지 말고 각 항목의 `repo`, `pipeline_dir`, `branch`, `base_revision`을 함께 사용합니다.
-`criteria.json`은 worker 실행 전에 만들어지며 이후 구현 agent는 읽기만 합니다.
+`criteria.json`은 worker 실행 전에 만들어지며 deterministic 명령과 acceptance criteria만 포함합니다.
+held-out 명령은 manifest에 binding된 `$REPO_PIPELINE_DIR/evaluator-only/held-out.json`에 별도 저장하고
+구현 agent 프롬프트나 evaluator input bundle에 경로·내용을 전달하지 않습니다.
 
 ### Step 4: 사전조건 검증
 
@@ -171,6 +174,11 @@ pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase planne
 ### Step 6: 에이전트 병렬 실행
 
 독립 태스크는 Agent 도구로 병렬 실행합니다.
+
+각 Agent 호출은 `/pl:execute`의 durable state lifecycle을 따라야 합니다. root run에 대해
+`pylon internal state create-run` 또는 재시작 시 `state recover`를 먼저 수행하고, 모든 태스크를
+`create-task -> ready -> claim -> start`로 전이한 뒤 Agent를 시작합니다. Agent 결과는 동일 attempt의
+fencing token으로 `state complete`가 성공한 경우에만 trajectory와 `execution-log.json`에 반영합니다.
 
 **프롬프트에는 아래 6가지를 모두 넣습니다.** 서브 에이전트는 이 대화도, Step 3에서 만든 설계도 보지
 못합니다 — 프롬프트에 넣지 않은 것은 존재하지 않는 것과 같습니다. 경로만 넘기지 말고 **내용을 붙여넣습니다**.
@@ -328,6 +336,26 @@ pylon internal evaluator record \
 
 모든 acceptance criterion이 포함되지 않았거나 하나라도 `partial/missing`인데 `pass`를 반환하면 기록이
 거부됩니다. deterministic gate 실패는 evaluator PASS로 덮어쓸 수 없습니다.
+
+evaluator 결과를 기록한 뒤 해당 repo에서 `verifying` 상태인 모든 태스크를 최종 확정합니다. 두 gate 중
+하나라도 실패하면 해당 플래그를 생략하여 task를 `failed`로 만들며, 자연어 Agent 보고만으로 성공 처리하지
+않습니다:
+
+```bash
+DETERMINISTIC_PASSED=$(jq -r '.passed == true' "$REPO_PIPELINE_DIR/verification.json")
+EVALUATOR_PASSED=$(jq -r '.status == "pass"' "$REPO_PIPELINE_DIR/evaluator-result.json")
+
+jq -r --arg repo_id "$REPO_ID" '.tasks[] | select(.repo_id == $repo_id) | .id' "$PIPELINE_DIR/tasks.json" |
+while read -r TASK_ID; do
+  [[ $(pylon internal state show "$PIPELINE_ID" "$TASK_ID" | jq -r '.status') == "verifying" ]] || continue
+  VERIFY_ARGS=()
+  [[ "$DETERMINISTIC_PASSED" == "true" ]] && VERIFY_ARGS+=(--deterministic)
+  [[ "$EVALUATOR_PASSED" == "true" ]] && VERIFY_ARGS+=(--evaluator)
+  pylon internal state verify "$PIPELINE_ID" "$TASK_ID" \
+    "${VERIFY_ARGS[@]}" \
+    --evidence "$REPO_PIPELINE_DIR/verification.json,$REPO_PIPELINE_DIR/evaluator-result.json"
+done
+```
 
 ### Step 8: PR 생성 (선택)
 

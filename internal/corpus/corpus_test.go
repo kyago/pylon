@@ -66,10 +66,27 @@ func TestProviderNarrativeDoesNotAffectMechanicalVerdict(t *testing.T) {
 	if !first.Passed || !second.Passed || len(first.Cases) != len(second.Cases) {
 		t.Fatalf("provider-neutral reports failed: first=%+v second=%+v", first, second)
 	}
+	if err := ValidateReport(first, fixtures); err != nil {
+		t.Fatalf("valid corpus report rejected: %v", err)
+	}
 	for index := range first.Cases {
 		if first.Cases[index].Passed != second.Cases[index].Passed || len(first.Cases[index].Mismatches) != 0 || len(second.Cases[index].Mismatches) != 0 {
 			t.Fatalf("provider text changed result at %d", index)
 		}
+	}
+}
+
+func TestValidateReportRejectsSubsetWithPassedFlag(t *testing.T) {
+	fixtures, err := LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Report{
+		SchemaVersion: SchemaVersion, FixtureSetDigest: FixtureSetDigest(fixtures), Passed: true,
+		Cases: []CaseResult{{FixtureID: fixtures[0].ID, Category: fixtures[0].Category, Passed: true}},
+	}
+	if err := ValidateReport(report, fixtures); err == nil {
+		t.Fatal("subset report was accepted")
 	}
 }
 

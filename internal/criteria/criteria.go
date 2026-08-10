@@ -43,6 +43,18 @@ type Snapshot struct {
 	Digest             string                   `json:"digest"`
 }
 
+type HeldOutSnapshot struct {
+	SchemaVersion  int                      `json:"schema_version"`
+	RunID          string                   `json:"run_id"`
+	RepoID         string                   `json:"repo_id"`
+	BaseRevision   string                   `json:"base_revision"`
+	CriteriaDigest string                   `json:"criteria_digest"`
+	Verification   []config.NamedVerifyStep `json:"verification"`
+	Source         Source                   `json:"source"`
+	CreatedAt      time.Time                `json:"created_at"`
+	Digest         string                   `json:"digest"`
+}
+
 type ManifestReference struct {
 	Path         string    `json:"path"`
 	Digest       string    `json:"digest"`
@@ -67,6 +79,7 @@ type CreateOptions struct {
 	ConfigPath         string
 	AcceptancePath     string
 	OutputPath         string
+	HeldOutOutputPath  string
 	ManifestPath       string
 	AcceptanceCriteria []provider.Criterion
 	Now                func() time.Time
@@ -114,13 +127,20 @@ func Create(options CreateOptions) (Snapshot, error) {
 	if err := validateSteps(steps); err != nil {
 		return Snapshot{}, err
 	}
+	deterministicSteps, heldOutSteps := splitVerificationSteps(steps)
+	if len(heldOutSteps) > 0 && options.HeldOutOutputPath == "" {
+		return Snapshot{}, errors.New("held-out output path is required when held-out verification is configured")
+	}
 	if existing, loadErr := Load(options.OutputPath); loadErr == nil {
 		if existing.RunID == options.RunID &&
 			existing.RepoID == options.RepoID &&
 			existing.BaseRevision == options.BaseRevision &&
 			reflect.DeepEqual(existing.AcceptanceCriteria, acceptance) &&
-			reflect.DeepEqual(existing.Verification, steps) &&
+			reflect.DeepEqual(existing.Verification, deterministicSteps) &&
 			existing.Source == source {
+			if err := ensureHeldOutSnapshot(options, existing, heldOutSteps); err != nil {
+				return Snapshot{}, err
+			}
 			if options.ManifestPath != "" {
 				if err := BindManifest(options.ManifestPath, options.OutputPath, existing); err != nil {
 					return Snapshot{}, err
@@ -145,7 +165,7 @@ func Create(options CreateOptions) (Snapshot, error) {
 		RepoID:             options.RepoID,
 		BaseRevision:       options.BaseRevision,
 		AcceptanceCriteria: acceptance,
-		Verification:       cloneSteps(steps),
+		Verification:       cloneSteps(deterministicSteps),
 		Source:             source,
 		CreatedAt:          now().UTC(),
 	}
@@ -154,6 +174,9 @@ func Create(options CreateOptions) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	snapshot.Digest = digest
+	if err := ensureHeldOutSnapshot(options, snapshot, heldOutSteps); err != nil {
+		return Snapshot{}, err
+	}
 	if err := fsutil.WriteJSONAtomic(options.OutputPath, snapshot); err != nil {
 		return Snapshot{}, err
 	}
@@ -163,6 +186,43 @@ func Create(options CreateOptions) (Snapshot, error) {
 		}
 	}
 	return snapshot, nil
+}
+
+func ensureHeldOutSnapshot(options CreateOptions, snapshot Snapshot, steps []config.NamedVerifyStep) error {
+	if len(steps) == 0 {
+		return nil
+	}
+	now := snapshot.CreatedAt
+	heldOut := HeldOutSnapshot{
+		SchemaVersion: SchemaVersion, RunID: snapshot.RunID, RepoID: snapshot.RepoID,
+		BaseRevision: snapshot.BaseRevision, CriteriaDigest: snapshot.Digest,
+		Verification: cloneSteps(steps), Source: snapshot.Source, CreatedAt: now,
+	}
+	digest, err := HeldOutDigest(heldOut)
+	if err != nil {
+		return err
+	}
+	heldOut.Digest = digest
+	if existing, loadErr := LoadHeldOut(options.HeldOutOutputPath); loadErr == nil {
+		if !reflect.DeepEqual(existing, heldOut) {
+			return fmt.Errorf("%w: %s", ErrAlreadyExists, options.HeldOutOutputPath)
+		}
+	} else if os.IsNotExist(loadErr) {
+		if err := fsutil.WriteJSONAtomic(options.HeldOutOutputPath, heldOut); err != nil {
+			return err
+		}
+	} else {
+		return loadErr
+	}
+	if options.ManifestPath != "" {
+		if err := BindHeldOutManifest(options.ManifestPath, options.HeldOutOutputPath, heldOut); err != nil {
+			return err
+		}
+		if err := ValidateHeldOutManifest(options.ManifestPath, options.HeldOutOutputPath, heldOut); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ResolveVerification(workDir, configPath string) ([]config.NamedVerifyStep, bool, Source, error) {
@@ -192,6 +252,19 @@ func ResolveVerification(workDir, configPath string) ([]config.NamedVerifyStep, 
 	return nil, true, Source{Path: configPath, Mode: "missing"}, nil
 }
 
+func splitVerificationSteps(steps []config.NamedVerifyStep) ([]config.NamedVerifyStep, []config.NamedVerifyStep) {
+	deterministic := make([]config.NamedVerifyStep, 0, len(steps))
+	heldOut := make([]config.NamedVerifyStep, 0)
+	for _, step := range steps {
+		if step.Kind == config.VerifyKindHeldOut {
+			heldOut = append(heldOut, step)
+		} else {
+			deterministic = append(deterministic, step)
+		}
+	}
+	return deterministic, heldOut
+}
+
 func Load(path string) (Snapshot, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -211,11 +284,13 @@ func Load(path string) (Snapshot, error) {
 	if snapshot.Digest == "" || snapshot.Digest != actual {
 		return Snapshot{}, fmt.Errorf("%w: snapshot digest mismatch (expected %s, actual %s)", ErrIntegrityFailure, snapshot.Digest, actual)
 	}
-	if len(snapshot.Verification) == 0 {
-		return Snapshot{}, fmt.Errorf("%w: snapshot has no verification commands", ErrIntegrityFailure)
-	}
 	if err := validateSteps(snapshot.Verification); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %v", ErrIntegrityFailure, err)
+	}
+	for _, step := range snapshot.Verification {
+		if step.Kind == config.VerifyKindHeldOut {
+			return Snapshot{}, fmt.Errorf("%w: held-out command is exposed in public criteria", ErrIntegrityFailure)
+		}
 	}
 	if err := validateAcceptanceCriteria(snapshot.AcceptanceCriteria); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %v", ErrIntegrityFailure, err)
@@ -241,6 +316,39 @@ func Load(path string) (Snapshot, error) {
 	return snapshot, nil
 }
 
+func LoadHeldOut(path string) (HeldOutSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return HeldOutSnapshot{}, err
+	}
+	var snapshot HeldOutSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return HeldOutSnapshot{}, fmt.Errorf("failed to parse held-out snapshot: %w", err)
+	}
+	actual, err := HeldOutDigest(snapshot)
+	if err != nil {
+		return HeldOutSnapshot{}, err
+	}
+	if snapshot.SchemaVersion != SchemaVersion || snapshot.Digest == "" || snapshot.Digest != actual {
+		return HeldOutSnapshot{}, fmt.Errorf("%w: held-out snapshot digest mismatch", ErrIntegrityFailure)
+	}
+	if snapshot.RunID == "" || snapshot.RepoID == "" || snapshot.BaseRevision == "" || snapshot.CriteriaDigest == "" {
+		return HeldOutSnapshot{}, fmt.Errorf("%w: held-out identity is incomplete", ErrIntegrityFailure)
+	}
+	if len(snapshot.Verification) == 0 {
+		return HeldOutSnapshot{}, fmt.Errorf("%w: held-out snapshot has no commands", ErrIntegrityFailure)
+	}
+	if err := validateSteps(snapshot.Verification); err != nil {
+		return HeldOutSnapshot{}, fmt.Errorf("%w: %v", ErrIntegrityFailure, err)
+	}
+	for _, step := range snapshot.Verification {
+		if step.Kind != config.VerifyKindHeldOut {
+			return HeldOutSnapshot{}, fmt.Errorf("%w: non-held-out command in evaluator snapshot", ErrIntegrityFailure)
+		}
+	}
+	return snapshot, nil
+}
+
 func SnapshotDigest(snapshot Snapshot) (string, error) {
 	snapshot.Digest = ""
 	data, err := json.Marshal(snapshot)
@@ -250,7 +358,28 @@ func SnapshotDigest(snapshot Snapshot) (string, error) {
 	return digestBytes(data), nil
 }
 
+func HeldOutDigest(snapshot HeldOutSnapshot) (string, error) {
+	snapshot.Digest = ""
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", err
+	}
+	return digestBytes(data), nil
+}
+
 func BindManifest(manifestPath, snapshotPath string, snapshot Snapshot) error {
+	return bindManifestReference(manifestPath, snapshotPath, "criteria", ManifestReference{
+		Digest: snapshot.Digest, SourceDigest: snapshot.Source.Digest, CreatedAt: snapshot.CreatedAt,
+	})
+}
+
+func BindHeldOutManifest(manifestPath, snapshotPath string, snapshot HeldOutSnapshot) error {
+	return bindManifestReference(manifestPath, snapshotPath, "held_out", ManifestReference{
+		Digest: snapshot.Digest, SourceDigest: snapshot.Source.Digest, CreatedAt: snapshot.CreatedAt,
+	})
+}
+
+func bindManifestReference(manifestPath, snapshotPath, field string, reference ManifestReference) error {
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("failed to read run manifest: %w", err)
@@ -266,13 +395,8 @@ func BindManifest(manifestPath, snapshotPath string, snapshot Snapshot) error {
 	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return errors.New("criteria snapshot must be inside the run manifest directory")
 	}
-	reference := ManifestReference{
-		Path:         filepath.ToSlash(relative),
-		Digest:       snapshot.Digest,
-		SourceDigest: snapshot.Source.Digest,
-		CreatedAt:    snapshot.CreatedAt,
-	}
-	if raw, exists := manifest["criteria"]; exists && raw != nil {
+	reference.Path = filepath.ToSlash(relative)
+	if raw, exists := manifest[field]; exists && raw != nil {
 		existingData, marshalErr := json.Marshal(raw)
 		if marshalErr != nil {
 			return marshalErr
@@ -282,11 +406,11 @@ func BindManifest(manifestPath, snapshotPath string, snapshot Snapshot) error {
 			return unmarshalErr
 		}
 		if existing != reference {
-			return fmt.Errorf("%w: manifest criteria reference", ErrAlreadyExists)
+			return fmt.Errorf("%w: manifest %s reference", ErrAlreadyExists, field)
 		}
 		return nil
 	}
-	manifest["criteria"] = reference
+	manifest[field] = reference
 	return fsutil.WriteJSONAtomic(manifestPath, manifest)
 }
 
@@ -341,6 +465,83 @@ func ValidateManifest(manifestPath, snapshotPath string, snapshot Snapshot) erro
 	}
 	if manifest.BaseRevision != "" && manifest.BaseRevision != snapshot.BaseRevision {
 		return fmt.Errorf("%w: base revision mismatch", ErrIntegrityFailure)
+	}
+	return nil
+}
+
+func ValidateHeldOutManifest(manifestPath, snapshotPath string, snapshot HeldOutSnapshot) error {
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("%w: failed to read run manifest: %v", ErrIntegrityFailure, err)
+	}
+	var manifest struct {
+		RootRunID    string             `json:"root_pipeline_id"`
+		PipelineID   string             `json:"pipeline_id"`
+		RepoID       string             `json:"repo_id"`
+		BaseRevision string             `json:"base_revision"`
+		HeldOut      *ManifestReference `json:"held_out"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("%w: failed to parse run manifest: %v", ErrIntegrityFailure, err)
+	}
+	if manifest.HeldOut == nil {
+		return fmt.Errorf("%w: manifest has no held-out reference", ErrIntegrityFailure)
+	}
+	if err := validateReferencePath(manifestPath, snapshotPath, *manifest.HeldOut, snapshot.Digest, snapshot.Source.Digest); err != nil {
+		return err
+	}
+	runID := manifest.RootRunID
+	if runID == "" {
+		runID = manifest.PipelineID
+	}
+	if runID != "" && runID != snapshot.RunID {
+		return fmt.Errorf("%w: manifest run id mismatch", ErrIntegrityFailure)
+	}
+	if manifest.RepoID != "" && manifest.RepoID != snapshot.RepoID {
+		return fmt.Errorf("%w: manifest repo id mismatch", ErrIntegrityFailure)
+	}
+	if manifest.BaseRevision != "" && manifest.BaseRevision != snapshot.BaseRevision {
+		return fmt.Errorf("%w: manifest base revision mismatch", ErrIntegrityFailure)
+	}
+	return nil
+}
+
+func ManifestHeldOutPath(manifestPath string) (string, bool, error) {
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", false, err
+	}
+	var manifest struct {
+		HeldOut *ManifestReference `json:"held_out"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", false, err
+	}
+	if manifest.HeldOut == nil {
+		return "", false, nil
+	}
+	clean := filepath.Clean(filepath.FromSlash(manifest.HeldOut.Path))
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
+		return "", false, fmt.Errorf("%w: held-out path escapes manifest directory", ErrIntegrityFailure)
+	}
+	return filepath.Join(filepath.Dir(manifestPath), clean), true, nil
+}
+
+func validateReferencePath(manifestPath, snapshotPath string, reference ManifestReference, digest, sourceDigest string) error {
+	expectedPath := filepath.Clean(filepath.Join(filepath.Dir(manifestPath), filepath.FromSlash(reference.Path)))
+	actualPath, err := filepath.Abs(snapshotPath)
+	if err != nil {
+		return err
+	}
+	expectedPath, err = filepath.Abs(expectedPath)
+	if err != nil {
+		return err
+	}
+	if actualPath != expectedPath {
+		return fmt.Errorf("%w: manifest snapshot path mismatch", ErrIntegrityFailure)
+	}
+	if reference.Digest != digest || reference.SourceDigest != sourceDigest {
+		return fmt.Errorf("%w: manifest snapshot digest mismatch", ErrIntegrityFailure)
 	}
 	return nil
 }

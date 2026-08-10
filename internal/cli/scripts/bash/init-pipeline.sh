@@ -15,8 +15,7 @@ REQUIREMENT="${1:?Usage: init-pipeline.sh <requirement> [--git-root <repo-rel-pa
 # Generate slug from requirement
 SLUG=$(echo "$REQUIREMENT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9가-힣]/-/g' | sed 's/--*/-/g' | cut -c1-30 | sed 's/-$//')
 [[ -n "$SLUG" ]] || SLUG="run"
-PIPELINE_ID="$(date +%Y%m%d)-${SLUG}"
-BRANCH="task-${SLUG}"
+PIPELINE_ID="$(date -u +%Y%m%dT%H%M%SZ)-${SLUG}-$$"
 
 # --- Sub-pipeline mode: --git-root + --pipeline-dir both provided ---
 if [[ -n "$GIT_ROOT_ARG" && -n "$PIPELINE_DIR_ARG" ]]; then
@@ -36,6 +35,8 @@ if [[ -n "$GIT_ROOT_ARG" && -n "$PIPELINE_DIR_ARG" ]]; then
   [[ -n "$REPO_ID" && "$REPO_ID" != "." ]] || REPO_ID="root-repo"
   SUB_PIPELINE_DIR="${PIPELINE_DIR_ARG}/repos/${REPO_ID}"
   mkdir -p "$SUB_PIPELINE_DIR"
+  ROOT_PIPELINE_ID=$(jq -r --arg fallback "$(basename "$PIPELINE_DIR_ARG")" '.pipeline_id // $fallback' "$ROOT_STATUS")
+  EXPECTED_BRANCH="task-${ROOT_PIPELINE_ID}-${REPO_ID}"
 
   # Create or checkout branch in target repo
   if ! git -C "$GIT_ROOT" diff --quiet || ! git -C "$GIT_ROOT" diff --cached --quiet; then
@@ -44,23 +45,30 @@ if [[ -n "$GIT_ROOT_ARG" && -n "$PIPELINE_DIR_ARG" ]]; then
   if [[ -f "$SUB_PIPELINE_DIR/status.json" ]]; then
     STORED_REPO=$(jq -r '.repo // ""' "$SUB_PIPELINE_DIR/status.json")
     [[ "$STORED_REPO" == "$REPO_RELATIVE" ]] || die "sub-pipeline repo ownership mismatch: $SUB_PIPELINE_DIR"
+    STORED_ROOT_PIPELINE_ID=$(jq -r '.root_pipeline_id // ""' "$SUB_PIPELINE_DIR/status.json")
+    [[ "$STORED_ROOT_PIPELINE_ID" == "$ROOT_PIPELINE_ID" ]] || die "sub-pipeline root ownership mismatch: $SUB_PIPELINE_DIR"
+    BRANCH=$(jq -r '.branch // ""' "$SUB_PIPELINE_DIR/status.json")
+    [[ "$BRANCH" == "$EXPECTED_BRANCH" ]] || die "sub-pipeline branch ownership mismatch: expected '$EXPECTED_BRANCH', found '$BRANCH'"
     BASE_REVISION=$(jq -r '.base_revision // ""' "$SUB_PIPELINE_DIR/status.json")
     BASE_BRANCH=$(jq -r '.base_branch // ""' "$SUB_PIPELINE_DIR/status.json")
     STARTED_AT=$(jq -r '.started_at // ""' "$SUB_PIPELINE_DIR/status.json")
   else
+    BRANCH="$EXPECTED_BRANCH"
     BASE_REVISION=$(git -C "$GIT_ROOT" rev-parse HEAD)
     BASE_BRANCH=$(git -C "$GIT_ROOT" branch --show-current)
     STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   fi
   [[ -n "$BASE_REVISION" ]] || die "sub-pipeline base revision is missing: $SUB_PIPELINE_DIR"
   if git -C "$GIT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+    [[ -f "$SUB_PIPELINE_DIR/status.json" ]] || die "branch already exists without sub-pipeline ownership: $BRANCH"
+    git -C "$GIT_ROOT" merge-base --is-ancestor "$BASE_REVISION" "$BRANCH" \
+      || die "owned branch no longer descends from recorded base revision: $BRANCH ($BASE_REVISION)"
     git -C "$GIT_ROOT" checkout "$BRANCH" || die "브랜치 전환 실패: $BRANCH"
   else
-    git -C "$GIT_ROOT" checkout -b "$BRANCH" || die "브랜치 생성 실패: $BRANCH"
+    git -C "$GIT_ROOT" checkout -b "$BRANCH" "$BASE_REVISION" || die "브랜치 생성 실패: $BRANCH"
   fi
 
   # Initialize sub-pipeline status.json
-  ROOT_PIPELINE_ID=$(jq -r --arg fallback "$(basename "$PIPELINE_DIR_ARG")" '.pipeline_id // $fallback' "$ROOT_STATUS")
   jq -cn \
     --arg scope "repo" \
     --arg root_pipeline_id "$ROOT_PIPELINE_ID" \

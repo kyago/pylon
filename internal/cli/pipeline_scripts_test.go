@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kyago/pylon/internal/history"
 )
 
 type pipelineInitResult struct {
@@ -67,6 +69,56 @@ func TestInitPipelineRootOwnsNoBranchAndRegistersRepoPipelines(t *testing.T) {
 	}
 }
 
+func TestInitPipelineNamespacesBranchesByLogicalRun(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+
+	firstRoot := runInitPipeline(t, workspace, "repeat requirement")
+	firstSub := runInitPipeline(t, workspace, "repeat requirement", "--git-root", "service-a", "--pipeline-dir", firstRoot.PipelineDir)
+	runPipelineGit(t, repo, "checkout", "main")
+	secondRoot := runInitPipeline(t, workspace, "repeat requirement")
+	secondSub := runInitPipeline(t, workspace, "repeat requirement", "--git-root", "service-a", "--pipeline-dir", secondRoot.PipelineDir)
+
+	if firstRoot.PipelineID == secondRoot.PipelineID {
+		t.Fatalf("logical runs reused pipeline id %q", firstRoot.PipelineID)
+	}
+	if firstSub.Branch == secondSub.Branch {
+		t.Fatalf("logical runs reused task branch %q", firstSub.Branch)
+	}
+	if !strings.Contains(firstSub.Branch, firstRoot.PipelineID) || !strings.Contains(secondSub.Branch, secondRoot.PipelineID) {
+		t.Fatalf("branches are not namespaced by run: %q %q", firstSub.Branch, secondSub.Branch)
+	}
+}
+
+func TestInitPipelineRejectsOwnedBranchThatLostBaseAncestry(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "stale branch")
+	sub := runInitPipeline(t, workspace, "stale branch", "--git-root", "service-a", "--pipeline-dir", root.PipelineDir)
+
+	runPipelineGit(t, repo, "checkout", "--orphan", "unrelated")
+	runPipelineGit(t, repo, "rm", "-rf", ".")
+	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("unrelated\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runPipelineGit(t, repo, "add", "unrelated.txt")
+	runPipelineGit(t, repo, "commit", "-m", "unrelated root")
+	unrelated := strings.TrimSpace(runPipelineGit(t, repo, "rev-parse", "HEAD"))
+	runPipelineGit(t, repo, "checkout", "main")
+	runPipelineGit(t, repo, "branch", "-f", sub.Branch, unrelated)
+
+	cmd := exec.Command(filepath.Join(workspace, ".pylon", "scripts", "bash", "init-pipeline.sh"),
+		"stale branch", "--git-root", "service-a", "--pipeline-dir", root.PipelineDir)
+	cmd.Dir = workspace
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("stale owned branch was accepted: %s", output)
+	}
+	if !strings.Contains(string(output), "recorded base revision") {
+		t.Fatalf("unexpected stale branch error: %s", output)
+	}
+}
+
 func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	workspace := setupPipelineScriptWorkspace(t)
 	repo, _ := initGitRepo(t, workspace, "service-a")
@@ -91,12 +143,7 @@ func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	}
 	assertBranchExists(t, repo, agentBranch)
 
-	manifestDir := filepath.Join(workspace, ".pylon", "history", "pipelines", root.PipelineID, "completed")
-	if err := os.MkdirAll(manifestDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	manifest := `{"pipeline_id":"` + root.PipelineID + `","phase":"completed"}`
-	if err := os.WriteFile(filepath.Join(manifestDir, "manifest.json"), []byte(manifest), 0644); err != nil {
+	if _, err := history.NewManager(workspace).Checkpoint(root.PipelineID, history.PhaseCompleted); err != nil {
 		t.Fatal(err)
 	}
 	readOnlyDir := filepath.Join(sub.PipelineDir, "evaluator-input")
@@ -113,6 +160,21 @@ func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 
 	cmd = exec.Command(cleanup, sub.PipelineDir, "--terminal-phase", "completed")
 	cmd.Dir = workspace
+	binDir := filepath.Join(workspace, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pylonBin := filepath.Join(binDir, "pylon")
+	build := exec.Command("go", "build", "-o", pylonBin, "./cmd/pylon")
+	build.Dir = repoRoot
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build pylon: %v\n%s", err, output)
+	}
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if output, err = cmd.CombinedOutput(); err != nil {
 		t.Fatalf("cleanup with checkpoint failed: %v\n%s", err, output)
 	}

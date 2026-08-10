@@ -44,6 +44,7 @@ func newInternalCriteriaSnapshotCmd() *cobra.Command {
 	cmd.Flags().StringVar(&options.ConfigPath, "config", "", "live verify.yml path")
 	cmd.Flags().StringVar(&options.AcceptancePath, "acceptance", "", "normalized acceptance criteria JSON path")
 	cmd.Flags().StringVar(&options.OutputPath, "output", "", "criteria snapshot output path")
+	cmd.Flags().StringVar(&options.HeldOutOutputPath, "held-out-output", "", "evaluator-only held-out snapshot output path")
 	cmd.Flags().StringVar(&options.ManifestPath, "manifest", "", "run manifest to bind to the snapshot")
 	for _, name := range []string{"run-id", "repo-id", "base-revision", "workdir", "acceptance", "output", "manifest"} {
 		_ = cmd.MarkFlagRequired(name)

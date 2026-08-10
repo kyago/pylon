@@ -70,24 +70,26 @@ type Decision struct {
 }
 
 type RegressionGate struct {
-	ReportDigest string    `json:"report_digest"`
-	CaseCount    int       `json:"case_count"`
-	PassedAt     time.Time `json:"passed_at"`
+	ReportDigest     string    `json:"report_digest"`
+	FixtureSetDigest string    `json:"fixture_set_digest"`
+	CaseCount        int       `json:"case_count"`
+	PassedAt         time.Time `json:"passed_at"`
 }
 
 type Status struct {
-	SchemaVersion    int               `json:"schema_version"`
-	CandidateID      string            `json:"candidate_id"`
-	Type             string            `json:"type"`
-	Status           string            `json:"status"`
-	SourceCheckpoint string            `json:"source_checkpoint"`
-	SourceDigest     string            `json:"source_digest"`
-	ProposalDigest   string            `json:"proposal_digest"`
-	Artifacts        map[string]string `json:"artifacts"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
-	Decisions        []Decision        `json:"decisions,omitempty"`
-	RegressionGate   *RegressionGate   `json:"regression_gate,omitempty"`
+	SchemaVersion      int               `json:"schema_version"`
+	CandidateID        string            `json:"candidate_id"`
+	Type               string            `json:"type"`
+	Status             string            `json:"status"`
+	SourceCheckpoint   string            `json:"source_checkpoint"`
+	SourceDigest       string            `json:"source_digest"`
+	ProposalDigest     string            `json:"proposal_digest"`
+	Artifacts          map[string]string `json:"artifacts"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
+	Decisions          []Decision        `json:"decisions,omitempty"`
+	RegressionFixtures []string          `json:"regression_fixtures,omitempty"`
+	RegressionGate     *RegressionGate   `json:"regression_gate,omitempty"`
 }
 
 type Candidate struct {
@@ -107,6 +109,13 @@ func Create(options CreateOptions) (Candidate, error) {
 	proposal := options.Proposal
 	normalizeProposal(&proposal)
 	if err := validateProposal(proposal); err != nil {
+		return Candidate{}, err
+	}
+	fixtures, err := corpus.LoadEmbedded()
+	if err != nil {
+		return Candidate{}, err
+	}
+	if err := validateRegressionFixtures(proposal.RegressionFixtures, fixtures); err != nil {
 		return Candidate{}, err
 	}
 	manager := history.NewManager(options.Root)
@@ -147,7 +156,8 @@ func Create(options CreateOptions) (Candidate, error) {
 		SchemaVersion: SchemaVersion, CandidateID: candidateID, Type: proposal.Type,
 		Status: "pending_review", SourceCheckpoint: options.CheckpointRef,
 		SourceDigest: manifest.Digest, ProposalDigest: proposalDigest,
-		CreatedAt: now, UpdatedAt: now,
+		RegressionFixtures: proposal.RegressionFixtures,
+		CreatedAt:          now, UpdatedAt: now,
 	}
 	evidence, err := buildEvidence(checkpointDir, options.CheckpointRef, *manifest, proposal.EvidenceRefs)
 	if err != nil {
@@ -217,20 +227,49 @@ func Gate(root, candidateIDValue, reportPath string, now func() time.Time) (Stat
 	if err := json.Unmarshal(data, &report); err != nil {
 		return Status{}, fmt.Errorf("corpus report parse failed: %w", err)
 	}
-	if report.SchemaVersion != corpus.SchemaVersion || !report.Passed || len(report.Cases) == 0 {
-		return Status{}, fmt.Errorf("%w: corpus report did not pass", ErrInvalidTransition)
+	fixtures, err := corpus.LoadEmbedded()
+	if err != nil {
+		return Status{}, err
+	}
+	if err := corpus.ValidateReport(report, fixtures); err != nil {
+		return Status{}, fmt.Errorf("%w: %v", ErrInvalidTransition, err)
+	}
+	caseIDs := make(map[string]bool, len(report.Cases))
+	for _, result := range report.Cases {
+		caseIDs[result.FixtureID] = true
 	}
 	reportDigest := digestBytes(data)
 	return updateCandidateStatus(root, candidateIDValue, func(status *Status) error {
 		if status.Status != "approved" {
 			return fmt.Errorf("%w: %s -> regression_passed", ErrInvalidTransition, status.Status)
 		}
+		for _, fixtureID := range status.RegressionFixtures {
+			if !caseIDs[fixtureID] {
+				return fmt.Errorf("%w: required regression fixture %q was not run", ErrInvalidTransition, fixtureID)
+			}
+		}
 		passedAt := resolveNow(now)
 		status.Status = "regression_passed"
 		status.UpdatedAt = passedAt
-		status.RegressionGate = &RegressionGate{ReportDigest: reportDigest, CaseCount: len(report.Cases), PassedAt: passedAt}
+		status.RegressionGate = &RegressionGate{
+			ReportDigest: reportDigest, FixtureSetDigest: report.FixtureSetDigest,
+			CaseCount: len(report.Cases), PassedAt: passedAt,
+		}
 		return nil
 	})
+}
+
+func validateRegressionFixtures(requested []string, fixtures []corpus.Fixture) error {
+	known := make(map[string]bool, len(fixtures))
+	for _, fixture := range fixtures {
+		known[fixture.ID] = true
+	}
+	for _, fixtureID := range requested {
+		if !known[fixtureID] {
+			return fmt.Errorf("%w: unknown regression fixture %q", ErrInvalidProposal, fixtureID)
+		}
+	}
+	return nil
 }
 
 func validateFinalizedCheckpoint(dir string, manifest history.Manifest) error {

@@ -69,6 +69,9 @@ MANIFEST_PIPELINE=$(jq -r '.pipeline_id // ""' "$MANIFEST")
 MANIFEST_PHASE=$(jq -r '.phase // ""' "$MANIFEST")
 [[ "$MANIFEST_PIPELINE" == "$ROOT_PIPELINE_ID" && "$MANIFEST_PHASE" == "$TERMINAL_PHASE" ]] \
   || die "terminal checkpoint manifest does not match pipeline/phase: $MANIFEST"
+require_cmd pylon
+pylon history validate "$ROOT_PIPELINE_ID/$TERMINAL_PHASE" >/dev/null \
+  || die "terminal checkpoint integrity validation failed: $ROOT_PIPELINE_ID/$TERMINAL_PHASE"
 
 CLEANED=()
 

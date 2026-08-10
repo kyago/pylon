@@ -90,6 +90,16 @@ func TestCleanupPipelineScript_RuntimeBranches(t *testing.T) {
 		}
 	}
 	script := filepath.Join(tmp, "cleanup-pipeline.sh")
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	pylonBin := filepath.Join(binDir, "pylon")
+	build := exec.Command("go", "build", "-o", pylonBin, "./cmd/pylon")
+	build.Dir = repoRoot
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build pylon: %v\n%s", err, out)
+	}
 
 	// common.sh의 find_repo_root()가 .pylon/ 을 찾을 수 있도록 작업 디렉토리를 준비한다.
 	pylonDir := filepath.Join(tmp, ".pylon")
@@ -108,23 +118,22 @@ func TestCleanupPipelineScript_RuntimeBranches(t *testing.T) {
 		}
 		cmd := exec.Command("bash", args...)
 		cmd.Dir = tmp
+		cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		return cmd.CombinedOutput()
 	}
 
 	// 분기 1: terminal checkpoint 확인 → 디렉토리 삭제
-	deleted := filepath.Join(tmp, "runtime-deleted")
+	deleted := filepath.Join(pylonDir, "runtime", "runtime-deleted")
 	if err := os.MkdirAll(deleted, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(deleted, "status.json"), []byte(`{"pipeline_id":"runtime-deleted","scope":"root"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	manifestDir := filepath.Join(pylonDir, "history", "pipelines", "runtime-deleted", "completed")
-	if err := os.MkdirAll(manifestDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(manifestDir, "manifest.json"), []byte(`{"pipeline_id":"runtime-deleted","phase":"completed"}`), 0644); err != nil {
-		t.Fatal(err)
+	checkpoint := exec.Command(pylonBin, "history", "checkpoint", "--pipeline", "runtime-deleted", "--phase", "completed")
+	checkpoint.Dir = tmp
+	if out, err := checkpoint.CombinedOutput(); err != nil {
+		t.Fatalf("create checkpoint: %v\n%s", err, out)
 	}
 	if out, err := runScript(deleted, "completed"); err != nil {
 		t.Fatalf("script failed: %v\n%s", err, out)
@@ -133,7 +142,29 @@ func TestCleanupPipelineScript_RuntimeBranches(t *testing.T) {
 		t.Fatalf("runtime dir must be deleted after checkpoint: %v", err)
 	}
 
-	// 분기 2: checkpoint 미지정 → preserved 마킹 후 보존
+	// 분기 2: 형식만 맞춘 가짜 manifest는 runtime 삭제를 승인하지 않는다.
+	forged := filepath.Join(pylonDir, "runtime", "runtime-forged")
+	if err := os.MkdirAll(forged, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(forged, "status.json"), []byte(`{"pipeline_id":"runtime-forged","scope":"root"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	forgedManifestDir := filepath.Join(pylonDir, "history", "pipelines", "runtime-forged", "completed")
+	if err := os.MkdirAll(forgedManifestDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(forgedManifestDir, "manifest.json"), []byte(`{"pipeline_id":"runtime-forged","phase":"completed"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runScript(forged, "completed"); err == nil {
+		t.Fatalf("forged checkpoint must fail cleanup:\n%s", out)
+	}
+	if _, err := os.Stat(forged); err != nil {
+		t.Fatalf("runtime must survive forged checkpoint: %v", err)
+	}
+
+	// 분기 3: checkpoint 미지정 → preserved 마킹 후 보존
 	kept := filepath.Join(tmp, "runtime-kept")
 	if err := os.MkdirAll(kept, 0755); err != nil {
 		t.Fatal(err)

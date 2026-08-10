@@ -249,6 +249,58 @@ func TestInternalVerify_UsesFrozenSnapshotAndRejectsLiveConfigChange(t *testing.
 	}
 }
 
+func TestInternalVerify_LoadsHeldOutOnlyFromEvaluatorSnapshot(t *testing.T) {
+	workDir, runDir, configPath, snapshotPath, manifestPath := createCriteriaFixture(t)
+	publicMarker := filepath.Join(workDir, "public.txt")
+	heldOutMarker := filepath.Join(workDir, "held-out.txt")
+	configData := "build:\n  command: \"printf public > " + publicMarker + "\"\nheld_out:\n  - name: secret\n    command: \"printf held-out > " + heldOutMarker + "\"\n"
+	if err := os.WriteFile(configPath, []byte(configData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	createCriteriaSnapshot(t, workDir, configPath, snapshotPath, manifestPath)
+	heldOutPath := filepath.Join(runDir, "evaluator-only", "held-out.json")
+
+	publicData, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(publicData), "held-out.txt") || strings.Contains(string(publicData), "secret") {
+		t.Fatalf("public criteria exposed held-out command: %s", publicData)
+	}
+
+	missingHeldOut := newInternalVerifyCmd()
+	missingHeldOut.SetOut(&strings.Builder{})
+	missingHeldOut.SetErr(&strings.Builder{})
+	missingHeldOut.SetArgs([]string{
+		"--workdir", workDir,
+		"--snapshot", snapshotPath,
+		"--manifest", manifestPath,
+		"--live-config", configPath,
+	})
+	if err := missingHeldOut.Execute(); err == nil {
+		t.Fatal("manifest-bound held-out snapshot was silently skipped")
+	}
+
+	cmd := newInternalVerifyCmd()
+	cmd.SetOut(&strings.Builder{})
+	cmd.SetErr(&strings.Builder{})
+	cmd.SetArgs([]string{
+		"--workdir", workDir,
+		"--snapshot", snapshotPath,
+		"--held-out", heldOutPath,
+		"--manifest", manifestPath,
+		"--live-config", configPath,
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{publicMarker, heldOutMarker} {
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("verification marker missing %s: %v", marker, err)
+		}
+	}
+}
+
 func TestInternalVerify_RejectsTamperedSnapshotBeforeExecution(t *testing.T) {
 	workDir, runDir, configPath, snapshotPath, manifestPath := createCriteriaFixture(t)
 	markerPath := filepath.Join(workDir, "marker.txt")
@@ -417,6 +469,16 @@ printf '{"ok":true,"checks":[],"timestamp":"2026-07-23T00:00:00Z"}\n'
 	if err := os.WriteFile(filepath.Join(pipelineDir, "status.json"), []byte("{}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	heldOutPath := filepath.Join(pipelineDir, "evaluator-only", "held-out.json")
+	if err := os.MkdirAll(filepath.Dir(heldOutPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(heldOutPath, []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pipelineDir, "status.json"), []byte(`{"held_out":{"path":"evaluator-only/held-out.json"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command(filepath.Join(scriptsDir, "run-verification.sh"), pipelineDir, "--git-root", "project")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "CAPTURE_PATH="+capturePath)
@@ -440,6 +502,9 @@ printf '{"ok":true,"checks":[],"timestamp":"2026-07-23T00:00:00Z"}\n'
 	}
 	if !strings.Contains(got, "--manifest\n"+filepath.Join(pipelineDir, "status.json")) {
 		t.Fatalf("criteria manifest not forwarded:\n%s", got)
+	}
+	if !strings.Contains(got, "--held-out\n"+heldOutPath) {
+		t.Fatalf("held-out snapshot not forwarded:\n%s", got)
 	}
 	if !strings.Contains(got, "--live-config\n"+filepath.Join(resolvedProjectDir, ".pylon", "verify.yml")) {
 		t.Fatalf("live config change detector not forwarded:\n%s", got)
@@ -497,6 +562,7 @@ func createCriteriaSnapshot(t *testing.T, workDir, configPath, snapshotPath, man
 		"--config", configPath,
 		"--acceptance", acceptancePath,
 		"--output", snapshotPath,
+		"--held-out-output", filepath.Join(filepath.Dir(snapshotPath), "evaluator-only", "held-out.json"),
 		"--manifest", manifestPath,
 	})
 	if err := cmd.Execute(); err != nil {

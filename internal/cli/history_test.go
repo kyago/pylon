@@ -5,7 +5,7 @@ import "testing"
 func TestHistoryCommandExposesApprovedSubcommands(t *testing.T) {
 	cmd := newHistoryCmd()
 	want := map[string]bool{
-		"checkpoint": false, "log": false, "show": false,
+		"checkpoint": false, "validate": false, "log": false, "show": false,
 		"diff": false, "export": false,
 	}
 	for _, child := range cmd.Commands() {

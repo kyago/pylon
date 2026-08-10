@@ -53,7 +53,7 @@ func newInternalCmd() *cobra.Command {
 
 func newInternalVerifyCmd() *cobra.Command {
 	var workDir, configPath, outputPath string
-	var snapshotPath, manifestPath, liveConfigPath string
+	var snapshotPath, heldOutPath, manifestPath, liveConfigPath string
 	cmd := &cobra.Command{
 		Use:          "verify",
 		Short:        "Run project verification commands",
@@ -77,7 +77,41 @@ func newInternalVerifyCmd() *cobra.Command {
 					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
 				}
 				result.IntegrityOK = true
-				steps = snapshot.Verification
+				steps = append(steps, snapshot.Verification...)
+				expectedHeldOutPath, hasHeldOut, err := criteria.ManifestHeldOutPath(manifestPath)
+				if err != nil {
+					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
+				}
+				if hasHeldOut && heldOutPath == "" {
+					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("manifest requires --held-out evaluator snapshot"))
+				}
+				if heldOutPath != "" {
+					if !hasHeldOut {
+						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("manifest has no held-out reference"))
+					}
+					resolvedHeldOutPath, resolveErr := filepath.Abs(heldOutPath)
+					if resolveErr != nil {
+						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", resolveErr)
+					}
+					expectedHeldOutPath, resolveErr = filepath.Abs(expectedHeldOutPath)
+					if resolveErr != nil || resolvedHeldOutPath != expectedHeldOutPath {
+						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("held-out path does not match manifest"))
+					}
+					heldOut, loadErr := criteria.LoadHeldOut(heldOutPath)
+					if loadErr != nil {
+						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", loadErr)
+					}
+					if heldOut.CriteriaDigest != snapshot.Digest {
+						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("held-out criteria digest mismatch"))
+					}
+					if err := criteria.ValidateHeldOutManifest(manifestPath, heldOutPath, heldOut); err != nil {
+						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
+					}
+					steps = append(steps, heldOut.Verification...)
+				}
+				if len(steps) == 0 {
+					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("criteria contains no verification commands"))
+				}
 				changed, actualDigest, err := criteria.LiveSourceChanged(snapshot, liveConfigPath)
 				if err != nil {
 					return failVerification(cmd, outputPath, manifestPath, result, "criteria_source_check_failed", err)
@@ -134,6 +168,7 @@ func newInternalVerifyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workDir, "workdir", "", "project working directory")
 	cmd.Flags().StringVar(&configPath, "config", "", "legacy live verify.yml path")
 	cmd.Flags().StringVar(&snapshotPath, "snapshot", "", "criteria snapshot path")
+	cmd.Flags().StringVar(&heldOutPath, "held-out", "", "evaluator-only held-out snapshot path")
 	cmd.Flags().StringVar(&manifestPath, "manifest", "", "run manifest bound to the criteria snapshot")
 	cmd.Flags().StringVar(&liveConfigPath, "live-config", "", "live verify.yml path used only for change detection")
 	cmd.Flags().StringVar(&outputPath, "output", "", "verification result path")

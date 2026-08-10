@@ -20,6 +20,7 @@ func TestPipelineCommandUsesRepoOwnedBranches(t *testing.T) {
 	}
 	for _, required := range []string{
 		`--pipeline-dir "$ROOT_PIPELINE_DIR"`,
+		`--held-out-output "$REPO_PIPELINE_DIR/evaluator-only/held-out.json"`,
 		`.sub_pipelines[] | select(.repo == $repo) | .branch`,
 		`--terminal-phase completed`,
 		`pylon internal trajectory failure`,
@@ -46,6 +47,51 @@ func TestExecuteCommandRequiresStructuredTaskReports(t *testing.T) {
 		if !strings.Contains(command, required) {
 			t.Fatalf("execute command is missing trajectory instruction %q", required)
 		}
+	}
+}
+
+func TestExecuteCommandDrivesDurableTaskState(t *testing.T) {
+	content, err := embeddedCommands.ReadFile("commands/pl-execute.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(content)
+	for _, required := range []string{
+		`pylon internal state create-run`,
+		`pylon internal state recover`,
+		`pylon internal state create-task`,
+		`pylon internal state ready`,
+		`pylon internal state claim`,
+		`pylon internal state start`,
+		`pylon internal state heartbeat`,
+		`pylon internal state complete`,
+		`state retry`,
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("execute command is missing durable state instruction %q", required)
+		}
+	}
+
+	claim := strings.Index(command, `pylon internal state claim`)
+	start := strings.Index(command, `pylon internal state start`)
+	agent := strings.Index(command, `Agent(prompt=`)
+	complete := strings.Index(command, `pylon internal state complete`)
+	report := strings.Index(command, `pylon internal trajectory task-report`)
+	if claim < 0 || start < claim || agent < start || complete < agent || report < complete {
+		t.Fatalf("durable execution order is invalid: claim=%d start=%d agent=%d complete=%d report=%d", claim, start, agent, complete, report)
+	}
+}
+
+func TestPipelineFinalizesTaskStateAfterEvaluator(t *testing.T) {
+	content, err := embeddedCommands.ReadFile("commands/pl-pipeline.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(content)
+	record := strings.Index(command, `pylon internal evaluator record`)
+	verify := strings.Index(command, `pylon internal state verify`)
+	if record < 0 || verify < record {
+		t.Fatalf("task verification must follow evaluator recording: evaluator=%d state_verify=%d", record, verify)
 	}
 }
 

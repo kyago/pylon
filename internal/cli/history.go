@@ -15,12 +15,34 @@ func newHistoryCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newHistoryCheckpointCmd(),
+		newHistoryValidateCmd(),
 		newHistoryLogCmd(),
 		newHistoryShowCmd(),
 		newHistoryDiffCmd(),
 		newHistoryExportCmd(),
 	)
 	return cmd
+}
+
+func newHistoryValidateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "validate <pipeline-id>/<phase>",
+		Short: "Validate checkpoint artifact integrity",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withHistoryManager(func(manager *history.Manager) error {
+				manifest, err := manager.Validate(args[0])
+				if err != nil {
+					return err
+				}
+				if flagJSON {
+					return printJSON(map[string]any{"valid": true, "manifest": manifest})
+				}
+				fmt.Printf("✓ checkpoint integrity verified: %s/%s\n", manifest.PipelineID, manifest.Phase)
+				return nil
+			})
+		},
+	}
 }
 
 func withHistoryManager(run func(*history.Manager) error) error {
