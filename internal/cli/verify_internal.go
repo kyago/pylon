@@ -112,7 +112,7 @@ func newInternalVerifyCmd() *cobra.Command {
 				if len(steps) == 0 {
 					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("criteria contains no verification commands"))
 				}
-				changed, actualDigest, err := criteria.LiveSourceChanged(snapshot, liveConfigPath)
+				changed, actualDigest, err := criteria.LiveSourceChanged(snapshot, resolveLiveConfigPath(workDir, liveConfigPath, snapshot.Source))
 				if err != nil {
 					return failVerification(cmd, outputPath, manifestPath, result, "criteria_source_check_failed", err)
 				}
@@ -174,6 +174,21 @@ func newInternalVerifyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&outputPath, "output", "", "verification result path")
 	_ = cmd.MarkFlagRequired("workdir")
 	return cmd
+}
+
+// resolveLiveConfigPath returns the live verify.yml path used for change
+// detection. 구버전 binary가 만든 snapshot은 Source.Path를 상대경로로 기록했는데,
+// 검증 프로세스의 cwd에서는 그 경로가 해석되지 않아 존재하는 파일을 "missing"으로
+// 오판한다. 그 경우에만 workdir의 표준 위치로 대체하고, 그 외에는
+// LiveSourceChanged의 Source.Path fallback에 맡긴다.
+func resolveLiveConfigPath(workDir, liveConfigPath string, source criteria.Source) string {
+	if liveConfigPath != "" {
+		return liveConfigPath
+	}
+	if source.Path != "" && !filepath.IsAbs(source.Path) {
+		return filepath.Join(workDir, ".pylon", "verify.yml")
+	}
+	return ""
 }
 
 func loadVerificationSteps(workDir, configPath string) ([]config.NamedVerifyStep, bool, error) {

@@ -752,3 +752,90 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 		t.Errorf("current AGENTS.md was overwritten: %q", got)
 	}
 }
+
+func TestCheckProjectVerifyConfigs_RegeneratesMissing(t *testing.T) {
+	requireGit(t)
+
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(tmpDir, "goproject")
+	if out, err := exec.Command("git", "init", projectDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/goproject\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// exclude 엔트리가 없는 상태에서 재생성이 일어나는 시나리오
+	os.Remove(filepath.Join(projectDir, ".git", "info", "exclude"))
+	// .pylon/ 없이 clone만 된 프로젝트는 재생성 대상이 아니어야 한다 (힌트만 출력)
+	unscaffolded := filepath.Join(tmpDir, "freshclone")
+	if err := os.MkdirAll(filepath.Join(unscaffolded, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if ok := checkProjectVerifyConfigs(); !ok {
+		t.Fatal("expected regeneration to succeed")
+	}
+	verifyPath := layout.VerifyConfigPath(projectDir)
+	vc, err := config.LoadVerifyConfig(verifyPath)
+	if err != nil {
+		t.Fatalf("regenerated verify.yml must parse: %v", err)
+	}
+	if len(vc.OrderedSteps()) == 0 {
+		t.Fatal("regenerated verify.yml for a Go project must contain commands")
+	}
+	// 재생성된 verify.yml이 커밋 가능해지면 안 된다 — exclude 엔트리가 함께 보장된다.
+	if isGit, hasEntry := checkExcludeStatus(projectDir); !isGit || !hasEntry {
+		t.Fatalf("regeneration must ensure .pylon/ exclude entry: isGit=%v hasEntry=%v", isGit, hasEntry)
+	}
+	// .pylon/ 없는 프로젝트에는 아무것도 쓰지 않는다.
+	if _, err := os.Stat(filepath.Join(unscaffolded, ".pylon")); !os.IsNotExist(err) {
+		t.Fatal("unscaffolded project must not be scaffolded by doctor")
+	}
+}
+
+func TestCheckProjectVerifyConfigs_ReportsInvalidWithoutOverwriting(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(tmpDir, "broken")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	invalid := "commands: [not: valid: yaml\n"
+	verifyPath := layout.VerifyConfigPath(projectDir)
+	if err := os.WriteFile(verifyPath, []byte(invalid), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if ok := checkProjectVerifyConfigs(); ok {
+		t.Fatal("expected invalid verify.yml to fail the check")
+	}
+	data, err := os.ReadFile(verifyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != invalid {
+		t.Fatal("existing verify.yml must never be overwritten")
+	}
+}
