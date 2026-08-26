@@ -120,6 +120,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Println("⚠ git 미설치로 프로젝트 exclude 검사 건너뜀")
 	}
 
+	if !checkProjectVerifyConfigs() {
+		allPassed = false
+	}
+
 	fmt.Println()
 	if allPassed {
 		fmt.Println("All checks passed.")
@@ -213,6 +217,63 @@ func checkRepoExcludes(fix bool) bool {
 	}
 	fmt.Println("  수정: pylon doctor --fix-excludes 또는 각 프로젝트의 .git/info/exclude에 '.pylon/' 추가")
 	return false
+}
+
+// checkProjectVerifyConfigs ensures every discovered project has a usable
+// .pylon/verify.yml. verify.yml is local-only state (excluded from the project
+// repo by design), so a fresh checkout has none and nothing else recreates it —
+// a missing file is regenerated from the detected tech stack, the same way
+// `pylon add-project` scaffolds it. An existing file is user data and is never
+// overwritten: parse failures and empty command sets are only reported.
+// Returns true when every project ends up with a parseable, non-empty config.
+func checkProjectVerifyConfigs() bool {
+	root, err := resolveRoot()
+	if err != nil {
+		return true // not in a workspace, nothing to check
+	}
+	projects, err := config.DiscoverProjects(root)
+	if err != nil || len(projects) == 0 {
+		return true
+	}
+
+	fmt.Println()
+	ok := true
+	issues := 0
+	for _, p := range projects {
+		path := layout.VerifyConfigPath(p.Path)
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			content := generateVerifyYML(detectTechStack(p.Path))
+			if writeErr := os.WriteFile(path, []byte(content), 0o644); writeErr != nil {
+				fmt.Printf("⚠ %s: verify.yml 재생성 실패: %v\n", p.Name, writeErr)
+				ok = false
+				issues++
+				continue
+			}
+			fmt.Printf("✓ %s: 누락된 verify.yml 재생성됨\n", p.Name)
+		} else if statErr != nil {
+			fmt.Printf("⚠ %s: verify.yml 확인 실패: %v\n", p.Name, statErr)
+			ok = false
+			issues++
+			continue
+		}
+
+		vc, loadErr := config.LoadVerifyConfig(path)
+		if loadErr != nil {
+			fmt.Printf("⚠ %s: verify.yml 파싱 실패 — 직접 수정이 필요합니다: %v\n", p.Name, loadErr)
+			ok = false
+			issues++
+			continue
+		}
+		if len(vc.OrderedSteps())+len(vc.OrderedHeldOutSteps()) == 0 {
+			fmt.Printf("⚠ %s: verify.yml에 실행 가능한 검증 명령이 없습니다: %s\n", p.Name, path)
+			ok = false
+			issues++
+		}
+	}
+	if issues == 0 {
+		fmt.Printf("✓ 모든 프로젝트 verify.yml 정상 (%d개 프로젝트)\n", len(projects))
+	}
+	return ok
 }
 
 // checkExcludeStatus returns whether a project is a git repo and whether

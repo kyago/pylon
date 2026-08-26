@@ -752,3 +752,70 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 		t.Errorf("current AGENTS.md was overwritten: %q", got)
 	}
 }
+
+func TestCheckProjectVerifyConfigs_RegeneratesMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(tmpDir, "goproject")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/goproject\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if ok := checkProjectVerifyConfigs(); !ok {
+		t.Fatal("expected regeneration to succeed")
+	}
+	verifyPath := layout.VerifyConfigPath(projectDir)
+	vc, err := config.LoadVerifyConfig(verifyPath)
+	if err != nil {
+		t.Fatalf("regenerated verify.yml must parse: %v", err)
+	}
+	if len(vc.OrderedSteps()) == 0 {
+		t.Fatal("regenerated verify.yml for a Go project must contain commands")
+	}
+}
+
+func TestCheckProjectVerifyConfigs_ReportsInvalidWithoutOverwriting(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(tmpDir, "broken")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	invalid := "commands: [not: valid: yaml\n"
+	verifyPath := layout.VerifyConfigPath(projectDir)
+	if err := os.WriteFile(verifyPath, []byte(invalid), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if ok := checkProjectVerifyConfigs(); ok {
+		t.Fatal("expected invalid verify.yml to fail the check")
+	}
+	data, err := os.ReadFile(verifyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != invalid {
+		t.Fatal("existing verify.yml must never be overwritten")
+	}
+}

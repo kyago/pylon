@@ -219,6 +219,35 @@ func TestLiveSourceChanged(t *testing.T) {
 	if err != nil || !changed || actual == source.Digest {
 		t.Fatalf("changed source changed=%v actual=%q err=%v", changed, actual, err)
 	}
+	// livePath 미지정 시 snapshot의 Source.Path로 같은 파일을 읽어야 한다.
+	changed, _, err = LiveSourceChanged(snapshot, "")
+	if err != nil || !changed {
+		t.Fatalf("fallback to Source.Path changed=%v err=%v", changed, err)
+	}
+}
+
+func TestResolveVerification_RecordsAbsoluteSourcePath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".pylon", "verify.yml"), []byte("build:\n  command: true\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	steps, skipped, source, err := ResolveVerification(".", filepath.Join(".pylon", "verify.yml"))
+	if err != nil || skipped || len(steps) != 1 {
+		t.Fatalf("resolved steps=%+v skipped=%v err=%v", steps, skipped, err)
+	}
+	if !filepath.IsAbs(source.Path) {
+		t.Fatalf("Source.Path must be absolute, got %q", source.Path)
+	}
+	// cwd가 달라져도 Source.Path만으로 live 변경 감지가 동작해야 한다.
+	t.Chdir(t.TempDir())
+	changed, _, err := LiveSourceChanged(Snapshot{Source: source}, "")
+	if err != nil || changed {
+		t.Fatalf("unchanged source from different cwd changed=%v err=%v", changed, err)
+	}
 }
 
 func TestCreateDoesNotOverwriteExistingSnapshot(t *testing.T) {

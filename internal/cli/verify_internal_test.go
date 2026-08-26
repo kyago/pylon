@@ -425,6 +425,10 @@ func TestRunVerificationScript_DelegatesFromResolvedGitRoot(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	verifyPath := filepath.Join(projectDir, ".pylon", "verify.yml")
+	if err := os.WriteFile(verifyPath, []byte("build:\n  command: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte("version: \"0.1\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -506,8 +510,24 @@ printf '{"ok":true,"checks":[],"timestamp":"2026-07-23T00:00:00Z"}\n'
 	if !strings.Contains(got, "--held-out\n"+heldOutPath) {
 		t.Fatalf("held-out snapshot not forwarded:\n%s", got)
 	}
-	if !strings.Contains(got, "--live-config\n"+filepath.Join(resolvedProjectDir, ".pylon", "verify.yml")) {
-		t.Fatalf("live config change detector not forwarded:\n%s", got)
+	// live 경로는 재계산해 넘기지 않는다 — snapshot의 Source.Path(절대경로)가 기준이다.
+	if strings.Contains(got, "--live-config") {
+		t.Fatalf("live config must not be recomputed by the script:\n%s", got)
+	}
+
+	// verify.yml도 go.mod도 없는 GIT_ROOT는 잘못된 해석으로 보고 실행 전에 실패해야 한다.
+	if err := os.Remove(verifyPath); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command(filepath.Join(scriptsDir, "run-verification.sh"), pipelineDir, "--git-root", "project")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "CAPTURE_PATH="+capturePath)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected guard failure without verify.yml/go.mod:\n%s", output)
+	}
+	if !strings.Contains(string(output), "verify.yml") {
+		t.Fatalf("guard message must mention verify.yml:\n%s", output)
 	}
 }
 
