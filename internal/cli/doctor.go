@@ -60,7 +60,7 @@ for any projects that are missing the local-scope ignore entry.`,
 	}
 
 	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in project repos")
-	cmd.Flags().Bool("yes", false, "커맨드 동기화 확인 프롬프트를 건너뛰고 자동 승인")
+	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화, provider 선택)를 건너뛰고 비인터랙티브로 실행")
 
 	return cmd
 }
@@ -88,6 +88,10 @@ func runChecks(checks []Check) (allPassed bool, failures []Check) {
 func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println("Pylon Doctor")
 	fmt.Println(strings.Repeat("\u2500", 40))
+
+	// provider check\uac00 \ud655\uc815\ub41c primary\ub97c \uac80\uc0ac\ud558\ub3c4\ub85d \uba3c\uc800 \uacb0\uc815\ud55c\ub2e4.
+	doctorAutoYes, _ := cmd.Flags().GetBool("yes")
+	ensurePrimaryProviderIfWorkspace(!doctorAutoYes)
 
 	allPassed, failures := runChecks(currentDoctorChecks())
 
@@ -438,6 +442,27 @@ func verifyGH() (string, error) {
 	return lines[0], nil
 }
 
+// ensurePrimaryProviderIfWorkspace resolves and pins the primary provider when
+// running inside a pylon workspace. backend 마이그레이션을 먼저 수행해 구식
+// 키가 provider 결정에 그대로 반영되도록 한다.
+func ensurePrimaryProviderIfWorkspace(interactive bool) {
+	root, err := resolveRoot()
+	if err != nil {
+		return
+	}
+	cfgPath := layout.ConfigPath(root)
+	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
+		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
+	} else if migrated {
+		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
+	}
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		return // 설정 로드 실패는 이후 단계가 보고한다
+	}
+	ensurePrimaryProvider(root, cfg, interactive)
+}
+
 // syncConfigIfWorkspace syncs config.yml defaults if running inside a pylon workspace.
 func syncConfigIfWorkspace() {
 	root, err := resolveRoot()
@@ -446,6 +471,8 @@ func syncConfigIfWorkspace() {
 	}
 
 	cfgPath := layout.ConfigPath(root)
+	// backend 마이그레이션은 ensurePrimaryProviderIfWorkspace가 담당하지만,
+	// init 등 doctor 본 흐름을 거치지 않는 호출을 위해 여기서도 보장한다 (noop-safe).
 	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
 		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
 	} else if migrated {

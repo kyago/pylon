@@ -40,6 +40,10 @@ func runLaunch() error {
 		projects = nil
 	}
 
+	// Step 3.5: Resolve and pin the primary provider (하나만 설치 → 자동,
+	// 둘 이상 설치 & 미지정 → 인터랙티브 선택 후 전용)
+	cfg, _ = ensurePrimaryProvider(root, cfg, true)
+
 	// Step 4: Select an interactive provider
 	catalog, err := buildLaunchProviderCatalog(cfg)
 	if err != nil {

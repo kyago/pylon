@@ -801,3 +801,92 @@ func TestMigrateRuntimeBackend_NoopWhenConfigMissing(t *testing.T) {
 		t.Fatalf("missing config must be a silent noop: migrated=%v err=%v", migrated, err)
 	}
 }
+
+func TestSetRuntimeProvider(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	content := `version: "0.2"
+# runtime section
+runtime:
+  provider: auto
+  max_concurrent: 3
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRuntimeProvider(path, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "provider: codex") || !strings.Contains(string(data), "# runtime section") {
+		t.Fatalf("provider not pinned or comment lost:\n%s", data)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerName, _ := cfg.Runtime.EffectiveProvider(); providerName != "codex" {
+		t.Fatalf("effective provider = %q", providerName)
+	}
+	if cfg.Runtime.MaxConcurrent != 3 {
+		t.Fatalf("sibling keys must survive: %+v", cfg.Runtime)
+	}
+}
+
+func TestSetRuntimeProvider_CreatesMissingSectionAndKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(path, []byte("version: \"0.2\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRuntimeProvider(path, "claude-code"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerName, _ := cfg.Runtime.EffectiveProvider(); providerName != "claude-code" {
+		t.Fatalf("effective provider = %q", providerName)
+	}
+}
+
+func TestSetRuntimeProvider_RejectsMultiDocument(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	content := "version: \"0.2\"\n---\nsecond: doc\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRuntimeProvider(path, "codex"); err == nil {
+		t.Fatal("multi-document config must be rejected")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Fatalf("file must be untouched:\n%s", data)
+	}
+}
+
+func TestSetRuntimeProvider_EmptyRuntimeSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(path, []byte("version: \"0.2\"\nruntime:\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRuntimeProvider(path, "codex"); err != nil {
+		t.Fatalf("empty runtime section must be treated as an empty mapping: %v", err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerName, _ := cfg.Runtime.EffectiveProvider(); providerName != "codex" {
+		t.Fatalf("effective provider = %q", providerName)
+	}
+}

@@ -1,5 +1,5 @@
-// Package claude implements the Claude CLI provider adapter.
-package claude
+// Package codex implements the OpenAI Codex CLI provider adapter.
+package codex
 
 import (
 	"context"
@@ -10,7 +10,14 @@ import (
 	"github.com/kyago/pylon/internal/provider"
 )
 
-const Name = "claude-code"
+const Name = "codex"
+
+// 유효한 codex --sandbox 값 (공식 문서: codex-rs/protocol/src/config_types.rs)
+var sandboxModes = map[string]bool{
+	"read-only":          true,
+	"workspace-write":    true,
+	"danger-full-access": true,
+}
 
 type lookPathFunc func(string) (string, error)
 type versionCommandFunc func(context.Context, string) ([]byte, error)
@@ -28,7 +35,7 @@ var _ provider.VersionedAdapter = (*Adapter)(nil)
 
 func New(command string, options ...Option) *Adapter {
 	if strings.TrimSpace(command) == "" {
-		command = "claude"
+		command = "codex"
 	}
 	adapter := &Adapter{
 		command:  command,
@@ -64,16 +71,11 @@ func (adapter *Adapter) Probe(context.Context) (provider.CapabilitySet, error) {
 		return provider.CapabilitySet{}, fmt.Errorf("%s executable not found: %w", adapter.command, err)
 	}
 	return provider.CapabilitySet{
-		ReadFiles:           true,
-		EditFiles:           true,
-		RunShell:            true,
-		SpawnSubagents:      true,
-		BackgroundExecution: true,
-		SessionResume:       true,
-		WorktreeIsolation:   true,
-		StructuredOutput:    true,
-		ToolRestrictions:    true,
-		WebResearch:         true,
+		ReadFiles:     true,
+		EditFiles:     true,
+		RunShell:      true,
+		SessionResume: true,
+		WebResearch:   true,
 	}, nil
 }
 
@@ -100,18 +102,17 @@ func (adapter *Adapter) PrepareInteractive(_ context.Context, spec provider.Inte
 	}
 
 	args := []string{adapter.command}
-	if spec.MaxTurns > 0 {
-		args = append(args, "--max-turns", fmt.Sprintf("%d", spec.MaxTurns))
-	}
-	if spec.PermissionMode != "" {
-		args = append(args, "--permission-mode", spec.PermissionMode)
+	// codex의 실행 권한은 --sandbox로 제어한다. claude 전용 permission mode 등
+	// 알 수 없는 값은 codex 기본 동작(config.toml)에 맡기고 플래그를 생략한다.
+	if sandboxModes[spec.PermissionMode] {
+		args = append(args, "--sandbox", spec.PermissionMode)
 	}
 
 	return provider.ProcessSpec{
 		Executable:  path,
 		Args:        args,
 		Environment: provider.MergeEnvironment(spec.Environment, spec.EnvironmentOverride),
-		DisplayName: "Claude Code",
+		DisplayName: "Codex",
 	}, nil
 }
 
