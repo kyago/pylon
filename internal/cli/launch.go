@@ -207,7 +207,9 @@ func addClaudeDirToGitignore(root string) error {
 
 	// Collect missing entries
 	var missing []string
-	for _, entry := range []string{".claude/", "CLAUDE.md", "AGENTS.md", ".pylon/logs/"} {
+	// .agents/skills/pl-*/ 는 codex용으로 생성되는 워크플로우 스킬 포인터다.
+	// .agents/ 전체를 무시하면 사용자 저작 스킬까지 가려지므로 생성 패턴만 무시한다.
+	for _, entry := range []string{".claude/", "CLAUDE.md", "AGENTS.md", ".pylon/logs/", ".agents/skills/pl-*/"} {
 		if !strings.Contains(content, entry) {
 			missing = append(missing, entry)
 		}

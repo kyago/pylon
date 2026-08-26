@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -738,7 +739,7 @@ func TestReconcileRootAgentFilesRebootstrapsStale(t *testing.T) {
 		t.Error("stale AGENTS.md should be re-bootstrapped")
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if !strings.Contains(string(got), "pylon-usage-version: 1") {
+	if !strings.Contains(string(got), fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
 		t.Errorf("AGENTS.md not refreshed to current stamp: %.60q", got)
 	}
 }
@@ -748,7 +749,7 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
 		t.Fatal(err)
 	}
-	authored := "<!-- pylon-usage-version: 1 -->\n# 저작됨"
+	authored := fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# 저작됨", pylonUsageVersion)
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
 		t.Fatal(err)
 	}

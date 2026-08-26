@@ -61,6 +61,13 @@ func ScriptsDir(root string) string {
 	return filepath.Join(PylonDir(root), "scripts", "bash")
 }
 
+// CodexSkillsDir returns the repo-scoped codex skill discovery directory
+// (.agents/skills) under the workspace root. Codex walks ancestor directories
+// probing for this path and loads every SKILL.md inside as a workflow.
+func CodexSkillsDir(root string) string {
+	return filepath.Join(root, ".agents", "skills")
+}
+
 // ClaudeDir returns the Claude CLI directory under the workspace root (.claude).
 func ClaudeDir(root string) string {
 	return filepath.Join(root, ".claude")

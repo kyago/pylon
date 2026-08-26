@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func TestGenerateClaudeDirDoesNotClobberAuthoredAgentsMD(t *testing.T) {
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
 		t.Fatal(err)
 	}
-	authored := "<!-- pylon-usage-version: 1 -->\n# 저작된 가이드 (보존되어야 함)"
+	authored := fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# 저작된 가이드 (보존되어야 함)", pylonUsageVersion)
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
 		t.Fatal(err)
 	}

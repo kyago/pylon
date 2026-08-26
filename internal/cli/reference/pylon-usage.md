@@ -1,4 +1,4 @@
-<!-- pylon-usage-version: 1 -->
+<!-- pylon-usage-version: 2 -->
 # pylon 워크스페이스 운영 매뉴얼
 
 이 문서는 pylon 워크스페이스를 운영하는 루트 에이전트를 위한 참조 매뉴얼입니다.
@@ -42,7 +42,7 @@ AGENTS.md를 작성할 때 아래를 **직접 조회**해 최신 사실만 반�
 - **마케팅**: 시장 조사 → 전략 → 콘텐츠 생성 → 검증
 
 파이프라인 전체를 돌릴지는 요구사항 규모로 판단합니다. 단일 파일 수정이나 질문 답변에
-`/pl:pipeline`을 돌리지 않습니다 — 그냥 처리합니다.
+`pl-pipeline` 전체 파이프라인을 돌리지 않습니다 — 그냥 처리합니다.
 
 ## 상태 관리
 
@@ -59,16 +59,25 @@ AGENTS.md를 작성할 때 아래를 **직접 조회**해 최신 사실만 반�
     pylon mem store --project <name> --key "키" --content "내용"  # 저장
     pylon mem list --project <name>                       # 목록
 
-## 슬래시 커맨드
+## 워크플로우 커맨드
 
-- `/pl:pipeline` — 전체 파이프라인 실행 (요구사항 → PR). 모든 도메인의 범용 진입점.
-- `/pl:architect` — 아키텍처 분석 단독 실행
-- `/pl:breakdown` — PM 태스크 분해
-- `/pl:execute` — 에이전트 병렬 실행
-- `/pl:verify` — 교차 검증 실행 (빌드/테스트/린트)
-- `/pl:pr` — PR 생성
-- `/pl:status` — 파이프라인 상태 조회
-- `/pl:cancel` — 파이프라인 취소
+파이프라인 워크플로우는 `.pylon/commands/pl-*.md`에 정의된 절차 문서입니다. 호출 방법은
+실행 중인 provider에 따라 다릅니다:
+
+- **Claude Code**: `/pl:<이름>` 슬래시 커맨드 (예: `/pl:pipeline`)
+- **Codex**: `$pl-<이름>` 스킬 (예: `$pl-pipeline`) — `.agents/skills/`에 자동 생성됩니다
+- 그 외 환경: `.pylon/commands/pl-<이름>.md`를 직접 읽고 지시를 수행합니다
+
+| 커맨드 | 역할 |
+|--------|------|
+| `pl-pipeline` | 전체 파이프라인 실행 (요구사항 → PR). 모든 도메인의 범용 진입점. |
+| `pl-architect` | 아키텍처 분석 단독 실행 |
+| `pl-breakdown` | PM 태스크 분해 |
+| `pl-execute` | 에이전트 병렬 실행 |
+| `pl-verify` | 교차 검증 실행 (빌드/테스트/린트) |
+| `pl-pr` | PR 생성 |
+| `pl-status` | 파이프라인 상태 조회 |
+| `pl-cancel` | 파이프라인 취소 |
 
 ## 위임 판단
 
