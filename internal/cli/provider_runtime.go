@@ -80,6 +80,7 @@ func newProviderCatalog(cfg *config.Config) (*providerCatalog, error) {
 			adapter:          providercodex.New(command),
 			prepareWorkspace: prepareCodexWorkspace,
 			selectPermission: selectCodexSandboxMode,
+			syncDoctor:       syncCodexProviderResourcesIfWorkspace,
 			installURL:       codexInstallURL,
 		}); err != nil {
 			return nil, err
@@ -108,7 +109,26 @@ func prepareCodexWorkspace(root string, _ *config.Config, projects []config.Proj
 	if bootstrapped {
 		fmt.Fprintln(os.Stderr, "ℹ AGENTS.md를 부트스트랩했습니다 — 세션이 첫 턴에 이 워크스페이스에 맞게 재작성합니다.")
 	}
+	// 파이프라인 커맨드를 codex repo 스킬(.agents/skills/)로 노출한다 — claude의
+	// .claude/commands/ 대응물. launch/doctor가 같은 생성기를 공유한다.
+	if err := generateCodexSkills(root); err != nil {
+		return fmt.Errorf("codex 스킬 생성 실패: %w", err)
+	}
 	return nil
+}
+
+// syncCodexProviderResourcesIfWorkspace reconciles the generated codex skills
+// on `pylon doctor`, mirroring the claude provider's doctor sync.
+func syncCodexProviderResourcesIfWorkspace(io.Reader, bool) {
+	root, err := resolveRoot()
+	if err != nil {
+		return
+	}
+	if err := generateCodexSkills(root); err != nil {
+		fmt.Printf("⚠ codex 워크플로우 스킬 동기화 실패: %v\n", err)
+		return
+	}
+	fmt.Println("✓ codex 워크플로우 스킬 최신 상태 (.agents/skills/)")
 }
 
 // selectCodexSandboxMode presents an interactive selector for the codex

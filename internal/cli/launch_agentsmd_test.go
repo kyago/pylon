@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestBuildClaudeMDPointerIsImportMarker(t *testing.T) {
 
 func TestBuildBootstrapAgentsMDHasStampAndInstruction(t *testing.T) {
 	out := buildBootstrapAgentsMD(t.TempDir(), []config.ProjectInfo{{Name: "api"}})
-	if !strings.Contains(out, "pylon-usage-version: 1") {
+	if !strings.Contains(out, fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
 		t.Errorf("bootstrap missing version stamp: %s", out)
 	}
 	if !strings.Contains(out, ".pylon/reference/pylon-usage.md") {
@@ -52,7 +53,7 @@ func TestAgentsMDStale(t *testing.T) {
 		t.Error("missing stamp should be stale")
 	}
 	// (4) 현재 버전 → not stale
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte("<!-- pylon-usage-version: 1 -->\n# guide"), 0644); err != nil {
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# guide", pylonUsageVersion)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if agentsMDStale(root) {
@@ -115,7 +116,7 @@ func TestEnsureRootAgentFilesBacksUpHandWrittenFiles(t *testing.T) {
 		t.Errorf("CLAUDE.md should be the marker, got %q", nowClaude)
 	}
 	nowAgents, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if !strings.Contains(string(nowAgents), "pylon-usage-version: 1") {
+	if !strings.Contains(string(nowAgents), fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
 		t.Errorf("AGENTS.md should be bootstrapped, got %.60q", nowAgents)
 	}
 }
@@ -182,7 +183,7 @@ func TestEnsureRootAgentFilesBacksUpStaleAuthoredAgentsMD(t *testing.T) {
 func TestEnsureRootAgentFilesDoesNotBackUpStaleBootstrapStub(t *testing.T) {
 	root := t.TempDir()
 	stub := strings.Replace(buildBootstrapAgentsMD(root, nil),
-		"pylon-usage-version: 1", "pylon-usage-version: 0", 1)
+		fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion), "pylon-usage-version: 0", 1)
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(stub), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +246,7 @@ func TestBackupIfHandWrittenDoesNotClobber(t *testing.T) {
 
 func TestEnsureRootAgentFilesPreservesFreshAgentsMD(t *testing.T) {
 	root := t.TempDir()
-	authored := "<!-- pylon-usage-version: 1 -->\n# 사용자 세션이 저작한 가이드"
+	authored := fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# 사용자 세션이 저작한 가이드", pylonUsageVersion)
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
 		t.Fatal(err)
 	}

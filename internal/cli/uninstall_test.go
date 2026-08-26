@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,7 +186,7 @@ func TestBuildUninstallPlan(t *testing.T) {
 
 	// Create the generated root agent files
 	os.WriteFile(layout.RootClaudePath(root), []byte("@AGENTS.md\n"), 0644)
-	os.WriteFile(layout.RootAgentsPath(root), []byte("<!-- pylon-usage-version: 1 -->\n# guide"), 0644)
+	os.WriteFile(layout.RootAgentsPath(root), []byte(fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# guide", pylonUsageVersion)), 0644)
 
 	// Create .gitignore
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("# pylon\n.pylon/runtime/\n"), 0644)
