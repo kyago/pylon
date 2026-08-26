@@ -180,3 +180,67 @@ func TestVerifyConfig_OrderedHeldOutSteps(t *testing.T) {
 		t.Fatalf("unexpected held-out step: %+v", steps[0])
 	}
 }
+
+func TestLoadVerifyConfig_CommandsMapForm(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "verify.yml")
+	content := `commands:
+  build:
+    command: go build ./...
+    timeout: 5m
+  test:
+    command: go test ./...
+held_out:
+  acceptance:
+    command: ./acceptance.sh
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	vc, err := LoadVerifyConfig(path)
+	if err != nil {
+		t.Fatalf("map-form verify.yml must parse: %v", err)
+	}
+	steps := vc.OrderedSteps()
+	if len(steps) != 2 || steps[0].Name != "build" || steps[1].Name != "test" {
+		t.Fatalf("map-form steps = %+v", steps)
+	}
+	if steps[0].Command != "go build ./..." || steps[0].Timeout != "5m" {
+		t.Fatalf("map-form build step = %+v", steps[0])
+	}
+	if steps[1].Timeout != "60s" {
+		t.Fatalf("default timeout not applied: %+v", steps[1])
+	}
+	heldOut := vc.OrderedHeldOutSteps()
+	if len(heldOut) != 1 || heldOut[0].Name != "acceptance" || heldOut[0].Kind != VerifyKindHeldOut {
+		t.Fatalf("map-form held_out = %+v", heldOut)
+	}
+}
+
+func TestLoadVerifyConfig_CommandsMapFormExplicitNameWins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "verify.yml")
+	content := "commands:\n  build:\n    name: custom-build\n    command: make\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	vc, err := LoadVerifyConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := vc.OrderedSteps()
+	if len(steps) != 1 || steps[0].Name != "custom-build" {
+		t.Fatalf("explicit name must win over map key: %+v", steps)
+	}
+}
+
+func TestLoadVerifyConfig_CommandsScalarRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "verify.yml")
+	if err := os.WriteFile(path, []byte("commands: run-everything\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadVerifyConfig(path); err == nil {
+		t.Fatal("scalar commands value must be rejected")
+	}
+}
