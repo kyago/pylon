@@ -3,13 +3,18 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/kyago/pylon/internal/fsutil"
 )
 
 // Config represents the full pylon workspace configuration.
@@ -155,6 +160,87 @@ func (r RuntimeConfig) ParseTaskTimeout() time.Duration {
 		return 30 * time.Minute
 	}
 	return d
+}
+
+// MigrateRuntimeBackend rewrites deprecated runtime.backend to runtime.provider
+// in config.yml. provider가 이미 있으면 backend 키만 제거한다 — EffectiveProvider가
+// provider를 우선하므로 의미 변화가 없다. yaml.Node 단위로 키만 바꿔 주석과
+// 문서 순서를 보존한다. Returns whether the file was rewritten.
+func MigrateRuntimeBackend(path string) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil // config 부재는 뒤의 동기화 단계가 이미 보고한다
+		}
+		return false, err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	var doc yaml.Node
+	if err := decoder.Decode(&doc); err != nil {
+		return false, err
+	}
+	// 멀티 문서 파일은 첫 문서만 재인코딩하면 나머지가 유실되므로 건드리지 않는다.
+	if err := decoder.Decode(&yaml.Node{}); !errors.Is(err, io.EOF) {
+		return false, nil
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return false, nil
+	}
+	root := doc.Content[0]
+	var runtime *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "runtime" {
+			runtime = root.Content[i+1]
+			break
+		}
+	}
+	if runtime == nil || runtime.Kind != yaml.MappingNode {
+		return false, nil
+	}
+	backendIdx := -1
+	emptyProviderIdx := -1
+	hasProvider := false
+	for i := 0; i+1 < len(runtime.Content); i += 2 {
+		switch runtime.Content[i].Value {
+		case "backend":
+			backendIdx = i
+		case "provider":
+			// 빈 provider는 EffectiveProvider가 backend로 fallback하므로
+			// "provider 있음"으로 취급하면 backend 삭제가 의미를 바꾼다.
+			if value := runtime.Content[i+1]; value.Kind == yaml.ScalarNode && strings.TrimSpace(value.Value) != "" {
+				hasProvider = true
+			} else {
+				emptyProviderIdx = i
+			}
+		}
+	}
+	if backendIdx < 0 {
+		return false, nil
+	}
+	if hasProvider {
+		runtime.Content = append(runtime.Content[:backendIdx], runtime.Content[backendIdx+2:]...)
+	} else {
+		if emptyProviderIdx >= 0 {
+			runtime.Content = append(runtime.Content[:emptyProviderIdx], runtime.Content[emptyProviderIdx+2:]...)
+			if emptyProviderIdx < backendIdx {
+				backendIdx -= 2
+			}
+		}
+		runtime.Content[backendIdx].Value = "provider"
+	}
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&doc); err != nil {
+		return false, err
+	}
+	if err := encoder.Close(); err != nil {
+		return false, err
+	}
+	if err := fsutil.WriteFileAtomic(path, buf.Bytes(), 0644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // SyncConfigDefaults reads config.yml, detects missing fields, and adds them.
