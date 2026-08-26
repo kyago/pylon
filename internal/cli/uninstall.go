@@ -108,6 +108,8 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 			plan.runtimeFiles = append(plan.runtimeFiles, f)
 		}
 	}
+	// codex용으로 생성된 워크플로우 스킬(마커 보유)만 제거 — 사용자 스킬은 남긴다.
+	plan.runtimeFiles = append(plan.runtimeFiles, generatedCodexSkillDirs(root, nil)...)
 
 	// 2. Discover projects and their .pylon/ directories
 	projects, err := config.DiscoverProjects(root)

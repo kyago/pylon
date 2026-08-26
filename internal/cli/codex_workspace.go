@@ -39,13 +39,20 @@ func generateCodexSkills(root string) error {
 		name := strings.TrimSuffix(entry.Name(), ".md")
 		content, err := os.ReadFile(filepath.Join(commandsDir, entry.Name()))
 		if err != nil {
-			continue
+			// 읽기 실패를 부재로 취급하면 같은 실행에서 기존 스킬이 pruning된다.
+			return fmt.Errorf("커맨드 %s 읽기 실패: %w", entry.Name(), err)
 		}
 		skill, err := buildCodexSkill(name, string(content))
 		if err != nil {
 			return fmt.Errorf("codex 스킬 %s 생성 실패: %w", name, err)
 		}
 		skillDir := filepath.Join(skillsDir, name)
+		// 스킬 경로가 디렉토리가 아닌 사용자 파일이면 소유권을 존중해 건너뛴다 —
+		// launch 전체를 실패시키지 않는다.
+		if info, statErr := os.Stat(skillDir); statErr == nil && !info.IsDir() {
+			desired[name] = true
+			continue
+		}
 		if err := os.MkdirAll(skillDir, 0o755); err != nil {
 			return err
 		}
@@ -67,25 +74,38 @@ func generateCodexSkills(root string) error {
 		desired[name] = true
 	}
 
-	// 원본 커맨드가 사라진 pylon 생성 스킬을 정리한다.
-	skillEntries, err := os.ReadDir(skillsDir)
-	if err != nil {
-		return nil // 스킬 디렉토리가 없으면 정리할 것도 없다
-	}
-	for _, entry := range skillEntries {
-		if !entry.IsDir() || desired[entry.Name()] {
-			continue
-		}
-		skillPath := filepath.Join(skillsDir, entry.Name(), "SKILL.md")
-		data, err := os.ReadFile(skillPath)
-		if err != nil || !strings.Contains(string(data), codexSkillMarker) {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(skillsDir, entry.Name())); err != nil {
+	// 원본 커맨드가 사라진 pylon 생성 스킬을 정리한다. 마커는 SKILL.md에만
+	// 있으므로 그 디렉토리 전체가 pylon 소유라는 뜻이다 — 생성 스킬 디렉토리
+	// 안에 사용자 파일을 두는 것은 지원하지 않는다.
+	for _, dir := range generatedCodexSkillDirs(root, desired) {
+		if err := os.RemoveAll(dir); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// generatedCodexSkillDirs returns the pylon-generated (marker-bearing) skill
+// directories under .agents/skills, excluding names in keep. keep이 nil이면
+// 생성된 스킬 전부를 반환한다 — uninstall이 이 형태로 사용한다.
+func generatedCodexSkillDirs(root string, keep map[string]bool) []string {
+	skillsDir := layout.CodexSkillsDir(root)
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if !entry.IsDir() || keep[entry.Name()] {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(skillsDir, entry.Name(), "SKILL.md"))
+		if err != nil || !strings.Contains(string(data), codexSkillMarker) {
+			continue
+		}
+		dirs = append(dirs, filepath.Join(skillsDir, entry.Name()))
+	}
+	return dirs
 }
 
 // buildCodexSkill renders the pointer SKILL.md for one pipeline command.

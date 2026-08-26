@@ -117,12 +117,25 @@ func prepareCodexWorkspace(root string, _ *config.Config, projects []config.Proj
 	return nil
 }
 
-// syncCodexProviderResourcesIfWorkspace reconciles the generated codex skills
-// on `pylon doctor`, mirroring the claude provider's doctor sync.
+// syncCodexProviderResourcesIfWorkspace reconciles the codex-owned workspace
+// artifacts on `pylon doctor`, mirroring the claude provider's doctor sync:
+// codex는 루트 AGENTS.md를 네이티브로 읽으므로 doctor가 stale 가이드
+// 재부트스트랩을 보고할 수 있어야 한다 (launch stderr는 TUI에 가려진다).
 func syncCodexProviderResourcesIfWorkspace(io.Reader, bool) {
 	root, err := resolveRoot()
 	if err != nil {
 		return
+	}
+	bootstrapped, backedUp, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		fmt.Printf("⚠ 루트 에이전트 파일 갱신 실패: %v\n", err)
+	} else {
+		for _, name := range backedUp {
+			fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+		}
+		if bootstrapped {
+			fmt.Println("✓ AGENTS.md를 부트스트랩했습니다 — 다음 실행 시 세션이 이 워크스페이스에 맞게 재작성합니다.")
+		}
 	}
 	if err := generateCodexSkills(root); err != nil {
 		fmt.Printf("⚠ codex 워크플로우 스킬 동기화 실패: %v\n", err)
