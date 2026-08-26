@@ -872,3 +872,21 @@ func TestSetRuntimeProvider_RejectsMultiDocument(t *testing.T) {
 		t.Fatalf("file must be untouched:\n%s", data)
 	}
 }
+
+func TestSetRuntimeProvider_EmptyRuntimeSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(path, []byte("version: \"0.2\"\nruntime:\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRuntimeProvider(path, "codex"); err != nil {
+		t.Fatalf("empty runtime section must be treated as an empty mapping: %v", err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerName, _ := cfg.Runtime.EffectiveProvider(); providerName != "codex" {
+		t.Fatalf("effective provider = %q", providerName)
+	}
+}

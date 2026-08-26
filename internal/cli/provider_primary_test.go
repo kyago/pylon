@@ -110,3 +110,28 @@ func TestEnsurePrimaryProvider_NoneInstalledKeepsConfig(t *testing.T) {
 		t.Fatal("nothing installed — config must stay untouched")
 	}
 }
+
+func TestEnsurePrimaryProvider_PinnedMissingNonInteractiveKeepsPin(t *testing.T) {
+	binDir := t.TempDir()
+	claudeCmd := writeStubExecutable(t, binDir, "claude-stub")
+	root, _ := newPrimaryProviderWorkspace(t, claudeCmd, filepath.Join(binDir, "missing-codex"))
+	if err := config.SetRuntimeProvider(layout.ConfigPath(root), "codex"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadConfig(layout.ConfigPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 명시적 pin은 비인터랙티브에서 절대 대체되지 않는다.
+	if _, changed := ensurePrimaryProvider(root, cfg, false); changed {
+		t.Fatal("explicit pin must not be replaced without user confirmation")
+	}
+	reloaded, err := config.LoadConfig(layout.ConfigPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerName, _ := reloaded.Runtime.EffectiveProvider(); providerName != "codex" {
+		t.Fatalf("pin was rewritten to %q", providerName)
+	}
+}

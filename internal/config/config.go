@@ -283,6 +283,10 @@ func SetRuntimeProvider(path, providerName string) error {
 		runtime = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		root.Content = append(root.Content, scalar("runtime"), runtime)
 	}
+	// `runtime:` 만 있고 값이 비어 있으면 null 스칼라로 파싱된다 — 빈 맵으로 취급.
+	if runtime.Kind == yaml.ScalarNode && runtime.Tag == "!!null" {
+		*runtime = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	}
 	if runtime.Kind != yaml.MappingNode {
 		return errors.New("runtime section must be a mapping")
 	}

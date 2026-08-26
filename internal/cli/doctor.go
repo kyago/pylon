@@ -60,7 +60,7 @@ for any projects that are missing the local-scope ignore entry.`,
 	}
 
 	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in project repos")
-	cmd.Flags().Bool("yes", false, "커맨드 동기화 확인 프롬프트를 건너뛰고 자동 승인")
+	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화, provider 선택)를 건너뛰고 비인터랙티브로 실행")
 
 	return cmd
 }

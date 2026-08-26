@@ -44,7 +44,9 @@ func detectInstalledProviders(catalog *providerCatalog) []string {
 //
 // Returns the (possibly reloaded) config and whether the pin was written.
 func ensurePrimaryProvider(root string, cfg *config.Config, interactive bool) (*config.Config, bool) {
-	catalog, err := newProviderCatalog(cfg)
+	// launch 테스트 심(buildLaunchProviderCatalog)을 공유해 실제 PATH 대신
+	// 주입된 카탈로그가 probing을 결정하도록 한다.
+	catalog, err := buildLaunchProviderCatalog(cfg)
 	if err != nil {
 		return cfg, false
 	}
@@ -55,18 +57,29 @@ func ensurePrimaryProvider(root string, cfg *config.Config, interactive bool) (*
 	if pinned && slices.Contains(installed, current) {
 		return cfg, false
 	}
-	if pinned && len(installed) > 0 {
-		fmt.Printf("⚠ 설정된 provider %s가 설치되어 있지 않습니다 — 대체 provider를 결정합니다\n", current)
+	if len(installed) == 0 {
+		return cfg, false // provider check가 설치 안내를 담당한다
 	}
 
 	var pick string
-	switch len(installed) {
-	case 0:
-		return cfg, false // provider check가 설치 안내를 담당한다
-	case 1:
+	if pinned {
+		// 명시적으로 고정된 provider는 사용자 확인 없이 바꾸지 않는다 —
+		// 일시적 PATH 문제로 의도된 설정이 뒤집히면 안 된다.
+		fmt.Printf("⚠ 설정된 provider %s를 사용할 수 없습니다 (미설치 또는 비활성화)\n", current)
+		if !interactive {
+			fmt.Println("  대체하려면 pylon doctor를 인터랙티브로 실행하거나 config.yml을 수정하세요")
+			return cfg, false
+		}
+		pick, err = selectPrimaryProvider(installed, current)
+		if err != nil {
+			fmt.Printf("⚠ provider 선택 취소됨 — 기존 설정(%s)을 유지합니다\n", current)
+			return cfg, false
+		}
+		fmt.Printf("✓ %s를 전용 provider로 설정합니다\n", providerDisplayName(pick))
+	} else if len(installed) == 1 {
 		pick = installed[0]
 		fmt.Printf("✓ %s를 primary provider로 설정합니다 (유일하게 설치된 provider)\n", providerDisplayName(pick))
-	default:
+	} else {
 		if !interactive {
 			return cfg, false
 		}

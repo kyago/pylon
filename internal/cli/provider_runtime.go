@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/provider"
 	providerclaude "github.com/kyago/pylon/internal/provider/claude"
 	providercodex "github.com/kyago/pylon/internal/provider/codex"
@@ -88,11 +90,25 @@ func newProviderCatalog(cfg *config.Config) (*providerCatalog, error) {
 }
 
 // prepareCodexWorkspace materializes what a codex session needs: codex reads
-// the workspace-root AGENTS.md natively, so only the root agent files are
-// ensured — no .claude/ 생성이 필요 없다.
+// the workspace-root AGENTS.md natively, so no .claude/ 생성이 필요 없다.
+// pylon 소유 리소스 갱신은 launch 계약(모든 launch에서 refresh)에 따라
+// claude 경로(generateClaudeDir)와 동일하게 수행한다.
 func prepareCodexWorkspace(root string, _ *config.Config, projects []config.ProjectInfo) error {
-	_, _, err := ensureRootAgentFiles(root, projects)
-	return err
+	if _, overwritten := syncPylonResources(layout.PylonDir(root)); len(overwritten) > 0 {
+		fmt.Fprintf(os.Stderr, "⚠ 내장 버전으로 되돌린 pylon 소유 파일 %d개: %s\n",
+			len(overwritten), strings.Join(overwritten, ", "))
+	}
+	bootstrapped, backedUp, err := ensureRootAgentFiles(root, projects)
+	if err != nil {
+		return err
+	}
+	for _, name := range backedUp {
+		fmt.Fprintf(os.Stderr, "ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+	}
+	if bootstrapped {
+		fmt.Fprintln(os.Stderr, "ℹ AGENTS.md를 부트스트랩했습니다 — 세션이 첫 턴에 이 워크스페이스에 맞게 재작성합니다.")
+	}
+	return nil
 }
 
 // selectCodexSandboxMode presents an interactive selector for the codex
