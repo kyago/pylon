@@ -746,3 +746,58 @@ func TestMigrateRuntimeBackend_NoopWithoutBackend(t *testing.T) {
 		t.Fatalf("file must be untouched on noop:\n%s", data)
 	}
 }
+
+func TestMigrateRuntimeBackend_BailsOnMultiDocument(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	content := "version: \"0.2\"\nruntime:\n  backend: codex\n---\nsecond: doc\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := MigrateRuntimeBackend(path)
+	if err != nil || migrated {
+		t.Fatalf("multi-document file must not be migrated: migrated=%v err=%v", migrated, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Fatalf("multi-document file must be untouched:\n%s", data)
+	}
+}
+
+func TestMigrateRuntimeBackend_EmptyProviderDoesNotLoseBackend(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	content := "version: \"0.2\"\nruntime:\n  provider: \"\"\n  backend: codex\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := MigrateRuntimeBackend(path)
+	if err != nil || !migrated {
+		t.Fatalf("migrated=%v err=%v", migrated, err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 기존 유효값(backend=codex)이 보존되어야 한다 — auto로 바뀌면 의미 변경.
+	if providerName, deprecated := cfg.Runtime.EffectiveProvider(); providerName != "codex" || deprecated {
+		t.Fatalf("effective provider = %q deprecated=%v", providerName, deprecated)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "provider:") != 1 || strings.Contains(string(data), "backend:") {
+		t.Fatalf("expected single provider key and no backend:\n%s", data)
+	}
+}
+
+func TestMigrateRuntimeBackend_NoopWhenConfigMissing(t *testing.T) {
+	migrated, err := MigrateRuntimeBackend(filepath.Join(t.TempDir(), "config.yml"))
+	if err != nil || migrated {
+		t.Fatalf("missing config must be a silent noop: migrated=%v err=%v", migrated, err)
+	}
+}
