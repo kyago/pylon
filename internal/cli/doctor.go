@@ -130,7 +130,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	printInstallHints(failures)
+	// 도구 미설치가 아닌 실패(예: verify.yml 문제)는 위에서 이미 경고로 안내됐다.
+	if len(failures) > 0 {
+		printInstallHints(failures)
+	}
 	return fmt.Errorf("doctor checks failed")
 }
 
