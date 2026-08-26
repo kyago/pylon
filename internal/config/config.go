@@ -243,6 +243,73 @@ func MigrateRuntimeBackend(path string) (bool, error) {
 	return true, nil
 }
 
+// SetRuntimeProvider pins runtime.provider to the given name in config.yml,
+// preserving comments and document order via yaml.Node surgery (같은 이유로
+// MigrateRuntimeBackend와 동일한 방식). runtime 섹션이나 provider 키가 없으면
+// 만들어 넣는다. 멀티 문서 파일은 유실 위험이 있어 건드리지 않는다.
+func SetRuntimeProvider(path, providerName string) error {
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return errors.New("provider name is required")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	var doc yaml.Node
+	if err := decoder.Decode(&doc); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&yaml.Node{}); !errors.Is(err, io.EOF) {
+		return errors.New("multi-document config.yml is not supported")
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return errors.New("config.yml root must be a mapping")
+	}
+	root := doc.Content[0]
+
+	scalar := func(value string) *yaml.Node {
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+	}
+	var runtime *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "runtime" {
+			runtime = root.Content[i+1]
+			break
+		}
+	}
+	if runtime == nil {
+		runtime = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content, scalar("runtime"), runtime)
+	}
+	if runtime.Kind != yaml.MappingNode {
+		return errors.New("runtime section must be a mapping")
+	}
+	set := false
+	for i := 0; i+1 < len(runtime.Content); i += 2 {
+		if runtime.Content[i].Value == "provider" {
+			runtime.Content[i+1] = scalar(providerName)
+			set = true
+			break
+		}
+	}
+	if !set {
+		runtime.Content = append([]*yaml.Node{scalar("provider"), scalar(providerName)}, runtime.Content...)
+	}
+
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&doc); err != nil {
+		return err
+	}
+	if err := encoder.Close(); err != nil {
+		return err
+	}
+	return fsutil.WriteFileAtomic(path, buf.Bytes(), 0644)
+}
+
 // SyncConfigDefaults reads config.yml, detects missing fields, and adds them.
 // Only writes to disk if there are actually missing fields.
 // When only entire sections are missing, they are appended to preserve existing content.

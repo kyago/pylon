@@ -6,12 +6,16 @@ import (
 	"io"
 	"strings"
 
+	"github.com/charmbracelet/huh"
+
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/provider"
 	providerclaude "github.com/kyago/pylon/internal/provider/claude"
+	providercodex "github.com/kyago/pylon/internal/provider/codex"
 )
 
 const claudeInstallURL = "https://docs.anthropic.com/en/docs/claude-code"
+const codexInstallURL = "https://developers.openai.com/codex/cli"
 
 type providerWorkspacePreparer func(string, *config.Config, []config.ProjectInfo) error
 type providerPermissionSelector func(string) (string, error)
@@ -60,7 +64,70 @@ func newProviderCatalog(cfg *config.Config) (*providerCatalog, error) {
 		}
 	}
 
+	codexConfig := cfg.Providers[providercodex.Name]
+	codexEnabled, err := providerEnabled(codexConfig.Enabled)
+	if err != nil {
+		return nil, fmt.Errorf("provider %s: %w", providercodex.Name, err)
+	}
+	if codexEnabled {
+		command := codexConfig.Command
+		if strings.TrimSpace(command) == "" {
+			command = "codex"
+		}
+		if err := catalog.register(providerCatalogEntry{
+			adapter:          providercodex.New(command),
+			prepareWorkspace: prepareCodexWorkspace,
+			selectPermission: selectCodexSandboxMode,
+			installURL:       codexInstallURL,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	return catalog, nil
+}
+
+// prepareCodexWorkspace materializes what a codex session needs: codex reads
+// the workspace-root AGENTS.md natively, so only the root agent files are
+// ensured — no .claude/ 생성이 필요 없다.
+func prepareCodexWorkspace(root string, _ *config.Config, projects []config.ProjectInfo) error {
+	_, _, err := ensureRootAgentFiles(root, projects)
+	return err
+}
+
+// selectCodexSandboxMode presents an interactive selector for the codex
+// --sandbox mode (공식 값: read-only / workspace-write / danger-full-access).
+func selectCodexSandboxMode(defaultMode string) (string, error) {
+	if defaultMode != "read-only" && defaultMode != "danger-full-access" {
+		defaultMode = "workspace-write"
+	}
+
+	modes := []huh.Option[string]{
+		huh.NewOption("workspace-write — 워크스페이스 내 쓰기 허용", "workspace-write"),
+		huh.NewOption("read-only — 읽기 전용", "read-only"),
+		huh.NewOption("danger-full-access — 샌드박스 없음", "danger-full-access"),
+	}
+	for i, m := range modes {
+		if m.Value == defaultMode {
+			modes[i] = modes[i].Selected(true)
+			break
+		}
+	}
+
+	var selected string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Codex Sandbox 선택").
+				Description("codex --sandbox 모드를 설정합니다").
+				Options(modes...).
+				Value(&selected),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return "", fmt.Errorf("선택 취소됨: %w", err)
+	}
+	return selected, nil
 }
 
 func providerEnabled(value string) (bool, error) {
