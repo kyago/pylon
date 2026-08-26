@@ -18,7 +18,7 @@ require_cmd pylon jq
 
 # GIT_ROOT가 워크스페이스 루트나 상위 repo로 잘못 해석된 경우를 조기에 잡는다.
 [[ -f "$GIT_ROOT/.pylon/verify.yml" || -f "$GIT_ROOT/go.mod" ]] ||
-  die "$GIT_ROOT 에 .pylon/verify.yml이 없습니다. --git-root <프로젝트 상대경로> 지정을 확인하고, 파일이 없으면 pylon doctor로 재생성하세요"
+  die "$GIT_ROOT 에 .pylon/verify.yml이 없습니다. --git-root <프로젝트 상대경로> 지정을 확인하세요. 파일이 실제로 없으면 pylon doctor로 재생성한 뒤 새 run을 시작해야 합니다 (현재 run의 snapshot과는 digest가 달라 재개할 수 없음)"
 
 # live verify.yml 경로는 재계산하지 않는다 — snapshot의 Source.Path(절대경로)를 사용해
 # snapshot 생성 시점과 검증 시점의 경로 불일치로 인한 오탐을 막는다.

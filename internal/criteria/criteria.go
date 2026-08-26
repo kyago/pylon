@@ -233,6 +233,8 @@ func ResolveVerification(workDir, configPath string) ([]config.NamedVerifyStep, 
 	// Source.Path는 검증 시점에 다른 cwd에서 live 변경 감지에 재사용되므로
 	// 절대경로로 기록한다. 상대경로를 그대로 두면 snapshot 생성 셸과 검증 셸의
 	// cwd가 다를 때 존재하는 verify.yml을 "missing"으로 오판한다.
+	// 트레이드오프: run 도중 워크스페이스를 이동/개명하면 절대경로가 깨져
+	// fail-closed로 실패한다 — cwd 불일치 오탐보다 훨씬 드문 경우를 감수한다.
 	if abs, absErr := filepath.Abs(configPath); absErr == nil {
 		configPath = abs
 	}

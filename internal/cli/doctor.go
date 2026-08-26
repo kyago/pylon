@@ -221,10 +221,14 @@ func checkRepoExcludes(fix bool) bool {
 
 // checkProjectVerifyConfigs ensures every discovered project has a usable
 // .pylon/verify.yml. verify.yml is local-only state (excluded from the project
-// repo by design), so a fresh checkout has none and nothing else recreates it —
-// a missing file is regenerated from the detected tech stack, the same way
-// `pylon add-project` scaffolds it. An existing file is user data and is never
-// overwritten: parse failures and empty command sets are only reported.
+// repo by design), so it is lost outside this machine and nothing else recreates
+// it — a missing file is regenerated from the detected tech stack, the same way
+// `pylon add-project` scaffolds it, and the .pylon/ exclude entry is re-applied
+// so the regenerated file can never become committable. Discovery only sees
+// directories that still have a .pylon/ dir; a fully fresh clone (no .pylon/ at
+// all) is reported as a hint to run `pylon add-project --skip-clone` instead.
+// An existing file is user data and is never overwritten: parse failures and
+// empty command sets are only reported.
 // Returns true when every project ends up with a parseable, non-empty config.
 func checkProjectVerifyConfigs() bool {
 	root, err := resolveRoot()
@@ -232,11 +236,16 @@ func checkProjectVerifyConfigs() bool {
 		return true // not in a workspace, nothing to check
 	}
 	projects, err := config.DiscoverProjects(root)
-	if err != nil || len(projects) == 0 {
+	if err != nil {
 		return true
 	}
 
 	fmt.Println()
+	hintUnscaffoldedProjects(root, projects)
+	if len(projects) == 0 {
+		return true
+	}
+
 	ok := true
 	issues := 0
 	for _, p := range projects {
@@ -250,6 +259,15 @@ func checkProjectVerifyConfigs() bool {
 				continue
 			}
 			fmt.Printf("✓ %s: 누락된 verify.yml 재생성됨\n", p.Name)
+			// 재생성한 파일이 프로젝트 repo에 커밋 가능해지지 않도록
+			// add-project와 동일하게 exclude 엔트리를 보장한다.
+			if isGit, hasEntry := checkExcludeStatus(p.Path); isGit && !hasEntry {
+				if exclErr := excludePylonFromRepo(p.Path); exclErr != nil {
+					fmt.Printf("⚠ %s: .pylon/ exclude 설정 실패: %v\n", p.Name, exclErr)
+					ok = false
+					issues++
+				}
+			}
 		} else if statErr != nil {
 			fmt.Printf("⚠ %s: verify.yml 확인 실패: %v\n", p.Name, statErr)
 			ok = false
@@ -274,6 +292,30 @@ func checkProjectVerifyConfigs() bool {
 		fmt.Printf("✓ 모든 프로젝트 verify.yml 정상 (%d개 프로젝트)\n", len(projects))
 	}
 	return ok
+}
+
+// hintUnscaffoldedProjects points out workspace-root git repos that have no
+// .pylon/ at all (e.g. a fresh clone) — doctor cannot regenerate verify.yml
+// for them because project discovery requires .pylon/ to exist.
+func hintUnscaffoldedProjects(root string, projects []config.ProjectInfo) {
+	known := make(map[string]bool, len(projects))
+	for _, p := range projects {
+		known[p.Name] = true
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() || strings.HasPrefix(name, ".") || known[name] {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, name, ".git")); err != nil {
+			continue
+		}
+		fmt.Printf("ℹ %s: .pylon/ 미초기화 git 프로젝트 — pylon add-project %s --skip-clone 으로 초기화하세요\n", name, name)
+	}
 }
 
 // checkExcludeStatus returns whether a project is a git repo and whether

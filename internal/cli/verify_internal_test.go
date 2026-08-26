@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/criteria"
 )
 
 func TestExecuteVerification_RunsConfiguredStepsInOrder(t *testing.T) {
@@ -587,5 +588,22 @@ func createCriteriaSnapshot(t *testing.T, workDir, configPath, snapshotPath, man
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("criteria snapshot failed: %v (%s)", err, output.String())
+	}
+}
+
+func TestResolveLiveConfigPath(t *testing.T) {
+	workDir := "/work/repo"
+	abs := filepath.Join(workDir, ".pylon", "verify.yml")
+	// 명시 지정이 항상 우선한다.
+	if got := resolveLiveConfigPath(workDir, "/explicit/verify.yml", criteria.Source{Path: "rel/.pylon/verify.yml"}); got != "/explicit/verify.yml" {
+		t.Fatalf("explicit path ignored: %q", got)
+	}
+	// 구버전 snapshot의 상대 Source.Path는 workdir 표준 위치로 대체된다.
+	if got := resolveLiveConfigPath(workDir, "", criteria.Source{Path: "repo/.pylon/verify.yml"}); got != abs {
+		t.Fatalf("legacy relative path not remapped: %q", got)
+	}
+	// 절대 Source.Path는 LiveSourceChanged의 fallback에 맡긴다.
+	if got := resolveLiveConfigPath(workDir, "", criteria.Source{Path: abs}); got != "" {
+		t.Fatalf("absolute source must use fallback: %q", got)
 	}
 }

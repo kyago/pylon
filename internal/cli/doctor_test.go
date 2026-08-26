@@ -754,6 +754,8 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 }
 
 func TestCheckProjectVerifyConfigs_RegeneratesMissing(t *testing.T) {
+	requireGit(t)
+
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
 		t.Fatal(err)
@@ -762,10 +764,20 @@ func TestCheckProjectVerifyConfigs_RegeneratesMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	projectDir := filepath.Join(tmpDir, "goproject")
+	if out, err := exec.Command("git", "init", projectDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
 	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/goproject\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// exclude 엔트리가 없는 상태에서 재생성이 일어나는 시나리오
+	os.Remove(filepath.Join(projectDir, ".git", "info", "exclude"))
+	// .pylon/ 없이 clone만 된 프로젝트는 재생성 대상이 아니어야 한다 (힌트만 출력)
+	unscaffolded := filepath.Join(tmpDir, "freshclone")
+	if err := os.MkdirAll(filepath.Join(unscaffolded, ".git"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -783,6 +795,14 @@ func TestCheckProjectVerifyConfigs_RegeneratesMissing(t *testing.T) {
 	}
 	if len(vc.OrderedSteps()) == 0 {
 		t.Fatal("regenerated verify.yml for a Go project must contain commands")
+	}
+	// 재생성된 verify.yml이 커밋 가능해지면 안 된다 — exclude 엔트리가 함께 보장된다.
+	if isGit, hasEntry := checkExcludeStatus(projectDir); !isGit || !hasEntry {
+		t.Fatalf("regeneration must ensure .pylon/ exclude entry: isGit=%v hasEntry=%v", isGit, hasEntry)
+	}
+	// .pylon/ 없는 프로젝트에는 아무것도 쓰지 않는다.
+	if _, err := os.Stat(filepath.Join(unscaffolded, ".pylon")); !os.IsNotExist(err) {
+		t.Fatal("unscaffolded project must not be scaffolded by doctor")
 	}
 }
 
