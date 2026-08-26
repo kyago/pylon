@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -656,5 +657,92 @@ func TestMemoryRetentionDaysLegacyScalar(t *testing.T) {
 	}
 	if len(cfg.Memory.RetentionDays) != 0 {
 		t.Errorf("레거시 스칼라는 정책 없음(빈)이어야 한다: %v", cfg.Memory.RetentionDays)
+	}
+}
+
+func TestMigrateRuntimeBackend_RenamesKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	content := `version: "0.2"
+# runtime settings
+runtime:
+  backend: claude-code # my provider
+  max_concurrent: 3
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := MigrateRuntimeBackend(path)
+	if err != nil || !migrated {
+		t.Fatalf("migrated=%v err=%v", migrated, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "backend:") {
+		t.Fatalf("backend key must be gone:\n%s", text)
+	}
+	if !strings.Contains(text, "provider: claude-code") {
+		t.Fatalf("provider key missing:\n%s", text)
+	}
+	if !strings.Contains(text, "# runtime settings") || !strings.Contains(text, "# my provider") {
+		t.Fatalf("comments must be preserved:\n%s", text)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerName, deprecated := cfg.Runtime.EffectiveProvider()
+	if providerName != "claude-code" || deprecated {
+		t.Fatalf("effective provider = %q deprecated=%v", providerName, deprecated)
+	}
+	if cfg.Runtime.MaxConcurrent != 3 {
+		t.Fatalf("sibling keys must survive: %+v", cfg.Runtime)
+	}
+}
+
+func TestMigrateRuntimeBackend_DropsBackendWhenProviderExists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	content := "version: \"0.2\"\nruntime:\n  provider: codex\n  backend: claude-code\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := MigrateRuntimeBackend(path)
+	if err != nil || !migrated {
+		t.Fatalf("migrated=%v err=%v", migrated, err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// provider가 우선이었으므로 backend 제거는 의미 변화가 없어야 한다.
+	if providerName, deprecated := cfg.Runtime.EffectiveProvider(); providerName != "codex" || deprecated {
+		t.Fatalf("effective provider = %q deprecated=%v", providerName, deprecated)
+	}
+	if cfg.Runtime.Backend != "" {
+		t.Fatalf("backend must be removed: %+v", cfg.Runtime)
+	}
+}
+
+func TestMigrateRuntimeBackend_NoopWithoutBackend(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	content := "version: \"0.2\"\nruntime:\n  provider: claude-code\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := MigrateRuntimeBackend(path)
+	if err != nil || migrated {
+		t.Fatalf("expected noop: migrated=%v err=%v", migrated, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Fatalf("file must be untouched on noop:\n%s", data)
 	}
 }

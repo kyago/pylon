@@ -446,6 +446,11 @@ func syncConfigIfWorkspace() {
 	}
 
 	cfgPath := layout.ConfigPath(root)
+	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
+		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
+	} else if migrated {
+		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
+	}
 	cfg, added, err := config.SyncConfigDefaults(cfgPath)
 	if err != nil {
 		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)
@@ -459,8 +464,9 @@ func syncConfigIfWorkspace() {
 	} else {
 		fmt.Println("✓ config.yml 최신 상태")
 	}
+	// 마이그레이션이 정상 동작하면 여기 도달하지 않는다 — 실패 시의 수동 안내.
 	if providerName, deprecated := cfg.Runtime.EffectiveProvider(); deprecated {
-		fmt.Printf("⚠ runtime.backend는 deprecated입니다 — runtime.provider: %s 로 전환하세요 (자동 rewrite하지 않음)\n", providerName)
+		fmt.Printf("⚠ runtime.backend는 deprecated입니다 — runtime.provider: %s 로 직접 전환하세요\n", providerName)
 	}
 	warnDeprecatedAgentProviders(root)
 }

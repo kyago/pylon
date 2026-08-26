@@ -603,9 +603,21 @@ Legacy agent.
 	t.Cleanup(func() { flagWorkspace = oldWorkspace })
 
 	output := captureStdout(t, syncConfigIfWorkspace)
-	if !strings.Contains(output, "runtime.backend는 deprecated") || !strings.Contains(output, "runtime.provider: claude-code") {
-		t.Fatalf("deprecated warning missing:\n%s", output)
+	// config의 backend는 경고 대신 자동 마이그레이션된다.
+	if !strings.Contains(output, "runtime.backend를 runtime.provider로 전환했습니다") {
+		t.Fatalf("migration notice missing:\n%s", output)
 	}
+	if strings.Contains(output, "runtime.backend는 deprecated") {
+		t.Fatalf("deprecated warning must not appear after migration:\n%s", output)
+	}
+	cfg, err := config.LoadConfig(filepath.Join(root, ".pylon", "config.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerName, deprecated := cfg.Runtime.EffectiveProvider(); providerName != "claude-code" || deprecated {
+		t.Fatalf("config not migrated: provider=%q deprecated=%v", providerName, deprecated)
+	}
+	// agent frontmatter는 사용자 소유라 자동 rewrite하지 않고 경고만 유지한다.
 	if !strings.Contains(output, "agent legacy.md의 backend는 deprecated") || !strings.Contains(output, "provider: claude-code") {
 		t.Fatalf("agent deprecated warning missing:\n%s", output)
 	}

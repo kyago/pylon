@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"sort"
@@ -155,6 +156,66 @@ func (r RuntimeConfig) ParseTaskTimeout() time.Duration {
 		return 30 * time.Minute
 	}
 	return d
+}
+
+// MigrateRuntimeBackend rewrites deprecated runtime.backend to runtime.provider
+// in config.yml. provider가 이미 있으면 backend 키만 제거한다 — EffectiveProvider가
+// provider를 우선하므로 의미 변화가 없다. yaml.Node 단위로 키만 바꿔 주석과
+// 문서 순서를 보존한다. Returns whether the file was rewritten.
+func MigrateRuntimeBackend(path string) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return false, err
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return false, nil
+	}
+	root := doc.Content[0]
+	var runtime *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "runtime" {
+			runtime = root.Content[i+1]
+			break
+		}
+	}
+	if runtime == nil || runtime.Kind != yaml.MappingNode {
+		return false, nil
+	}
+	backendIdx := -1
+	hasProvider := false
+	for i := 0; i+1 < len(runtime.Content); i += 2 {
+		switch runtime.Content[i].Value {
+		case "backend":
+			backendIdx = i
+		case "provider":
+			hasProvider = true
+		}
+	}
+	if backendIdx < 0 {
+		return false, nil
+	}
+	if hasProvider {
+		runtime.Content = append(runtime.Content[:backendIdx], runtime.Content[backendIdx+2:]...)
+	} else {
+		runtime.Content[backendIdx].Value = "provider"
+	}
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&doc); err != nil {
+		return false, err
+	}
+	if err := encoder.Close(); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // SyncConfigDefaults reads config.yml, detects missing fields, and adds them.
