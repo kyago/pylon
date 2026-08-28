@@ -112,15 +112,22 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 	// 블록도 스탬프도 없는 파일은 pylon 산출물이 아니므로 손대지 않는다.
 	agentsPath := layout.RootAgentsPath(root)
 	if data, err := os.ReadFile(agentsPath); err == nil {
-		if s, e, ok := findAgentsBlock(data); ok {
+		s, e, blockState := findAgentsBlock(data)
+		switch blockState {
+		case agentsBlockComplete:
 			rest := append(append([]byte{}, data[:s]...), data[e:]...)
 			if len(bytes.TrimSpace(rest)) == 0 {
 				plan.runtimeFiles = append(plan.runtimeFiles, agentsPath)
 			} else {
 				plan.agentsStripPath = agentsPath
 			}
-		} else if usageVersionRe.Match(data) || bytes.Contains(data, []byte(bootstrapAgentsMDHeading)) {
-			plan.runtimeFiles = append(plan.runtimeFiles, agentsPath)
+		case agentsBlockMalformed:
+			// 마크다운 파일 하나 때문에 uninstall 전체를 막지 않는다 — 이 파일만 남기고 계속.
+			fmt.Printf("⚠ %v — 이 파일은 그대로 두고 나머지를 계속 제거합니다\n", agentsBlockMalformedError(agentsPath))
+		case agentsBlockAbsent:
+			if usageVersionRe.Match(data) || bytes.Contains(data, []byte(bootstrapAgentsMDHeading)) {
+				plan.runtimeFiles = append(plan.runtimeFiles, agentsPath)
+			}
 		}
 	}
 	// codex용으로 생성된 워크플로우 스킬(마커 보유)만 제거 — 사용자 스킬은 남긴다.

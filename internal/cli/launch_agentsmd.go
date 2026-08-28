@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/fsutil"
 	"github.com/kyago/pylon/internal/layout"
 )
 
@@ -17,7 +19,7 @@ import (
 // (internal/cli/reference/pylon-usage.md). Bump it ONLY when that manual changes —
 // it is the sole trigger that marks an existing AGENTS.md stale and forces the next
 // session to re-author it. Independent of pylon's CalVer release version.
-const pylonUsageVersion = 4
+const pylonUsageVersion = 5
 
 var usageVersionRe = regexp.MustCompile(`pylon-usage-version:\s*(\d+)`)
 
@@ -63,6 +65,8 @@ func buildAgentsBlock(root string, projects []config.ProjectInfo) string {
 	b.WriteString("이 블록의 내용을 이 워크스페이스의 운영 가이드로 다시 작성하세요.\n")
 	fmt.Fprintf(&b, "마커 두 줄과 `<!-- pylon-usage-version: %d -->` 스탬프는 블록 안에 그대로 유지하고,\n", pylonUsageVersion)
 	b.WriteString("블록 밖의 내용은 수정하지 마세요.\n\n")
+	b.WriteString("관리 블록에는 `.pylon/`과 등록 프로젝트에서 확인한 기능만 반영하고,\n")
+	b.WriteString("pylon이 제공하지 않는 외부 도구·스킬을 추가하거나 필수 절차로 지정하지 마세요.\n\n")
 	fmt.Fprintf(&b, "- **워크스페이스 루트**: `%s`\n", root)
 	b.WriteString("- **매뉴얼**: `.pylon/reference/pylon-usage.md`\n")
 	b.WriteString("- **설정**: `.pylon/config.yml` / **도메인 지식**: `.pylon/domain/` / **에이전트**: `.pylon/agents/`\n")
@@ -81,38 +85,104 @@ func buildAgentsBlock(root string, projects []config.ProjectInfo) string {
 	return b.String()
 }
 
-// findAgentsBlock returns the [start,end) byte range of the pylon block including
-// both markers (and the newline right after the end marker, so replacement is
-// idempotent), or ok=false when the file has no complete block.
-func findAgentsBlock(data []byte) (start, end int, ok bool) {
-	s := bytes.Index(data, []byte(agentsBlockBegin))
-	if s < 0 {
-		return 0, 0, false
+type agentsBlockState uint8
+
+const (
+	agentsBlockAbsent agentsBlockState = iota
+	agentsBlockComplete
+	agentsBlockMalformed
+)
+
+// findAgentsBlock returns the [start,end) byte range of the single complete
+// pylon block, including both marker lines and the end marker's newline. Markers
+// count only when they occupy an entire line (surrounding whitespace tolerated, so
+// an indented or trailing-space marker still parses); inline examples with other
+// text on the line are user content.
+// Missing, reversed, or duplicate marker lines are reported as malformed so
+// callers never mistake a damaged managed block for a legacy whole-file guide.
+func findAgentsBlock(data []byte) (start, end int, state agentsBlockState) {
+	var begins, ends []int
+	var endLineEnds []int
+	for offset := 0; offset < len(data); {
+		rel := bytes.IndexByte(data[offset:], '\n')
+		lineEnd := len(data)
+		next := len(data)
+		if rel >= 0 {
+			lineEnd = offset + rel
+			next = lineEnd + 1
+		}
+		line := bytes.TrimSpace(data[offset:lineEnd])
+		switch string(line) {
+		case agentsBlockBegin:
+			begins = append(begins, offset)
+		case agentsBlockEnd:
+			ends = append(ends, offset)
+			endLineEnds = append(endLineEnds, next)
+		}
+		offset = next
 	}
-	rel := bytes.Index(data[s:], []byte(agentsBlockEnd))
-	if rel < 0 {
-		return 0, 0, false
+
+	if len(begins) == 0 && len(ends) == 0 {
+		return 0, 0, agentsBlockAbsent
 	}
-	e := s + rel + len(agentsBlockEnd)
-	if e < len(data) && data[e] == '\n' {
-		e++
+	if len(begins) != 1 || len(ends) != 1 || begins[0] >= ends[0] {
+		return 0, 0, agentsBlockMalformed
 	}
-	return s, e, true
+	return begins[0], endLineEnds[0], agentsBlockComplete
+}
+
+// errAgentsBlockMalformed is the shared sentinel for a damaged marker pair, so
+// callers can errors.Is it apart from I/O failures.
+var errAgentsBlockMalformed = errors.New("pylon 관리 블록 마커가 불완전하거나 중복되었습니다")
+
+func agentsBlockMalformedError(path string) error {
+	return fmt.Errorf("%s: %w — `%s`와 `%s`가 각각 정확히 한 줄씩, begin→end 순서로 있도록 수정한 뒤 다시 실행하세요",
+		path, errAgentsBlockMalformed, agentsBlockBegin, agentsBlockEnd)
+}
+
+// writeAgentsFile atomically writes a root agent file, preserving the existing
+// permission bits and writing through a symlink instead of replacing it.
+func writeAgentsFile(path string, data []byte) error {
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	mode := os.FileMode(0644)
+	if info, err := os.Stat(target); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return fsutil.WriteFileAtomic(target, data, mode)
 }
 
 // stripAgentsBlock rewrites path with the pylon block removed, leaving user
-// content untouched. A file without a complete block is left as-is.
+// content untouched. A file without a complete block is left as-is — the only
+// production caller plans the strip strictly for complete blocks.
 func stripAgentsBlock(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	s, e, ok := findAgentsBlock(data)
-	if !ok {
+	s, e, state := findAgentsBlock(data)
+	if state != agentsBlockComplete {
 		return nil
 	}
 	out := append(append([]byte{}, data[:s]...), data[e:]...)
-	return os.WriteFile(path, out, 0644)
+	return writeAgentsFile(path, out)
+}
+
+// agentsBlockIsCurrent reports whether the given block bytes carry a parseable
+// version stamp at or above pylonUsageVersion.
+func agentsBlockIsCurrent(blockData []byte) bool {
+	m := usageVersionRe.FindSubmatch(blockData)
+	if m == nil {
+		return false
+	}
+	v, err := strconv.Atoi(string(m[1]))
+	return err == nil && v >= pylonUsageVersion
 }
 
 // agentsMDStale reports whether the pylon block in the workspace-root AGENTS.md
@@ -124,19 +194,8 @@ func agentsMDStale(root string) bool {
 	if err != nil {
 		return true
 	}
-	s, e, ok := findAgentsBlock(data)
-	if !ok {
-		return true
-	}
-	m := usageVersionRe.FindSubmatch(data[s:e])
-	if m == nil {
-		return true
-	}
-	v, err := strconv.Atoi(string(m[1]))
-	if err != nil {
-		return true
-	}
-	return v < pylonUsageVersion
+	s, e, state := findAgentsBlock(data)
+	return state != agentsBlockComplete || !agentsBlockIsCurrent(data[s:e])
 }
 
 // rootFileBackupSuffix is appended to a hand-written root file that pylon is about to
@@ -189,6 +248,20 @@ func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, er
 func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []string, error) {
 	var backedUp []string
 
+	// AGENTS.md를 먼저 읽고 malformed면 어떤 파일도 건드리기 전에 중단한다 — CLAUDE.md를
+	// 백업·교체해 놓고 에러를 반환하면 호출부가 backedUp을 버리므로 사용자는 백업 사실을
+	// 통보받지 못한다.
+	agentsPath := layout.RootAgentsPath(root)
+	data, readErr := os.ReadFile(agentsPath)
+	var s, e int
+	blockState := agentsBlockAbsent
+	if readErr == nil {
+		s, e, blockState = findAgentsBlock(data)
+		if blockState == agentsBlockMalformed {
+			return false, backedUp, agentsBlockMalformedError(agentsPath)
+		}
+	}
+
 	claudePath := layout.RootClaudePath(root)
 	// pylon이 쓴 CLAUDE.md는 두 가지뿐이다: 현재의 마커, 그리고 이 변경 이전 워크스페이스에
 	// 남아 있는 하드코딩 프롬프트. 둘 다 pylon 산출물이므로 백업 없이 교체한다.
@@ -203,30 +276,32 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 	if ok {
 		backedUp = append(backedUp, filepath.Base(claudePath))
 	}
-	if err := os.WriteFile(claudePath, []byte(buildClaudeMDPointer()), 0644); err != nil {
-		return false, backedUp, fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
+	pointer := []byte(buildClaudeMDPointer())
+	// 이미 마커면 다시 쓰지 않는다 — 매 실행 mtime 갱신으로 파일 워처를 깨우지 않기 위해.
+	if existing, err := os.ReadFile(claudePath); err != nil || !bytes.Equal(existing, pointer) {
+		if err := writeAgentsFile(claudePath, pointer); err != nil {
+			return false, backedUp, fmt.Errorf("CLAUDE.md 생성 실패: %w", err)
+		}
 	}
 
-	if !agentsMDStale(root) {
+	if blockState == agentsBlockComplete && agentsBlockIsCurrent(data[s:e]) {
 		return false, backedUp, nil
 	}
 
-	agentsPath := layout.RootAgentsPath(root)
 	block := buildAgentsBlock(root, projects)
-	data, readErr := os.ReadFile(agentsPath)
 	if readErr != nil {
 		// 파일 없음 → 블록만으로 새로 만든다.
-		if err := os.WriteFile(agentsPath, []byte(block), 0644); err != nil {
+		if err := writeAgentsFile(agentsPath, []byte(block)); err != nil {
 			return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
 		}
 		return true, backedUp, nil
 	}
 
-	if s, e, blockFound := findAgentsBlock(data); blockFound {
+	if blockState == agentsBlockComplete {
 		// stale 블록만 교체 — 블록 밖 사용자 내용은 그대로 둔다. 블록 안은 pylon 소유이고
 		// 다음 세션이 팩트로부터 재저작하므로 백업하지 않는다.
 		out := string(data[:s]) + block + string(data[e:])
-		if err := os.WriteFile(agentsPath, []byte(out), 0644); err != nil {
+		if err := writeAgentsFile(agentsPath, []byte(out)); err != nil {
 			return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
 		}
 		return true, backedUp, nil
@@ -244,7 +319,7 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		if ok {
 			backedUp = append(backedUp, filepath.Base(agentsPath))
 		}
-		if err := os.WriteFile(agentsPath, []byte(block), 0644); err != nil {
+		if err := writeAgentsFile(agentsPath, []byte(block)); err != nil {
 			return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
 		}
 		return true, backedUp, nil
@@ -259,7 +334,7 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		out += "\n"
 	}
 	out += block
-	if err := os.WriteFile(agentsPath, []byte(out), 0644); err != nil {
+	if err := writeAgentsFile(agentsPath, []byte(out)); err != nil {
 		return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
 	}
 	return true, backedUp, nil

@@ -201,6 +201,44 @@ func TestUninstallStripsPylonBlockKeepingUserContent(t *testing.T) {
 	}
 }
 
+// malformed 블록은 AGENTS.md만 건너뛰고 나머지 uninstall은 계속 진행되어야 한다 —
+// 마크다운 파일 하나 때문에 제거 자체가 불가능해지면 안 된다.
+func TestBuildUninstallPlanSkipsMalformedAgentsMDAndContinues(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	original := "# 우리 팀 규칙\n\n" + agentsBlockBegin +
+		fmt.Sprintf("\n<!-- pylon-usage-version: %d -->\n", pylonUsageVersion) + bootstrapAgentsMDHeading + "\n"
+	agentsPath := layout.RootAgentsPath(root)
+	if err := os.WriteFile(agentsPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := buildUninstallPlan(root, false, false)
+	if err != nil {
+		t.Fatalf("malformed AGENTS.md must not abort uninstall planning: %v", err)
+	}
+	if plan.workspacePylon == "" {
+		t.Error("rest of the uninstall plan must still be built")
+	}
+	if plan.agentsStripPath != "" {
+		t.Errorf("malformed AGENTS.md must not be planned for strip, got %q", plan.agentsStripPath)
+	}
+	for _, f := range plan.runtimeFiles {
+		if f == agentsPath {
+			t.Error("malformed AGENTS.md must not be planned for deletion")
+		}
+	}
+	got, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("uninstall planning changed user content: %q", got)
+	}
+}
+
 func TestBuildUninstallPlan(t *testing.T) {
 	// Create a minimal workspace structure
 	root := t.TempDir()

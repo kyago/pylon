@@ -87,9 +87,35 @@ func runLaunch() error {
 	if err != nil {
 		return fmt.Errorf("provider %s 실행 준비 실패: %w", selection.Adapter.Name(), err)
 	}
+	// syscall.Exec에는 cwd 인자가 없으므로 여기서 워크스페이스 루트로 이동해 provider가
+	// 루트에서 뜨게 한다. config의 상대경로 command는 이동 전에 절대경로로 고정하고,
+	// exec된 프로세스의 PWD가 실제 cwd와 어긋나지 않게 맞춘다.
+	if !filepath.IsAbs(process.Executable) {
+		abs, err := filepath.Abs(process.Executable)
+		if err != nil {
+			return fmt.Errorf("provider 실행 파일 경로 확인 실패: %w", err)
+		}
+		process.Executable = abs
+	}
+	if err := os.Chdir(root); err != nil {
+		return fmt.Errorf("워크스페이스 루트 이동 실패: %w", err)
+	}
+	process.Environment = upsertEnv(process.Environment, "PWD", root)
 
 	fmt.Printf("%s를 시작합니다...\n", process.DisplayName)
 	return replaceLaunchProcess(process.Executable, process.Args, process.Environment)
+}
+
+// upsertEnv replaces key's entry in env in place, or appends one when absent.
+func upsertEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }
 
 // openWorkspace finds the workspace root and loads config.

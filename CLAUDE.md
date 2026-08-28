@@ -18,7 +18,9 @@ The workspace root prompt is **AI-authored, not hardcoded in Go**. `ensureRootAg
 marker on every launch. Inside `AGENTS.md`, pylon owns only the **managed block** delimited by
 `<!-- pylon:begin -->` / `<!-- pylon:end -->`: the block is re-bootstrapped **only when missing or
 stale**, content outside the block is user-owned and never modified, and a user's own `AGENTS.md`
-(no block) keeps its content with the block appended. Staleness is a version stamp comparison inside the
+(no block) keeps its content with the block appended. A malformed marker pair (missing, reversed, or
+duplicated whole-line markers) aborts launch/init/doctor before any file is touched; uninstall skips the
+file with a warning and proceeds. Staleness is a version stamp comparison inside the
 block: `<!-- pylon-usage-version: N -->` is stale when absent, unparseable, or below `pylonUsageVersion`.
 The launched claude session authors the real guide inside the block on its first turn,
 reading `.pylon/reference/pylon-usage.md` (the embedded manual) plus the actual workspace. Go never calls

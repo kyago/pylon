@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -194,7 +195,7 @@ func TestEnsureRootAgentFilesReplacesStaleBlockPreservingUserContent(t *testing.
 	userBottom := "\n# 블록 아래 추가 규칙\n"
 	staleBlock := strings.Replace(buildAgentsBlock(root, nil),
 		fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion), "pylon-usage-version: 0", 1)
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(userTop+staleBlock+userBottom), 0644); err != nil {
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(userTop+staleBlock+userBottom), 0600); err != nil {
 		t.Fatal(err)
 	}
 	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
@@ -216,6 +217,105 @@ func TestEnsureRootAgentFilesReplacesStaleBlockPreservingUserContent(t *testing.
 	}
 	if strings.Count(string(got), agentsBlockBegin) != 1 || strings.Count(string(got), agentsBlockEnd) != 1 {
 		t.Errorf("block replacement must stay a single block: %q", got)
+	}
+	info, err := os.Stat(layout.RootAgentsPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("AGENTS.md mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestEnsureRootAgentFilesRejectsMalformedBlockWithoutChangingUserContent(t *testing.T) {
+	blockBody := "\n<!-- pylon-usage-version: 0 -->\n" + bootstrapAgentsMDHeading + "\n"
+	tests := map[string]string{
+		"missing end":   "# 우리 팀 규칙\n\n" + agentsBlockBegin + blockBody,
+		"missing begin": "# 우리 팀 규칙\n\n" + blockBody + agentsBlockEnd + "\n",
+		"duplicate": agentsBlockBegin + blockBody + agentsBlockEnd + "\n" +
+			agentsBlockBegin + blockBody + agentsBlockEnd + "\n",
+	}
+	for name, original := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			handClaude := "# 우리 팀 CLAUDE.md\n수작업 파일"
+			if err := os.WriteFile(layout.RootAgentsPath(root), []byte(original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(layout.RootClaudePath(root), []byte(handClaude), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, _, err := ensureRootAgentFiles(root, nil); !errors.Is(err, errAgentsBlockMalformed) {
+				t.Fatalf("malformed pylon block must stop reconciliation, got %v", err)
+			}
+			got, err := os.ReadFile(layout.RootAgentsPath(root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != original {
+				t.Fatalf("malformed block changed user content:\ngot:  %q\nwant: %q", got, original)
+			}
+			// malformed 중단은 CLAUDE.md를 백업·교체하기 전에 일어나야 한다 — 에러 경로에서는
+			// backedUp이 호출부에서 버려져 백업 사실이 통보되지 않기 때문이다.
+			gotClaude, err := os.ReadFile(layout.RootClaudePath(root))
+			if err != nil || string(gotClaude) != handClaude {
+				t.Fatalf("CLAUDE.md must be untouched on malformed abort: %q, err=%v", gotClaude, err)
+			}
+			if _, err := os.Stat(layout.RootClaudePath(root) + rootFileBackupSuffix); !os.IsNotExist(err) {
+				t.Fatal("CLAUDE.md must not be backed up on malformed abort")
+			}
+		})
+	}
+}
+
+// 마커에 들여쓰기·꼬리 공백이 붙어도(포매터, 세션 재저작) 블록으로 인정된다 — absent로
+// 강등되어 레거시 경로가 사용자 내용을 백업 없이 덮어쓰는 일이 없어야 한다.
+func TestEnsureRootAgentFilesToleratesWhitespaceAroundMarkers(t *testing.T) {
+	root := t.TempDir()
+	userTop := "# 우리 팀 규칙\n\n"
+	mangled := userTop +
+		"  " + agentsBlockBegin + " \n" +
+		"<!-- pylon-usage-version: 0 -->\n" + bootstrapAgentsMDHeading + "\n" +
+		"\t" + agentsBlockEnd + "\n"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(mangled), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bootstrapped {
+		t.Error("whitespace-mangled stale block should still be re-bootstrapped")
+	}
+	if len(backedUp) != 0 {
+		t.Errorf("block replacement must not back anything up, got %v", backedUp)
+	}
+	got, _ := os.ReadFile(layout.RootAgentsPath(root))
+	if !strings.HasPrefix(string(got), userTop) {
+		t.Errorf("user content above the block was destroyed: %q", got)
+	}
+	if !strings.Contains(string(got), fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
+		t.Errorf("block not refreshed: %q", got)
+	}
+}
+
+func TestEnsureRootAgentFilesTreatsInlineMarkerExamplesAsUserContent(t *testing.T) {
+	root := t.TempDir()
+	original := "# 우리 팀 규칙\n마커 예시: `" + agentsBlockBegin + "` ~ `" + agentsBlockEnd + "`\n"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := ensureRootAgentFiles(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(layout.RootAgentsPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(got), original) {
+		t.Fatalf("inline marker example must remain user content: %q", got)
 	}
 }
 

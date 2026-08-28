@@ -73,6 +73,7 @@ func TestProviderEnabled(t *testing.T) {
 
 func TestRunLaunchUsesSelectedInteractiveProvider(t *testing.T) {
 	root := t.TempDir()
+	t.Chdir(t.TempDir())
 	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -114,10 +115,12 @@ runtime:
 	buildLaunchProviderCatalog = func(*config.Config) (*providerCatalog, error) { return catalog, nil }
 	var gotExecutable string
 	var gotArgs, gotEnvironment []string
+	var gotWorkingDir string
 	replaceLaunchProcess = func(executable string, args []string, environment []string) error {
 		gotExecutable = executable
 		gotArgs = append([]string(nil), args...)
 		gotEnvironment = append([]string(nil), environment...)
+		gotWorkingDir, _ = os.Getwd()
 		return nil
 	}
 	t.Cleanup(func() {
@@ -129,8 +132,17 @@ runtime:
 	if err := runLaunch(); err != nil {
 		t.Fatal(err)
 	}
-	if gotExecutable != adapter.process.Executable || !reflect.DeepEqual(gotArgs, adapter.process.Args) || !reflect.DeepEqual(gotEnvironment, adapter.process.Environment) {
+	// PWD는 Chdir 이후 실제 cwd와 일치하도록 exec 직전에 주입된다.
+	wantEnvironment := append(append([]string(nil), adapter.process.Environment...), "PWD="+root)
+	if gotExecutable != adapter.process.Executable || !reflect.DeepEqual(gotArgs, adapter.process.Args) || !reflect.DeepEqual(gotEnvironment, wantEnvironment) {
 		t.Fatalf("exec = %q %v env=%v", gotExecutable, gotArgs, gotEnvironment)
+	}
+	wantWorkingDir, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotWorkingDir != wantWorkingDir {
+		t.Fatalf("provider working directory = %q, want workspace root %q", gotWorkingDir, wantWorkingDir)
 	}
 	if adapter.lastSpec.MaxTurns != 17 || adapter.lastSpec.PermissionMode != "sandbox" {
 		t.Fatalf("interactive spec = %+v", adapter.lastSpec)
