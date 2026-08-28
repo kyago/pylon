@@ -171,6 +171,36 @@ func TestCleanGitignoreFull_NonExistent(t *testing.T) {
 	}
 }
 
+// 사용자 내용이 있는 AGENTS.md는 파일째 지우지 않고 pylon 블록만 벗겨낸다.
+func TestUninstallStripsPylonBlockKeepingUserContent(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, ".pylon"), 0755)
+	user := "# 우리 팀 규칙\n\n"
+	agentsPath := layout.RootAgentsPath(root)
+	os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(root, nil)), 0644)
+
+	plan, err := buildUninstallPlan(root, false, false)
+	if err != nil {
+		t.Fatalf("buildUninstallPlan() error: %v", err)
+	}
+	if plan.agentsStripPath != agentsPath {
+		t.Fatalf("AGENTS.md with user content should be planned for block-strip, got %q", plan.agentsStripPath)
+	}
+	for _, f := range plan.runtimeFiles {
+		if f == agentsPath {
+			t.Error("AGENTS.md with user content must not be planned for deletion")
+		}
+	}
+
+	if err := stripAgentsBlock(plan.agentsStripPath); err != nil {
+		t.Fatalf("stripAgentsBlock() error: %v", err)
+	}
+	got, _ := os.ReadFile(agentsPath)
+	if string(got) != user {
+		t.Errorf("user content should survive block strip:\ngot:  %q\nwant: %q", got, user)
+	}
+}
+
 func TestBuildUninstallPlan(t *testing.T) {
 	// Create a minimal workspace structure
 	root := t.TempDir()
