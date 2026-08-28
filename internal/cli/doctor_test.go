@@ -749,7 +749,7 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
 		t.Fatal(err)
 	}
-	authored := fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# 저작됨", pylonUsageVersion)
+	authored := agentsBlockBegin + fmt.Sprintf("\n<!-- pylon-usage-version: %d -->\n# 저작됨\n", pylonUsageVersion) + agentsBlockEnd + "\n"
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
 		t.Fatal(err)
 	}

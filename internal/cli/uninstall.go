@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,12 +44,14 @@ Use --remove-binary to also delete the pylon binary from $GOPATH/bin.`,
 
 // uninstallPlan holds the list of actions to perform during uninstall.
 type uninstallPlan struct {
-	runtimeFiles   []string // .claude/, CLAUDE.md, AGENTS.md
-	projectPylons  []string // {project}/.pylon/ directories
-	cloneProjects  []string // standalone clone projects (only if --remove-projects)
-	workspacePylon string   // .pylon/ directory
-	gitignorePath  string   // .gitignore to clean
-	binaryPath     string   // pylon binary path (only if --remove-binary)
+	runtimeFiles      []string // .claude/, CLAUDE.md, AGENTS.md
+	agentsStripPath   string   // AGENTS.md with user content — strip the pylon block only
+	agentsSkippedPath string   // malformed AGENTS.md — preserve and report as skipped
+	projectPylons     []string // {project}/.pylon/ directories
+	cloneProjects     []string // standalone clone projects (only if --remove-projects)
+	workspacePylon    string   // .pylon/ directory
+	gitignorePath     string   // .gitignore to clean
+	binaryPath        string   // pylon binary path (only if --remove-binary)
 }
 
 func runUninstall(cmd *cobra.Command, args []string) error {
@@ -101,11 +104,34 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 	if dirExists(claudeDir) {
 		plan.runtimeFiles = append(plan.runtimeFiles, claudeDir)
 	}
-	// Both root agent files are pylon-generated: CLAUDE.md is the @AGENTS.md import
-	// marker, AGENTS.md the guide the session authors against the embedded manual.
-	for _, f := range []string{layout.RootClaudePath(root), layout.RootAgentsPath(root)} {
-		if fileExists(f) {
+	// Remove only the deterministic pointer or the strongly identified legacy
+	// prompt. A hand-written CLAUDE.md is user-owned and must survive uninstall.
+	if f := layout.RootClaudePath(root); fileExists(f) {
+		if data, err := os.ReadFile(f); err == nil && isPylonClaudeMD(data) {
 			plan.runtimeFiles = append(plan.runtimeFiles, f)
+		}
+	}
+	// AGENTS.md: pylon이 소유한 건 블록뿐이다. 블록 밖에 사용자 내용이 있으면 블록만
+	// 벗겨내고, 블록뿐이거나 블록 도입 이전 pylon 전체 파일이면 파일째 지운다.
+	// 블록도 스탬프도 없는 파일은 pylon 산출물이 아니므로 손대지 않는다.
+	agentsPath := layout.RootAgentsPath(root)
+	if data, err := os.ReadFile(agentsPath); err == nil {
+		s, e, blockState := findAgentsBlock(data)
+		switch blockState {
+		case agentsBlockComplete:
+			rest := append(append([]byte{}, data[:s]...), data[e:]...)
+			if len(bytes.TrimSpace(rest)) == 0 {
+				plan.runtimeFiles = append(plan.runtimeFiles, agentsPath)
+			} else {
+				plan.agentsStripPath = agentsPath
+			}
+		case agentsBlockMalformed:
+			// 마크다운 파일 하나 때문에 uninstall 전체를 막지 않는다 — 이 파일만 남기고 계속.
+			plan.agentsSkippedPath = agentsPath
+		case agentsBlockAbsent:
+			if isLegacyAgentsMD(data) {
+				plan.runtimeFiles = append(plan.runtimeFiles, agentsPath)
+			}
 		}
 	}
 	// codex용으로 생성된 워크플로우 스킬(마커 보유)만 제거 — 사용자 스킬은 남긴다.
@@ -153,10 +179,13 @@ func printUninstallPlan(plan *uninstallPlan) {
 	fmt.Println("The following items will be removed:")
 	fmt.Println()
 
-	if len(plan.runtimeFiles) > 0 {
+	if len(plan.runtimeFiles) > 0 || plan.agentsStripPath != "" {
 		fmt.Println("  [Runtime artifacts]")
 		for _, f := range plan.runtimeFiles {
 			fmt.Printf("    - %s\n", f)
+		}
+		if plan.agentsStripPath != "" {
+			fmt.Printf("    - %s (pylon 블록만 제거, 사용자 내용 유지)\n", plan.agentsStripPath)
 		}
 	}
 
@@ -188,17 +217,62 @@ func printUninstallPlan(plan *uninstallPlan) {
 		fmt.Println("  [Binary]")
 		fmt.Printf("    - %s\n", plan.binaryPath)
 	}
+
+	if plan.agentsSkippedPath != "" {
+		fmt.Printf("\n  ⚠ %v — 이 파일은 그대로 두고 나머지를 계속 제거합니다\n",
+			agentsBlockMalformedError(plan.agentsSkippedPath))
+	}
 }
 
 func executeUninstall(root string, plan *uninstallPlan) error {
 	var errors []string
+	agentsPath := layout.RootAgentsPath(root)
+	claudePath := layout.RootClaudePath(root)
+	shouldReconcileAgents := plan.agentsStripPath != "" || plan.agentsSkippedPath != ""
 
 	// Step 1: Remove runtime artifacts
 	for _, f := range plan.runtimeFiles {
+		if f == agentsPath {
+			shouldReconcileAgents = true
+			continue
+		}
+		if f == claudePath {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					errors = append(errors, fmt.Sprintf("failed to recheck CLAUDE.md (%s): %v", f, err))
+				}
+				continue
+			}
+			if !isPylonClaudeMD(data) {
+				continue
+			}
+			if err := os.Remove(f); err != nil {
+				errors = append(errors, fmt.Sprintf("failed to remove runtime artifact (%s): %v", f, err))
+			} else {
+				fmt.Printf("✓ Removed: %s\n", f)
+			}
+			continue
+		}
 		if err := os.RemoveAll(f); err != nil {
 			errors = append(errors, fmt.Sprintf("failed to remove runtime artifact (%s): %v", f, err))
 		} else {
 			fmt.Printf("✓ Removed: %s\n", f)
+		}
+	}
+
+	// Step 1.5: Re-read AGENTS.md immediately before changing it. The file may
+	// have changed while the confirmation prompt was open, so the plan's earlier
+	// delete/strip decision is not safe to execute blindly.
+	if shouldReconcileAgents {
+		skipped, err := executeAgentsUninstall(agentsPath)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("failed to reconcile AGENTS.md (%s): %v", agentsPath, err))
+		}
+		if skipped {
+			plan.agentsSkippedPath = agentsPath
+		} else {
+			plan.agentsSkippedPath = ""
 		}
 	}
 
@@ -259,8 +333,56 @@ func executeUninstall(root string, plan *uninstallPlan) error {
 		return fmt.Errorf("failed to remove %d item(s)", len(errors))
 	}
 
+	if plan.agentsSkippedPath != "" {
+		fmt.Printf("Pylon 제거를 완료했습니다. 단, malformed 관리 블록이 있는 %s는 그대로 남겼습니다.\n",
+			plan.agentsSkippedPath)
+		return nil
+	}
 	fmt.Println("Pylon has been completely removed.")
 	return nil
+}
+
+// executeAgentsUninstall classifies the current file contents at execution time.
+// It removes a pylon-only or legacy file, strips a complete block from user content,
+// preserves a user-owned file without a block, and skips malformed blocks safely.
+func executeAgentsUninstall(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	s, e, state := findAgentsBlock(data)
+	switch state {
+	case agentsBlockComplete:
+		rest := append(append([]byte{}, data[:s]...), data[e:]...)
+		if len(bytes.TrimSpace(rest)) == 0 {
+			if err := os.Remove(path); err != nil {
+				return false, err
+			}
+			fmt.Printf("✓ Removed: %s\n", path)
+			return false, nil
+		}
+		if err := writeAgentsFile(path, rest); err != nil {
+			return false, err
+		}
+		fmt.Printf("✓ Removed pylon block: %s\n", path)
+		return false, nil
+	case agentsBlockMalformed:
+		return true, nil
+	case agentsBlockAbsent:
+		if !isLegacyAgentsMD(data) {
+			return false, nil
+		}
+		if err := os.Remove(path); err != nil {
+			return false, err
+		}
+		fmt.Printf("✓ Removed: %s\n", path)
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 // cleanGitignoreFull removes all pylon-related entries from .gitignore,

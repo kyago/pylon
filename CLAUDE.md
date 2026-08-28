@@ -15,10 +15,15 @@ Do not confuse the two `CLAUDE.md` files: *this* one guides development of the b
 
 The workspace root prompt is **AI-authored, not hardcoded in Go**. `ensureRootAgentFiles`
 (`internal/cli/launch_agentsmd.go`) writes workspace `CLAUDE.md` as a deterministic `@AGENTS.md` import
-marker on every launch, and writes a short bootstrap `AGENTS.md` **only when it is missing or stale** — so
-a guide the session authored survives subsequent launches. Staleness is a version stamp comparison:
-`AGENTS.md` carries `<!-- pylon-usage-version: N -->` and is stale when the stamp is absent, unparseable,
-or below `pylonUsageVersion`. The launched claude session authors the real `AGENTS.md` on its first turn,
+marker on every launch. Inside `AGENTS.md`, pylon owns only the **managed block** delimited by
+`<!-- pylon:begin -->` / `<!-- pylon:end -->`: the block is re-bootstrapped **only when missing or
+stale**, content outside the block is user-owned and never modified, and a user's own `AGENTS.md`
+(no block) keeps its content with the block prepended so Codex sees it within the default instruction
+size limit. A malformed marker pair (missing, reversed, or
+duplicated whole-line markers) aborts launch/init/doctor before any file is touched; uninstall skips the
+file with a warning and proceeds. Staleness is a version stamp comparison inside the
+block: `<!-- pylon-usage-version: N -->` is stale when absent, unparseable, or below `pylonUsageVersion`.
+The launched claude session authors the real guide inside the block on its first turn,
 reading `.pylon/reference/pylon-usage.md` (the embedded manual) plus the actual workspace. Go never calls
 an LLM. Bump `pylonUsageVersion` **only** when the embedded manual changes — it is the sole trigger that
 forces re-authoring, and it is independent of pylon's CalVer release version.
