@@ -246,14 +246,19 @@ func checkProjectVerifyConfigs() bool {
 	if err != nil {
 		return true
 	}
-	// 단일 repo 레이아웃: 하위 프로젝트 없이 워크스페이스 루트 자체가 git repo인
-	// 경우 루트가 곧 검증 대상이다. 하위 프로젝트가 있는 워크스페이스에서는 루트를
-	// 포함하지 않는다 — 비어 있는 루트 verify.yml은 run-verification의 GIT_ROOT
-	// 오해석 가드를 무력화한다.
+	// 단일 repo 레이아웃: 하위 프로젝트 없이 워크스페이스 루트 자체가 git repo이고
+	// 실제 스택이 감지되는 경우에만 루트가 검증 대상이다. 스택 미감지 루트나 하위
+	// 프로젝트가 있는 워크스페이스에서 루트 verify.yml을 만들면 no-op 검증 파일이
+	// run-verification의 GIT_ROOT 오해석 가드를 무력화한다.
 	if len(projects) == 0 {
 		if _, statErr := os.Stat(filepath.Join(root, ".git")); statErr == nil {
-			projects = append(projects, config.ProjectInfo{Name: "(workspace root)", Path: root})
+			if detectTechStack(root).Language != "unknown" {
+				projects = append(projects, config.ProjectInfo{Name: "(workspace root)", Path: root})
+			}
 		}
+	} else if _, statErr := os.Stat(layout.VerifyConfigPath(root)); statErr == nil {
+		fmt.Printf("⚠ 워크스페이스 루트에 verify.yml이 있습니다 — 하위 프로젝트 검증의 GIT_ROOT 오해석 가드를 무력화하므로 삭제를 권장합니다: %s\n",
+			layout.VerifyConfigPath(root))
 	}
 
 	fmt.Println()
@@ -275,11 +280,17 @@ func checkProjectVerifyConfigs() bool {
 				continue
 			}
 			fmt.Printf("✓ %s: 누락된 verify.yml 재생성됨\n", p.Name)
-			// 재생성한 파일이 프로젝트 repo에 커밋 가능해지지 않도록
-			// add-project와 동일하게 exclude 엔트리를 보장한다.
-			if isGit, hasEntry := checkExcludeStatus(p.Path); isGit && !hasEntry {
-				if exclErr := excludePylonFromRepo(p.Path); exclErr != nil {
-					fmt.Printf("⚠ %s: .pylon/ exclude 설정 실패: %v\n", p.Name, exclErr)
+			// 재생성한 파일이 프로젝트 repo에 커밋 가능해지지 않도록 exclude를
+			// 보장한다. 하위 프로젝트는 add-project와 동일하게 .pylon/ 전체,
+			// 단일 repo 루트는 워크스페이스 .pylon/이 git-tracked 대상이므로
+			// verify.yml만 제외한다.
+			if isGit, _ := checkExcludeStatus(p.Path); isGit {
+				entry := ".pylon/"
+				if p.Path == root {
+					entry = ".pylon/verify.yml"
+				}
+				if exclErr := excludeEntryFromRepo(p.Path, entry); exclErr != nil {
+					fmt.Printf("⚠ %s: %s exclude 설정 실패: %v\n", p.Name, entry, exclErr)
 					ok = false
 					issues++
 				}

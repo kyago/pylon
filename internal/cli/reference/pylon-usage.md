@@ -20,7 +20,8 @@ AGENTS.md를 작성할 때 아래를 **직접 조회**해 최신 사실만 반�
   파일이 없거나 파싱 실패면 검증 미설정 — 변경 시 먼저 verify.yml을 작성해야 함.
   **verify.yml은 로컬 전용 파일입니다** (git exclude 대상, 프로젝트 repo에 커밋되지 않음).
   저장소에 없는 것이 정상이며 이를 문제로 보고하지 않습니다. 부재 시 `pylon doctor`가
-  기술 스택을 감지해 재생성합니다. 팀 공통 검증 기준은 CI 설정/Makefile에 두고
+  기술 스택을 감지해 재생성합니다 (`.pylon/`이 있는 프로젝트 기준 — 디렉토리째 없으면
+  `pylon add-project <name> --skip-clone`으로 초기화). 팀 공통 검증 기준은 CI 설정/Makefile에 두고
   verify.yml은 그것을 호출하게 합니다(예: `command: make test`). 파이프라인 run 중에는
   criteria snapshot으로 동결되므로 검증 기준의 단일 출처는 run 단위로 보장됩니다.
 - 프로젝트 메모리: `pylon mem list --project <name>` / `pylon mem search`.
