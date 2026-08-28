@@ -192,12 +192,62 @@ func TestUninstallStripsPylonBlockKeepingUserContent(t *testing.T) {
 		}
 	}
 
-	if err := stripAgentsBlock(plan.agentsStripPath); err != nil {
-		t.Fatalf("stripAgentsBlock() error: %v", err)
+	skipped, err := executeAgentsUninstall(plan.agentsStripPath)
+	if err != nil {
+		t.Fatalf("executeAgentsUninstall() error: %v", err)
+	}
+	if skipped {
+		t.Fatal("complete managed block was unexpectedly skipped")
 	}
 	got, _ := os.ReadFile(agentsPath)
 	if string(got) != user {
 		t.Errorf("user content should survive block strip:\ngot:  %q\nwant: %q", got, user)
+	}
+}
+
+func TestUninstallKeepsUserAgentsMDWithNonLeadingVersionStamp(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	agentsPath := layout.RootAgentsPath(root)
+	original := "# 우리 팀 규칙\n\n스탬프 예시:\n<!-- pylon-usage-version: 1 -->\n"
+	if err := os.WriteFile(agentsPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := buildUninstallPlan(root, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range plan.runtimeFiles {
+		if path == agentsPath {
+			t.Fatal("a non-leading stamp example must not make user AGENTS.md a deletion target")
+		}
+	}
+	if plan.agentsStripPath != "" {
+		t.Fatalf("user AGENTS.md without a block must not be stripped: %q", plan.agentsStripPath)
+	}
+}
+
+func TestUninstallKeepsHandWrittenClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	claudePath := layout.RootClaudePath(root)
+	if err := os.WriteFile(claudePath, []byte("# 우리 팀 CLAUDE.md\n\n사용자 규칙\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := buildUninstallPlan(root, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range plan.runtimeFiles {
+		if path == claudePath {
+			t.Fatal("hand-written CLAUDE.md must not be treated as a pylon runtime artifact")
+		}
 	}
 }
 
@@ -236,6 +286,96 @@ func TestBuildUninstallPlanSkipsMalformedAgentsMDAndContinues(t *testing.T) {
 	}
 	if string(got) != original {
 		t.Fatalf("uninstall planning changed user content: %q", got)
+	}
+}
+
+func TestExecuteUninstallReportsMalformedAgentsMDWasSkipped(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	agentsPath := layout.RootAgentsPath(root)
+	if err := os.WriteFile(agentsPath, []byte(agentsBlockBegin+"\n# damaged\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildUninstallPlan(root, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := executeUninstall(root, plan); err != nil {
+			t.Fatalf("executeUninstall() error: %v", err)
+		}
+	})
+	if strings.Contains(output, "completely removed") {
+		t.Fatalf("partial uninstall must not claim complete removal: %q", output)
+	}
+	if !strings.Contains(output, agentsPath) || !strings.Contains(output, "그대로") {
+		t.Fatalf("completion output must identify the skipped AGENTS.md: %q", output)
+	}
+	if _, err := os.Stat(agentsPath); err != nil {
+		t.Fatalf("malformed AGENTS.md must remain: %v", err)
+	}
+}
+
+func TestExecuteUninstallRechecksAgentsMDBeforeDeleting(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	agentsPath := layout.RootAgentsPath(root)
+	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(root, nil)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildUninstallPlan(root, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	user := "# 확인 중 추가된 사용자 규칙\n\n"
+	if err := os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(root, nil)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeUninstall(root, plan); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("AGENTS.md added during confirmation was deleted: %v", err)
+	}
+	if string(got) != user {
+		t.Fatalf("user content added during confirmation was not preserved: %q", got)
+	}
+}
+
+func TestExecuteUninstallRechecksClaudeMDBeforeDeleting(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	claudePath := layout.RootClaudePath(root)
+	if err := os.WriteFile(claudePath, []byte(buildClaudeMDPointer()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildUninstallPlan(root, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	user := "# 확인 중 추가된 CLAUDE 규칙\n"
+	if err := os.WriteFile(claudePath, []byte(user), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeUninstall(root, plan); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("CLAUDE.md changed during confirmation was deleted: %v", err)
+	}
+	if string(got) != user {
+		t.Fatalf("hand-written CLAUDE.md was not preserved: %q", got)
 	}
 }
 
@@ -294,7 +434,7 @@ func TestExecuteUninstall(t *testing.T) {
 	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte("{}"), 0644)
 
 	claudeMD := filepath.Join(root, "CLAUDE.md")
-	os.WriteFile(claudeMD, []byte("# Test"), 0644)
+	os.WriteFile(claudeMD, []byte(buildClaudeMDPointer()), 0644)
 
 	pylonDir := filepath.Join(root, ".pylon")
 	os.MkdirAll(filepath.Join(pylonDir, "runtime", "inbox"), 0755)

@@ -22,6 +22,7 @@ import (
 const pylonUsageVersion = 5
 
 var usageVersionRe = regexp.MustCompile(`pylon-usage-version:\s*(\d+)`)
+var legacyUsageVersionRe = regexp.MustCompile(`^<!--\s*pylon-usage-version:\s*\d+\s*-->$`)
 
 // agentsBlockBegin/agentsBlockEnd delimit the pylon-managed region inside the
 // workspace-root AGENTS.md. pylon and the launched session only ever rewrite what
@@ -52,6 +53,15 @@ const bootstrapAgentsMDHeading = "# pylon 워크스페이스 — 운영 가이�
 // every workspace created before this change has such a file, and it is pylon's own
 // output, so it is replaced by the marker without a backup. Do not delete as unused.
 const legacyClaudeMDHeading = "# Pylon — AI 멀티도메인 워크스페이스"
+
+func isPylonClaudeMD(data []byte) bool {
+	content := strings.TrimSpace(strings.ReplaceAll(string(data), "\r\n", "\n"))
+	if content == strings.TrimSpace(buildClaudeMDPointer()) {
+		return true
+	}
+	legacyPrefix := legacyClaudeMDHeading + "\n\n당신은 Pylon 워크스페이스의 루트 에이전트입니다."
+	return strings.HasPrefix(content, legacyPrefix)
+}
 
 func buildAgentsBlock(root string, projects []config.ProjectInfo) string {
 	var b strings.Builder
@@ -144,9 +154,14 @@ func agentsBlockMalformedError(path string) error {
 // permission bits and writing through a symlink instead of replacing it.
 func writeAgentsFile(path string, data []byte) error {
 	target := path
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
 		target = resolved
-	} else if !os.IsNotExist(err) {
+	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	mode := os.FileMode(0644)
@@ -158,22 +173,6 @@ func writeAgentsFile(path string, data []byte) error {
 	return fsutil.WriteFileAtomic(target, data, mode)
 }
 
-// stripAgentsBlock rewrites path with the pylon block removed, leaving user
-// content untouched. A file without a complete block is left as-is — the only
-// production caller plans the strip strictly for complete blocks.
-func stripAgentsBlock(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	s, e, state := findAgentsBlock(data)
-	if state != agentsBlockComplete {
-		return nil
-	}
-	out := append(append([]byte{}, data[:s]...), data[e:]...)
-	return writeAgentsFile(path, out)
-}
-
 // agentsBlockIsCurrent reports whether the given block bytes carry a parseable
 // version stamp at or above pylonUsageVersion.
 func agentsBlockIsCurrent(blockData []byte) bool {
@@ -183,6 +182,21 @@ func agentsBlockIsCurrent(blockData []byte) bool {
 	}
 	v, err := strconv.Atoi(string(m[1]))
 	return err == nil && v >= pylonUsageVersion
+}
+
+// isLegacyAgentsMD recognizes the whole-file format used before managed blocks.
+// Legacy sessions were instructed to keep the version stamp at the top. Requiring
+// it to be the first non-empty, whole line prevents examples in user documentation
+// from turning an otherwise user-owned AGENTS.md into a replacement target.
+func isLegacyAgentsMD(data []byte) bool {
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		return legacyUsageVersionRe.Match(line) || bytes.Equal(line, []byte(bootstrapAgentsMDHeading))
+	}
+	return false
 }
 
 // agentsMDStale reports whether the pylon block in the workspace-root AGENTS.md
@@ -215,7 +229,10 @@ const maxRootFileBackups = 100
 func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, nil // 없으면 백업할 것도 없다
+		if os.IsNotExist(err) {
+			return false, nil // 없으면 백업할 것도 없다
+		}
+		return false, fmt.Errorf("%s 읽기 실패: %w", filepath.Base(path), err)
 	}
 	if pylonAuthored(data) {
 		return false, nil
@@ -242,7 +259,8 @@ func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, er
 // the pylon block inside AGENTS.md is re-bootstrapped ONLY when stale — a
 // session-authored, current block is left untouched, and content outside the block
 // is NEVER modified. A user's own AGENTS.md (no block) keeps its content and gets
-// the block appended; only pre-block legacy pylon files are replaced whole (with a
+// the block prepended so Codex sees it before the default instruction-size cap;
+// only pre-block legacy pylon files are replaced whole (with a
 // .pylon-bak backup when session-authored). Returns whether the block was
 // bootstrapped, and the names of any files backed up so callers can tell the user.
 func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []string, error) {
@@ -260,15 +278,23 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		if blockState == agentsBlockMalformed {
 			return false, backedUp, agentsBlockMalformedError(agentsPath)
 		}
+	} else if os.IsNotExist(readErr) {
+		// ReadFile also reports ENOENT for a dangling symlink. Lstat distinguishes
+		// that from a genuinely absent file so the link is not replaced later.
+		if _, err := os.Lstat(agentsPath); err == nil {
+			return false, backedUp, fmt.Errorf("AGENTS.md 읽기 실패: %w", readErr)
+		} else if !os.IsNotExist(err) {
+			return false, backedUp, fmt.Errorf("AGENTS.md 상태 확인 실패: %w", err)
+		}
+	} else {
+		return false, backedUp, fmt.Errorf("AGENTS.md 읽기 실패: %w", readErr)
 	}
 
 	claudePath := layout.RootClaudePath(root)
 	// pylon이 쓴 CLAUDE.md는 두 가지뿐이다: 현재의 마커, 그리고 이 변경 이전 워크스페이스에
 	// 남아 있는 하드코딩 프롬프트. 둘 다 pylon 산출물이므로 백업 없이 교체한다.
 	ok, err := backupIfHandWritten(claudePath, func(b []byte) bool {
-		s := strings.TrimSpace(string(b))
-		return s == strings.TrimSpace(buildClaudeMDPointer()) ||
-			strings.HasPrefix(s, legacyClaudeMDHeading)
+		return isPylonClaudeMD(b)
 	})
 	if err != nil {
 		return false, backedUp, err
@@ -307,7 +333,7 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		return true, backedUp, nil
 	}
 
-	if usageVersionRe.Match(data) || strings.Contains(string(data), bootstrapAgentsMDHeading) {
+	if isLegacyAgentsMD(data) {
 		// 블록 도입 이전의 pylon 전체 파일. 저작되지 않은 스텁만 그냥 버린다. 스탬프 유무로
 		// 판단하면 안 된다 — 스탬프를 가진 세션 저작 가이드까지 조용히 사라진다.
 		ok, err = backupIfHandWritten(agentsPath, func(b []byte) bool {
@@ -325,15 +351,9 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		return true, backedUp, nil
 	}
 
-	// 사용자가 직접 쓴 AGENTS.md — 내용을 보존하고 블록을 끝에 덧붙인다.
-	out := string(data)
-	if out != "" && !strings.HasSuffix(out, "\n") {
-		out += "\n"
-	}
-	if out != "" {
-		out += "\n"
-	}
-	out += block
+	// 사용자가 직접 쓴 AGENTS.md — Codex의 기본 project_doc_max_bytes(32KiB)에
+	// 잘리지 않도록 블록을 앞에 두고, 기존 사용자 바이트는 그대로 뒤에 보존한다.
+	out := block + string(data)
 	if err := writeAgentsFile(agentsPath, []byte(out)); err != nil {
 		return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
 	}

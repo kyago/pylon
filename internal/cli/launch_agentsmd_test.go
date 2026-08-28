@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -81,7 +83,7 @@ func TestEnsureRootAgentFilesWritesPointerAndBootstrapWhenMissing(t *testing.T) 
 	}
 }
 
-func TestEnsureRootAgentFilesAppendsBlockToUserAgentsMD(t *testing.T) {
+func TestEnsureRootAgentFilesPrependsBlockToUserAgentsMD(t *testing.T) {
 	root := t.TempDir()
 	handAgents := "# 우리 팀 가이드\n스탬프 없는 수작업 파일"
 	handClaude := "# 우리 팀 CLAUDE.md\n마커가 아닌 수작업 파일"
@@ -97,16 +99,16 @@ func TestEnsureRootAgentFilesAppendsBlockToUserAgentsMD(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bootstrapped {
-		t.Error("user AGENTS.md without a block should get the block appended")
+		t.Error("user AGENTS.md without a block should get the block prepended")
 	}
 
-	// 사용자 AGENTS.md는 백업이 아니라 그 자리에 보존되고, 블록이 뒤에 붙는다.
+	// 사용자 AGENTS.md는 백업이 아니라 그 자리에 보존되고, 블록이 앞에 붙는다.
 	nowAgents, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if !strings.HasPrefix(string(nowAgents), handAgents) {
+	if !strings.HasSuffix(string(nowAgents), handAgents) {
 		t.Errorf("user AGENTS.md content must be preserved in place: %q", nowAgents)
 	}
 	if !strings.Contains(string(nowAgents), agentsBlockBegin) || !strings.Contains(string(nowAgents), agentsBlockEnd) {
-		t.Errorf("pylon block not appended: %q", nowAgents)
+		t.Errorf("pylon block not prepended: %q", nowAgents)
 	}
 	for _, name := range backedUp {
 		if name == "AGENTS.md" {
@@ -125,6 +127,32 @@ func TestEnsureRootAgentFilesAppendsBlockToUserAgentsMD(t *testing.T) {
 	nowClaude, _ := os.ReadFile(layout.RootClaudePath(root))
 	if strings.TrimSpace(string(nowClaude)) != "@AGENTS.md" {
 		t.Errorf("CLAUDE.md should be the marker, got %q", nowClaude)
+	}
+}
+
+func TestEnsureRootAgentFilesKeepsManagedBlockWithinCodexDefaultLimit(t *testing.T) {
+	root := t.TempDir()
+	original := strings.Repeat("사용자 규칙 ", 4000)
+	if len(original) <= 32*1024 {
+		t.Fatal("test fixture must exceed Codex's default project instruction limit")
+	}
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := ensureRootAgentFiles(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(layout.RootAgentsPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := bytes.Index(got, []byte(agentsBlockEnd))
+	if end < 0 || end >= 32*1024 {
+		t.Fatalf("managed block ends outside Codex's default 32KiB limit: %d", end)
+	}
+	if !bytes.HasSuffix(got, []byte(original)) {
+		t.Fatal("prepending the managed block changed user content")
 	}
 }
 
@@ -314,8 +342,167 @@ func TestEnsureRootAgentFilesTreatsInlineMarkerExamplesAsUserContent(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(got), original) {
+	if !strings.HasSuffix(string(got), original) {
 		t.Fatalf("inline marker example must remain user content: %q", got)
+	}
+}
+
+func TestEnsureRootAgentFilesTreatsNonLeadingVersionStampAsUserContent(t *testing.T) {
+	root := t.TempDir()
+	original := "# 우리 팀 규칙\n\n문서에 쓰는 스탬프 예시:\n<!-- pylon-usage-version: 1 -->\n"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backedUp) != 0 {
+		t.Fatalf("a non-leading stamp example must not trigger legacy migration: %v", backedUp)
+	}
+	got, err := os.ReadFile(layout.RootAgentsPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(got), original) {
+		t.Fatalf("version stamp example must remain user content: %q", got)
+	}
+}
+
+func TestEnsureRootAgentFilesRejectsUnreadableAgentsMDBeforeChangingClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	agentsPath := layout.RootAgentsPath(root)
+	claudePath := layout.RootClaudePath(root)
+	originalAgents := []byte("# 읽을 수 없는 사용자 규칙\n")
+	originalClaude := []byte("# 사용자 CLAUDE.md\n")
+	if err := os.WriteFile(agentsPath, originalAgents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(agentsPath, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(agentsPath, 0600) })
+	if _, err := os.ReadFile(agentsPath); err == nil {
+		t.Skip("filesystem does not enforce unreadable file mode")
+	}
+	if err := os.WriteFile(claudePath, originalClaude, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := ensureRootAgentFiles(root, nil); err == nil {
+		t.Fatal("an unreadable AGENTS.md must abort reconciliation")
+	}
+	gotClaude, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotClaude) != string(originalClaude) {
+		t.Fatalf("CLAUDE.md changed before AGENTS.md read failure: %q", gotClaude)
+	}
+	if _, err := os.Stat(claudePath + rootFileBackupSuffix); !os.IsNotExist(err) {
+		t.Fatal("CLAUDE.md must not be backed up before AGENTS.md preflight succeeds")
+	}
+}
+
+func TestEnsureRootAgentFilesDoesNotReplaceUnreadableClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	agentsPath := layout.RootAgentsPath(root)
+	claudePath := layout.RootClaudePath(root)
+	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(root, nil)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("# 읽을 수 없는 사용자 CLAUDE.md\n")
+	if err := os.WriteFile(claudePath, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(claudePath, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(claudePath, 0600) })
+	if _, err := os.ReadFile(claudePath); err == nil {
+		t.Skip("filesystem does not enforce unreadable file mode")
+	}
+
+	if _, _, err := ensureRootAgentFiles(root, nil); err == nil {
+		t.Fatal("an unreadable CLAUDE.md must abort reconciliation")
+	}
+	if err := os.Chmod(claudePath, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("unreadable CLAUDE.md was replaced: %q", got)
+	}
+}
+
+func TestWriteAgentsFileDoesNotReplaceDanglingSymlink(t *testing.T) {
+	root := t.TempDir()
+	path := layout.RootAgentsPath(root)
+	missingTarget := filepath.Join(root, "missing", "AGENTS.md")
+	if err := os.Symlink(missingTarget, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := writeAgentsFile(path, []byte("replacement\n")); err == nil {
+		t.Fatal("writing through a dangling symlink must fail safely")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("dangling symlink was replaced by a regular file")
+	}
+}
+
+func TestEnsureRootAgentFilesRejectsDanglingAgentsMDBeforeChangingClaudeMD(t *testing.T) {
+	root := t.TempDir()
+	agentsPath := layout.RootAgentsPath(root)
+	claudePath := layout.RootClaudePath(root)
+	if err := os.Symlink(filepath.Join(root, "missing-AGENTS.md"), agentsPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	originalClaude := []byte("# 사용자 CLAUDE.md\n")
+	if err := os.WriteFile(claudePath, originalClaude, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := ensureRootAgentFiles(root, nil); err == nil {
+		t.Fatal("a dangling AGENTS.md symlink must abort reconciliation")
+	}
+	got, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(originalClaude) {
+		t.Fatalf("CLAUDE.md changed before dangling AGENTS.md preflight failed: %q", got)
+	}
+}
+
+func TestEnsureRootAgentFilesRecognizesLegacyBootstrapWithoutStamp(t *testing.T) {
+	root := t.TempDir()
+	legacy := bootstrapAgentsMDHeading + "\n\n이 파일은 아직 저작되지 않았습니다.\n"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backedUp) != 0 {
+		t.Fatalf("legacy bootstrap stub must be replaced without backup: %v", backedUp)
+	}
+	got, err := os.ReadFile(layout.RootAgentsPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(got), agentsBlockBegin+"\n") {
+		t.Fatalf("legacy bootstrap stub was retained as user content: %q", got)
 	}
 }
 
@@ -337,6 +524,33 @@ func TestEnsureRootAgentFilesReplacesLegacyGeneratedClaudeMD(t *testing.T) {
 	got, _ := os.ReadFile(layout.RootClaudePath(root))
 	if strings.TrimSpace(string(got)) != "@AGENTS.md" {
 		t.Errorf("CLAUDE.md should be the marker, got %q", got)
+	}
+}
+
+func TestEnsureRootAgentFilesBacksUpClaudeMDWithLegacyHeadingOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(root, nil)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	original := legacyClaudeMDHeading + "\n\n우리 팀이 직접 작성한 규칙\n"
+	claudePath := layout.RootClaudePath(root)
+	if err := os.WriteFile(claudePath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backedUp) != 1 || backedUp[0] != "CLAUDE.md" {
+		t.Fatalf("title-only user CLAUDE.md must be backed up: %v", backedUp)
+	}
+	got, err := os.ReadFile(claudePath + rootFileBackupSuffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("CLAUDE.md backup changed user content: %q", got)
 	}
 }
 
