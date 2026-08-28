@@ -852,3 +852,115 @@ func TestCheckProjectVerifyConfigs_ReportsInvalidWithoutOverwriting(t *testing.T
 		t.Fatal("existing verify.yml must never be overwritten")
 	}
 }
+
+func TestCheckProjectVerifyConfigs_SingleRepoRootIsCovered(t *testing.T) {
+	requireGit(t)
+
+	tmpDir := t.TempDir()
+	if out, err := exec.Command("git", "init", tmpDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module example.com/single\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if ok := checkProjectVerifyConfigs(); !ok {
+		t.Fatal("single-repo root regeneration must succeed")
+	}
+	vc, err := config.LoadVerifyConfig(layout.VerifyConfigPath(tmpDir))
+	if err != nil {
+		t.Fatalf("root verify.yml must be regenerated and parseable: %v", err)
+	}
+	if len(vc.OrderedSteps()) == 0 {
+		t.Fatal("root verify.yml for a Go repo must contain commands")
+	}
+	// 루트 repo에서는 .pylon/ 전체가 아니라 verify.yml만 exclude된다 —
+	// 워크스페이스 .pylon/은 git-tracked 대상이다.
+	exclude, err := os.ReadFile(filepath.Join(tmpDir, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exclude), ".pylon/verify.yml") {
+		t.Fatalf("root exclude must contain .pylon/verify.yml:\n%s", exclude)
+	}
+	for _, line := range strings.Split(string(exclude), "\n") {
+		if strings.TrimSpace(line) == ".pylon/" {
+			t.Fatalf("root exclude must not hide the whole .pylon/:\n%s", exclude)
+		}
+	}
+}
+
+func TestCheckProjectVerifyConfigs_RootSkippedWhenSubprojectsExist(t *testing.T) {
+	requireGit(t)
+
+	tmpDir := t.TempDir()
+	if out, err := exec.Command("git", "init", tmpDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(tmpDir, "svc")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/svc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if ok := checkProjectVerifyConfigs(); !ok {
+		t.Fatal("subproject regeneration must succeed")
+	}
+	// 하위 프로젝트가 있으면 루트는 검증 대상이 아니다 — 비어 있는 루트
+	// verify.yml은 GIT_ROOT 오해석 가드를 무력화한다.
+	if _, err := os.Stat(layout.VerifyConfigPath(tmpDir)); !os.IsNotExist(err) {
+		t.Fatal("workspace root must not get a verify.yml when subprojects exist")
+	}
+	if _, err := os.Stat(layout.VerifyConfigPath(projectDir)); err != nil {
+		t.Fatalf("subproject verify.yml must be regenerated: %v", err)
+	}
+}
+
+func TestCheckProjectVerifyConfigs_UnknownStackRootIsSkipped(t *testing.T) {
+	requireGit(t)
+
+	tmpDir := t.TempDir()
+	if out, err := exec.Command("git", "init", tmpDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWorkspace := flagWorkspace
+	flagWorkspace = tmpDir
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	if ok := checkProjectVerifyConfigs(); !ok {
+		t.Fatal("workspace-holder root must not fail the check")
+	}
+	// 스택 미감지 루트에 no-op verify.yml을 만들면 GIT_ROOT 가드가 무력화된다.
+	if _, err := os.Stat(layout.VerifyConfigPath(tmpDir)); !os.IsNotExist(err) {
+		t.Fatal("unknown-stack root must not get a verify.yml")
+	}
+}

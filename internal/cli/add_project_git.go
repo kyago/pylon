@@ -59,6 +59,13 @@ func resolveGitExcludePath(projectDir string) (string, error) {
 
 // excludePylonFromRepo adds ".pylon/" to the repo's .git/info/exclude. Works for both submodules and standalone clones.
 func excludePylonFromRepo(projectDir string) error {
+	return excludeEntryFromRepo(projectDir, ".pylon/")
+}
+
+// excludeEntryFromRepo adds one entry to the repo's .git/info/exclude.
+// 단일 repo 워크스페이스 루트처럼 .pylon/ 전체가 아니라 특정 파일만
+// 제외해야 하는 호출자를 위해 엔트리를 매개변수로 받는다.
+func excludeEntryFromRepo(projectDir, entry string) error {
 	excludePath, err := resolveGitExcludePath(projectDir)
 	if err != nil {
 		return err
@@ -70,7 +77,7 @@ func excludePylonFromRepo(projectDir string) error {
 		return fmt.Errorf("failed to read exclude file: %w", err)
 	}
 	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(line) == ".pylon/" {
+		if strings.TrimSpace(line) == entry {
 			return nil // already excluded
 		}
 	}
@@ -93,7 +100,7 @@ func excludePylonFromRepo(projectDir string) error {
 			return err
 		}
 	}
-	if _, err := f.WriteString(".pylon/\n"); err != nil {
+	if _, err := f.WriteString(entry + "\n"); err != nil {
 		return err
 	}
 
