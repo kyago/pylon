@@ -246,6 +246,15 @@ func checkProjectVerifyConfigs() bool {
 	if err != nil {
 		return true
 	}
+	// 단일 repo 레이아웃: 하위 프로젝트 없이 워크스페이스 루트 자체가 git repo인
+	// 경우 루트가 곧 검증 대상이다. 하위 프로젝트가 있는 워크스페이스에서는 루트를
+	// 포함하지 않는다 — 비어 있는 루트 verify.yml은 run-verification의 GIT_ROOT
+	// 오해석 가드를 무력화한다.
+	if len(projects) == 0 {
+		if _, statErr := os.Stat(filepath.Join(root, ".git")); statErr == nil {
+			projects = append(projects, config.ProjectInfo{Name: "(workspace root)", Path: root})
+		}
+	}
 
 	fmt.Println()
 	hintUnscaffoldedProjects(root, projects)

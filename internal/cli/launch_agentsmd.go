@@ -16,7 +16,7 @@ import (
 // (internal/cli/reference/pylon-usage.md). Bump it ONLY when that manual changes —
 // it is the sole trigger that marks an existing AGENTS.md stale and forces the next
 // session to re-author it. Independent of pylon's CalVer release version.
-const pylonUsageVersion = 2
+const pylonUsageVersion = 3
 
 var usageVersionRe = regexp.MustCompile(`pylon-usage-version:\s*(\d+)`)
 
