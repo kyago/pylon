@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -112,12 +113,7 @@ func buildAgentsUpdateNotice(blockData []byte) string {
 		prev, _ = strconv.Atoi(string(m[1]))
 	}
 	lines := strings.Split(strings.TrimSuffix(string(blockData), "\n"), "\n")
-	body := make([]string, 0, len(lines))
-	for _, line := range lines[1 : len(lines)-1] {
-		if !legacyUsageVersionRe.Match([]byte(strings.TrimSpace(line))) {
-			body = append(body, line)
-		}
-	}
+	body := slices.DeleteFunc(lines[1:len(lines)-1], func(l string) bool { return legacyUsageVersionRe.MatchString(strings.TrimSpace(l)) })
 	var b strings.Builder
 	b.WriteString(lines[0] + "\n")
 	fmt.Fprintf(&b, "<!-- pylon-usage-version: %d -->\n", pylonUsageVersion)

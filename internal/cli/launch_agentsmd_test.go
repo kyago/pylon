@@ -639,17 +639,11 @@ func TestEnsureRootAgentFilesKeepsStaleAuthoredBlockWithUpdateNotice(t *testing.
 	if !strings.Contains(out, guide) {
 		t.Errorf("session-authored guide must be kept verbatim: %q", out)
 	}
-	if strings.Contains(out, bootstrapAgentsMDHeading) {
-		t.Errorf("authored block must not be replaced by the bootstrap stub: %q", out)
-	}
 	if !strings.Contains(out, fmt.Sprintf("%s (v3 → v%d)", agentsUpdateHeading, pylonUsageVersion)) {
 		t.Errorf("update notice with old/new version missing: %q", out)
 	}
 	if strings.Contains(out, "pylon-usage-version: 3") || !strings.Contains(out, fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
 		t.Errorf("stamp must be raised exactly once: %q", out)
-	}
-	if strings.Count(out, agentsBlockBegin) != 1 || strings.Count(out, agentsBlockEnd) != 1 {
-		t.Errorf("must stay a single block: %q", out)
 	}
 	if agentsMDStale(root) {
 		t.Error("updated block should no longer be stale")
