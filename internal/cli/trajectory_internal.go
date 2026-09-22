@@ -20,7 +20,7 @@ type failureCheckpointer interface {
 }
 
 func newInternalTrajectoryCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "trajectory", Hidden: true}
+	cmd := &cobra.Command{Use: "trajectory", Short: "Task reports and failure records"}
 	cmd.AddCommand(newInternalTaskReportCmd())
 	cmd.AddCommand(newInternalFailureCmd())
 	return cmd
@@ -31,7 +31,6 @@ func newInternalTaskReportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "task-report",
 		Short:        "Validate and record a terminal task report",
-		Hidden:       true,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, _, err := openWorkspace()
@@ -64,7 +63,6 @@ func newInternalFailureCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "failure",
 		Short:        "Record a terminal failure and create the failed checkpoint",
-		Hidden:       true,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, _, err := openWorkspace()

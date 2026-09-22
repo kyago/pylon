@@ -11,7 +11,7 @@ import (
 )
 
 func newInternalEvaluatorCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "evaluator", Hidden: true}
+	cmd := &cobra.Command{Use: "evaluator", Short: "Isolated evaluator bundles and verdicts"}
 	cmd.AddCommand(newInternalEvaluatorPrepareCmd())
 	cmd.AddCommand(newInternalEvaluatorRecordCmd())
 	return cmd
@@ -22,7 +22,6 @@ func newInternalEvaluatorRecordCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "record",
 		Short:        "Validate and record a structured evaluator verdict",
-		Hidden:       true,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.Now = time.Now
@@ -53,7 +52,6 @@ func newInternalEvaluatorPrepareCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "prepare",
 		Short:        "Prepare an isolated read-only evaluator input bundle",
-		Hidden:       true,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.Now = time.Now

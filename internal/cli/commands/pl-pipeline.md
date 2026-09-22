@@ -175,10 +175,7 @@ pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase planne
 
 독립 태스크는 Agent 도구로 병렬 실행합니다.
 
-각 Agent 호출은 `/pl:execute`의 durable state lifecycle을 따라야 합니다. root run에 대해
-`pylon internal state create-run` 또는 재시작 시 `state recover`를 먼저 수행하고, 모든 태스크를
-`create-task -> ready -> claim -> start`로 전이한 뒤 Agent를 시작합니다. Agent 결과는 동일 attempt의
-fencing token으로 `state complete`가 성공한 경우에만 trajectory와 `execution-log.json`에 반영합니다.
+Agent 결과는 검증 출력이 첨부된 경우에만 trajectory와 `execution-log.json`에 반영합니다.
 
 **프롬프트에는 아래 6가지를 모두 넣습니다.** 서브 에이전트는 이 대화도, Step 3에서 만든 설계도 보지
 못합니다 — 프롬프트에 넣지 않은 것은 존재하지 않는 것과 같습니다. 경로만 넘기지 말고 **내용을 붙여넣습니다**.
@@ -337,25 +334,18 @@ pylon internal evaluator record \
 모든 acceptance criterion이 포함되지 않았거나 하나라도 `partial/missing`인데 `pass`를 반환하면 기록이
 거부됩니다. deterministic gate 실패는 evaluator PASS로 덮어쓸 수 없습니다.
 
-evaluator 결과를 기록한 뒤 해당 repo에서 `verifying` 상태인 모든 태스크를 최종 확정합니다. 두 gate 중
-하나라도 실패하면 해당 플래그를 생략하여 task를 `failed`로 만들며, 자연어 Agent 보고만으로 성공 처리하지
-않습니다:
+evaluator 결과를 기록한 뒤 해당 repo의 모든 태스크를 최종 확정합니다. 두 gate가 모두 통과한 경우에만
+`verified: true`이며, 자연어 Agent 보고만으로 성공 처리하지 않습니다:
 
 ```bash
 DETERMINISTIC_PASSED=$(jq -r '.passed == true' "$REPO_PIPELINE_DIR/verification.json")
 EVALUATOR_PASSED=$(jq -r '.status == "pass"' "$REPO_PIPELINE_DIR/evaluator-result.json")
-
-jq -r --arg repo_id "$REPO_ID" '.tasks[] | select(.repo_id == $repo_id) | .id' "$PIPELINE_DIR/tasks.json" |
-while read -r TASK_ID; do
-  [[ $(pylon internal state show "$PIPELINE_ID" "$TASK_ID" | jq -r '.status') == "verifying" ]] || continue
-  VERIFY_ARGS=()
-  [[ "$DETERMINISTIC_PASSED" == "true" ]] && VERIFY_ARGS+=(--deterministic)
-  [[ "$EVALUATOR_PASSED" == "true" ]] && VERIFY_ARGS+=(--evaluator)
-  pylon internal state verify "$PIPELINE_ID" "$TASK_ID" \
-    "${VERIFY_ARGS[@]}" \
-    --evidence "$REPO_PIPELINE_DIR/verification.json,$REPO_PIPELINE_DIR/evaluator-result.json"
-done
+VERIFIED=false
+[[ "$DETERMINISTIC_PASSED" == "true" && "$EVALUATOR_PASSED" == "true" ]] && VERIFIED=true
 ```
+
+`$VERIFIED` 값을 `$PIPELINE_DIR/execution-log.json`의 해당 repo 태스크 항목마다 `verified: true|false`로
+기록합니다.
 
 ### Step 8: PR 생성 (선택)
 
@@ -398,31 +388,7 @@ done
 .pylon/scripts/bash/cleanup-pipeline.sh "$ROOT_PIPELINE_DIR" --terminal-phase completed
 ```
 
-완료 checkpoint가 확정된 뒤에만 학습 후보를 만들 수 있습니다. 실행 중 대화나 단순 세션 종료를 trigger로
-사용하지 않습니다. 후보 생성은 선택 사항이며 active memory/skill을 자동 수정하지 않습니다:
-
-```bash
-cat > curator-proposal.json <<JSON
-{
-  "type": "memory|pitfall|skill|agent_prompt|pipeline_rule|acceptance_corpus",
-  "title": "후보 제목",
-  "summary": "제안 변경 요약",
-  "rationale": "finalized evidence에 기반한 이유",
-  "target_files": [".pylon/memory/<project>/learning/example.md"],
-  "evidence_refs": ["task-reports-summary.json", "failure-records-summary.json"],
-  "regression_fixtures": ["fixture-id"]
-}
-JSON
-
-pylon internal curator propose \
-  --checkpoint "$PIPELINE_ID/completed" \
-  --input curator-proposal.json
-```
-
-사람이 candidate의 `proposal.md`, `evidence.json`, `source-runs.json`, `target-files.json`을 검토한 뒤에만
-`pylon internal curator review --decision approve|reject`를 실행합니다. 승인 후보도 acceptance corpus가
-통과한 report를 `pylon internal curator gate`로 기록하기 전에는 적용 대상이 아닙니다. Pylon은 gate 이후에도
-active 파일을 자동 수정하지 않으며 실제 적용은 별도 commit/PR로 수행합니다.
+학습 반영은 세션이 `.pylon/memory/`에 직접 기록하며 자동 적용은 없습니다.
 
 실행 결과를 요약합니다:
 - 생성/변경된 파일 목록

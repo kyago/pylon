@@ -250,6 +250,7 @@ func TestFailedCheckpointPreservesTrajectoryArtifacts(t *testing.T) {
 		`{"schema_version":1,"run_id":"pipe-1","task_id":"T001","attempt":3,"phase":"verification","terminal_cause":"test_failure","evidence_refs":["tasks/T001/attempts/003/stderr.log"],"hypotheses_rejected":[{"hypothesis":"wrong path","probe":"resolve path","result":"correct"}],"remaining_unknowns":["race"],"abandoned_reason":"attempts exhausted","recorded_at":"2026-08-10T04:00:00Z","digest":"sha256:failure","secret":"drop-me"}`)
 	mustWrite(t, filepath.Join(pipelineDir, "repos", "service-a", "evaluator-result.json"),
 		`{"schema_version":1,"request_digest":"sha256:req","status":"fail","summary":"criterion partial","criteria":[{"id":"AC-1","status":"partial","evidence":"change.diff"}],"evaluator":"verifier","secret":"drop-me"}`)
+	// 제거된 runstate 계층의 잔재: checkpoint는 이를 무시하고 요약을 만들지 않는다.
 	mustWrite(t, filepath.Join(pipelineDir, "tasks", "T001", "state.json"),
 		`{"schema_version":1,"run_id":"pipe-1","task_id":"T001","status":"failed","attempt":3,"message":"verification failed","secret":"drop-me"}`)
 	mustWrite(t, filepath.Join(pipelineDir, "tasks", "T001", "attempts", "003", "provider.json"),
@@ -264,8 +265,6 @@ func TestFailedCheckpointPreservesTrajectoryArtifacts(t *testing.T) {
 		"task-reports-summary.json",
 		"failure-records-summary.json",
 		"evaluator-summary.json",
-		"attempt-state-summary.json",
-		"provider-summary.json",
 	} {
 		data, err := os.ReadFile(filepath.Join(snapshotDir, name))
 		if err != nil {
@@ -273,6 +272,11 @@ func TestFailedCheckpointPreservesTrajectoryArtifacts(t *testing.T) {
 		}
 		if strings.Contains(string(data), "drop-me") {
 			t.Fatalf("%s contains uncurated fields: %s", name, data)
+		}
+	}
+	for _, name := range []string{"attempt-state-summary.json", "provider-summary.json", "attempt-result-summary.json"} {
+		if _, err := os.Stat(filepath.Join(snapshotDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s must not be produced after runstate removal (err=%v)", name, err)
 		}
 	}
 	failureSummary, err := os.ReadFile(filepath.Join(snapshotDir, "failure-records-summary.json"))

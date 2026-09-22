@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/kyago/pylon/internal/fsutil"
 )
@@ -50,17 +49,13 @@ func (m *Manager) stageCheckpoint(sourceDir, destDir string, phase Phase) ([]str
 			name    string
 			dest    string
 			allowed map[string]bool
-			filter  func(string) bool
 		}{
 			{name: "criteria.json", dest: "criteria-summary.json", allowed: criteriaKeys},
 			{name: "task-report.json", dest: "task-reports-summary.json", allowed: taskReportKeys},
 			{name: "failure-record.json", dest: "failure-records-summary.json", allowed: failureKeys},
 			{name: "evaluator-result.json", dest: "evaluator-summary.json", allowed: evaluatorKeys},
-			{name: "state.json", dest: "attempt-state-summary.json", allowed: attemptStateKeys, filter: taskStatePath},
-			{name: "provider.json", dest: "provider-summary.json", allowed: providerKeys, filter: attemptArtifactPath},
-			{name: "result.json", dest: "attempt-result-summary.json", allowed: attemptResultKeys, filter: attemptArtifactPath},
 		} {
-			if err := summarizeRecursiveFiles(sourceDir, artifact.name, filepath.Join(destDir, artifact.dest), artifact.allowed, artifact.filter); err != nil {
+			if err := summarizeRecursiveFiles(sourceDir, artifact.name, filepath.Join(destDir, artifact.dest), artifact.allowed); err != nil {
 				return nil, "", err
 			}
 		}
@@ -71,7 +66,7 @@ func (m *Manager) stageCheckpoint(sourceDir, destDir string, phase Phase) ([]str
 	return projects, status, nil
 }
 
-func summarizeRecursiveFiles(sourceDir, name, dest string, allowed map[string]bool, filter func(string) bool) error {
+func summarizeRecursiveFiles(sourceDir, name, dest string, allowed map[string]bool) error {
 	type record struct {
 		Path   string `json:"path"`
 		Result any    `json:"result"`
@@ -95,9 +90,6 @@ func summarizeRecursiveFiles(sourceDir, name, dest string, allowed map[string]bo
 			return err
 		}
 		relative = filepath.ToSlash(relative)
-		if filter != nil && !filter(relative) {
-			return nil
-		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -114,14 +106,6 @@ func summarizeRecursiveFiles(sourceDir, name, dest string, allowed map[string]bo
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
 	return fsutil.WriteJSONAtomic(dest, map[string]any{"records": records})
-}
-
-func taskStatePath(relative string) bool {
-	return strings.HasPrefix(relative, "tasks/") && strings.HasSuffix(relative, "/state.json")
-}
-
-func attemptArtifactPath(relative string) bool {
-	return strings.HasPrefix(relative, "tasks/") && strings.Contains(relative, "/attempts/")
 }
 
 func summarizeResultFiles(sourceDir, name, dest string, allowed map[string]bool) error {
@@ -216,23 +200,6 @@ var evaluatorKeys = map[string]bool{
 	"schema_version": true, "request_digest": true, "status": true, "summary": true,
 	"criteria": true, "id": true, "evidence": true, "risks": true,
 	"evidence_refs": true, "evaluator": true, "recorded_at": true,
-}
-
-var attemptStateKeys = map[string]bool{
-	"schema_version": true, "run_id": true, "task_id": true, "status": true,
-	"revision": true, "attempt": true, "provider": true, "result": true,
-	"verification": true, "message": true, "created_at": true, "updated_at": true,
-	"name": true, "external_id": true, "resume_token": true, "state": true,
-	"exit_code": true, "changed_files": true, "evidence": true,
-	"deterministic_passed": true, "evaluator_passed": true, "evidence_refs": true, "recorded_at": true,
-}
-
-var providerKeys = map[string]bool{
-	"provider": true, "external_id": true, "resume_token": true, "attempt": true,
-}
-
-var attemptResultKeys = map[string]bool{
-	"state": true, "exit_code": true, "changed_files": true, "evidence": true,
 }
 
 func summarizeJSONFile(source, dest string, allowed map[string]bool) error {
