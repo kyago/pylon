@@ -16,9 +16,12 @@ import (
 )
 
 // pylonUsageVersion is the version of the embedded pylon usage manual
-// (internal/cli/reference/pylon-usage.md). Bump it ONLY when that manual changes —
-// it is the sole trigger that marks an existing AGENTS.md stale and forces the next
-// session to re-author it. Independent of pylon's CalVer release version.
+// (internal/cli/reference/pylon-usage.md). It is the sole trigger that marks an
+// existing AGENTS.md block stale. Bump it ONLY when the manual changes a procedure,
+// command, or path a session must follow — wording, typo, and formatting edits do
+// not bump. A stale session-authored block is not discarded: the stamp is raised and
+// an update notice is inserted so the next session revises the guide incrementally.
+// Independent of pylon's CalVer release version.
 const pylonUsageVersion = 5
 
 var usageVersionRe = regexp.MustCompile(`pylon-usage-version:\s*(\d+)`)
@@ -92,6 +95,39 @@ func buildAgentsBlock(root string, projects []config.ProjectInfo) string {
 		b.WriteString("- **프로젝트**: 없음 — `pylon add-project <git-url>`로 추가\n")
 	}
 	b.WriteString(agentsBlockEnd + "\n")
+	return b.String()
+}
+
+// agentsUpdateHeading opens the notice buildAgentsUpdateNotice inserts into a stale
+// session-authored block. The session removes the whole notice once the guide is revised.
+const agentsUpdateHeading = "## pylon 매뉴얼 갱신 필요"
+
+// buildAgentsUpdateNotice returns blockData with its stamp raised to pylonUsageVersion
+// and an update notice inserted right after the stamp. Everything the session wrote is
+// kept, so a manual bump costs an incremental revision instead of a full re-authoring.
+// blockData must be a complete block (begin line first, end line last).
+func buildAgentsUpdateNotice(blockData []byte) string {
+	prev := 0
+	if m := usageVersionRe.FindSubmatch(blockData); m != nil {
+		prev, _ = strconv.Atoi(string(m[1]))
+	}
+	lines := strings.Split(strings.TrimSuffix(string(blockData), "\n"), "\n")
+	body := make([]string, 0, len(lines))
+	for _, line := range lines[1 : len(lines)-1] {
+		if !legacyUsageVersionRe.Match([]byte(strings.TrimSpace(line))) {
+			body = append(body, line)
+		}
+	}
+	var b strings.Builder
+	b.WriteString(lines[0] + "\n")
+	fmt.Fprintf(&b, "<!-- pylon-usage-version: %d -->\n", pylonUsageVersion)
+	fmt.Fprintf(&b, "%s (v%d → v%d)\n\n", agentsUpdateHeading, prev, pylonUsageVersion)
+	b.WriteString("pylon 매뉴얼이 갱신되었습니다. **다른 작업을 하기 전에** `.pylon/reference/pylon-usage.md`를 다시 읽고\n")
+	b.WriteString("달라진 절차·명령·경로만 아래 가이드에 반영하세요. 기존 내용은 처음부터 다시 쓰지 말고 고칩니다.\n")
+	b.WriteString("반영이 끝나면 이 안내 문단(제목 포함)을 삭제하고, 마커 두 줄과 스탬프는 그대로 두며, 블록 밖의 내용은\n")
+	b.WriteString("수정하지 마세요.\n\n")
+	b.WriteString(strings.Join(body, "\n") + "\n")
+	b.WriteString(lines[len(lines)-1] + "\n")
 	return b.String()
 }
 
@@ -237,21 +273,29 @@ func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, er
 	if pylonAuthored(data) {
 		return false, nil
 	}
-	dest := path + rootFileBackupSuffix
-	for i := 1; ; i++ {
-		if _, err := os.Lstat(dest); os.IsNotExist(err) {
-			break
-		}
-		if i > maxRootFileBackups {
-			return false, fmt.Errorf("%s 백업 실패: 백업 파일이 너무 많습니다 (%s*)",
-				filepath.Base(path), filepath.Base(path)+rootFileBackupSuffix)
-		}
-		dest = fmt.Sprintf("%s%s.%d", path, rootFileBackupSuffix, i)
+	dest, err := nextBackupPath(path)
+	if err != nil {
+		return false, err
 	}
 	if err := os.Rename(path, dest); err != nil {
 		return false, fmt.Errorf("%s 백업 실패: %w", filepath.Base(path), err)
 	}
 	return true, nil
+}
+
+// nextBackupPath returns the first free .pylon-bak[.N] path next to path.
+func nextBackupPath(path string) (string, error) {
+	dest := path + rootFileBackupSuffix
+	for i := 1; ; i++ {
+		if _, err := os.Lstat(dest); os.IsNotExist(err) {
+			return dest, nil
+		}
+		if i > maxRootFileBackups {
+			return "", fmt.Errorf("%s 백업 실패: 백업 파일이 너무 많습니다 (%s*)",
+				filepath.Base(path), filepath.Base(path)+rootFileBackupSuffix)
+		}
+		dest = fmt.Sprintf("%s%s.%d", path, rootFileBackupSuffix, i)
+	}
 }
 
 // ensureRootAgentFiles keeps the two workspace-root files in the desired state:
@@ -324,9 +368,26 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 	}
 
 	if blockState == agentsBlockComplete {
-		// stale 블록만 교체 — 블록 밖 사용자 내용은 그대로 둔다. 블록 안은 pylon 소유이고
-		// 다음 세션이 팩트로부터 재저작하므로 백업하지 않는다.
-		out := string(data[:s]) + block + string(data[e:])
+		// stale 블록만 손댄다 — 블록 밖 사용자 내용은 그대로 둔다. 저작되지 않은 스텁은 새
+		// 스텁으로 교체하고, 세션이 저작한 가이드는 버리지 않고 스탬프를 올린 뒤 갱신 안내만
+		// 넣는다. 저작된 가이드는 되돌릴 수 있도록 파일 전체를 .pylon-bak으로 복사해 둔다.
+		newBlock := block
+		if !bytes.Contains(data[s:e], []byte(bootstrapAgentsMDHeading)) {
+			dest, err := nextBackupPath(agentsPath)
+			if err != nil {
+				return false, backedUp, err
+			}
+			mode := os.FileMode(0644)
+			if info, err := os.Stat(agentsPath); err == nil {
+				mode = info.Mode().Perm()
+			}
+			if err := fsutil.WriteFileAtomic(dest, data, mode); err != nil {
+				return false, backedUp, fmt.Errorf("AGENTS.md 백업 실패: %w", err)
+			}
+			backedUp = append(backedUp, filepath.Base(agentsPath))
+			newBlock = buildAgentsUpdateNotice(data[s:e])
+		}
+		out := string(data[:s]) + newBlock + string(data[e:])
 		if err := writeAgentsFile(agentsPath, []byte(out)); err != nil {
 			return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
 		}

@@ -601,3 +601,62 @@ func TestEnsureRootAgentFilesPreservesFreshAgentsMD(t *testing.T) {
 		t.Errorf("fresh AGENTS.md was overwritten: %q", got)
 	}
 }
+
+// 스탬프가 오르면 세션이 저작한 블록은 버리지 않는다 — 스탬프를 올리고 갱신 안내만 넣으며,
+// 원본은 .pylon-bak으로 복사한다. 블록 밖 내용은 그대로 (#107).
+func TestEnsureRootAgentFilesKeepsStaleAuthoredBlockWithUpdateNotice(t *testing.T) {
+	root := t.TempDir()
+	userTop := "# 우리 팀 규칙\n블록 밖 내용\n\n"
+	userBottom := "\n# 블록 아래 추가 규칙\n"
+	guide := "# 세션이 저작한 운영 가이드\n\n- 규칙 1\n- 규칙 2\n"
+	authored := agentsBlockBegin + "\n<!-- pylon-usage-version: 3 -->\n" + guide + agentsBlockEnd + "\n"
+	original := userTop + authored + userBottom
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bootstrapped {
+		t.Error("stale authored block should be updated")
+	}
+	if len(backedUp) != 1 || backedUp[0] != "AGENTS.md" {
+		t.Errorf("stale authored block must be backed up, got %v", backedUp)
+	}
+	bak, err := os.ReadFile(layout.RootAgentsPath(root) + rootFileBackupSuffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(bak) != original {
+		t.Errorf("backup must hold the original bytes: %q", bak)
+	}
+	got, _ := os.ReadFile(layout.RootAgentsPath(root))
+	out := string(got)
+	if !strings.HasPrefix(out, userTop) || !strings.HasSuffix(out, userBottom) {
+		t.Errorf("user content around the block was not preserved: %q", out)
+	}
+	if !strings.Contains(out, guide) {
+		t.Errorf("session-authored guide must be kept verbatim: %q", out)
+	}
+	if strings.Contains(out, bootstrapAgentsMDHeading) {
+		t.Errorf("authored block must not be replaced by the bootstrap stub: %q", out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("%s (v3 → v%d)", agentsUpdateHeading, pylonUsageVersion)) {
+		t.Errorf("update notice with old/new version missing: %q", out)
+	}
+	if strings.Contains(out, "pylon-usage-version: 3") || !strings.Contains(out, fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
+		t.Errorf("stamp must be raised exactly once: %q", out)
+	}
+	if strings.Count(out, agentsBlockBegin) != 1 || strings.Count(out, agentsBlockEnd) != 1 {
+		t.Errorf("must stay a single block: %q", out)
+	}
+	if agentsMDStale(root) {
+		t.Error("updated block should no longer be stale")
+	}
+	// 두 번째 실행은 아무것도 하지 않는다 — 백업이 늘어나면 안 된다.
+	bootstrapped, backedUp, err = ensureRootAgentFiles(root, nil)
+	if err != nil || bootstrapped || len(backedUp) != 0 {
+		t.Errorf("second run must be a no-op: bootstrapped=%v backedUp=%v err=%v", bootstrapped, backedUp, err)
+	}
+}

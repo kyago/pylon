@@ -16,17 +16,22 @@ Do not confuse the two `CLAUDE.md` files: *this* one guides development of the b
 The workspace root prompt is **AI-authored, not hardcoded in Go**. `ensureRootAgentFiles`
 (`internal/cli/launch_agentsmd.go`) writes workspace `CLAUDE.md` as a deterministic `@AGENTS.md` import
 marker on every launch. Inside `AGENTS.md`, pylon owns only the **managed block** delimited by
-`<!-- pylon:begin -->` / `<!-- pylon:end -->`: the block is re-bootstrapped **only when missing or
+`<!-- pylon:begin -->` / `<!-- pylon:end -->`: the block is touched **only when missing or
 stale**, content outside the block is user-owned and never modified, and a user's own `AGENTS.md`
 (no block) keeps its content with the block prepended so Codex sees it within the default instruction
 size limit. A malformed marker pair (missing, reversed, or
 duplicated whole-line markers) aborts launch/init/doctor before any file is touched; uninstall skips the
 file with a warning and proceeds. Staleness is a version stamp comparison inside the
 block: `<!-- pylon-usage-version: N -->` is stale when absent, unparseable, or below `pylonUsageVersion`.
+A stale block that is still the unauthored bootstrap stub is replaced by a fresh stub. A stale block a
+session already authored is **kept**: the whole file is copied to `AGENTS.md.pylon-bak`, the stamp is
+raised, and an update notice (`## pylon 매뉴얼 갱신 필요 (vN → vM)`) is inserted so the next session
+revises the guide incrementally and deletes the notice.
 The launched claude session authors the real guide inside the block on its first turn,
 reading `.pylon/reference/pylon-usage.md` (the embedded manual) plus the actual workspace. Go never calls
-an LLM. Bump `pylonUsageVersion` **only** when the embedded manual changes — it is the sole trigger that
-forces re-authoring, and it is independent of pylon's CalVer release version.
+an LLM. Bump `pylonUsageVersion` **only** when the manual changes a procedure, command, or path a session
+must follow — wording, typo, and formatting edits do not bump. It is the sole trigger that forces a
+revision, and it is independent of pylon's CalVer release version.
 
 ## Build / test / lint
 
