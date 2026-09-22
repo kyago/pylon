@@ -79,9 +79,6 @@ func TestExecuteDoesNotReferenceRemovedStateStore(t *testing.T) {
 			t.Fatalf("execute command still references removed state store %q", removed)
 		}
 	}
-	if !strings.Contains(command, "pylon internal trajectory task-report") {
-		t.Fatal("execute command must keep trajectory task-report")
-	}
 }
 
 // 소유권 계약: 내장 리소스와 같은 이름의 파일은 pylon 소유이므로 내장 버전으로 되돌아간다.

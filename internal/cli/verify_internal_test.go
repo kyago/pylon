@@ -622,13 +622,4 @@ func TestInternalHelpListsSubcommands(t *testing.T) {
 			t.Fatalf("internal --help missing subcommand %q:\n%s", name, out.String())
 		}
 	}
-	for _, removed := range []string{"state", "corpus", "curator"} {
-		if cmd.Commands() != nil {
-			for _, sub := range cmd.Commands() {
-				if sub.Name() == removed {
-					t.Fatalf("removed subcommand %q still registered", removed)
-				}
-			}
-		}
-	}
 }

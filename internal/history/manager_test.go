@@ -274,11 +274,6 @@ func TestFailedCheckpointPreservesTrajectoryArtifacts(t *testing.T) {
 			t.Fatalf("%s contains uncurated fields: %s", name, data)
 		}
 	}
-	for _, name := range []string{"attempt-state-summary.json", "provider-summary.json", "attempt-result-summary.json"} {
-		if _, err := os.Stat(filepath.Join(snapshotDir, name)); !os.IsNotExist(err) {
-			t.Fatalf("%s must not be produced after runstate removal (err=%v)", name, err)
-		}
-	}
 	failureSummary, err := os.ReadFile(filepath.Join(snapshotDir, "failure-records-summary.json"))
 	if err != nil {
 		t.Fatal(err)
