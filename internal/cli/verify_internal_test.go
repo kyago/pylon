@@ -607,3 +607,19 @@ func TestResolveLiveConfigPath(t *testing.T) {
 		t.Fatalf("absolute source must use fallback: %q", got)
 	}
 }
+
+// `pylon internal --help`는 서브커맨드 목록을 보여줘야 한다 (#105: 전부 Hidden이라 빈 help가 출력되던 회귀).
+func TestInternalHelpListsSubcommands(t *testing.T) {
+	cmd := newInternalCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"criteria", "evaluator", "trajectory", "verify"} {
+		if !strings.Contains(out.String(), "\n  "+name+" ") {
+			t.Fatalf("internal --help missing subcommand %q:\n%s", name, out.String())
+		}
+	}
+}

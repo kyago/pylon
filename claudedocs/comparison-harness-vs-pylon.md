@@ -1,3 +1,5 @@
+> 참고: 이 문서가 다루는 runstate/corpus/curator 실행 제어 계층은 #105 에서 제거되었다.
+
 # Harness vs Pylon — 프로젝트 비교 분석
 
 > 작성일: 2026-03-29

@@ -112,6 +112,9 @@ command deleted from the embeds survives in both `.pylon/commands/` and `.claude
   defaulted at load time (`LoadConfig`). `FindWorkspaceRoot` walks up to locate `.pylon/`.
 - `internal/memory/` — markdown-file memory store (`<category>/<slug>.md` + `INDEX.md`), token-match search.
 - `internal/history/` — directory-snapshot work history under `.pylon/history/pipelines/`.
+- `internal/criteria/`, `internal/evaluator/`, `internal/provider/`, `internal/trajectory/` — verification
+  gates behind `pylon internal {criteria,evaluator,trajectory,verify}`: immutable criteria snapshots, isolated
+  evaluator bundles/verdicts, and create-once task reports / failure records.
 - `internal/domain/`, `internal/slug/`, `internal/fsutil/` — supporting utilities.
 
 `resolveRoot()` (`workspace.go`) is the shared workspace-locator used by all commands; reuse it rather than

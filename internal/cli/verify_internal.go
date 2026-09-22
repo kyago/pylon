@@ -40,14 +40,11 @@ type verificationResult struct {
 }
 
 func newInternalCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "internal", Hidden: true}
+	cmd := &cobra.Command{Use: "internal", Short: "Pipeline helper commands used by /pl:* commands", Hidden: true}
 	cmd.AddCommand(newInternalVerifyCmd())
 	cmd.AddCommand(newInternalCriteriaCmd())
 	cmd.AddCommand(newInternalEvaluatorCmd())
-	cmd.AddCommand(newInternalStateCmd())
 	cmd.AddCommand(newInternalTrajectoryCmd())
-	cmd.AddCommand(newInternalCorpusCmd())
-	cmd.AddCommand(newInternalCuratorCmd())
 	return cmd
 }
 
@@ -57,7 +54,6 @@ func newInternalVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "verify",
 		Short:        "Run project verification commands",
-		Hidden:       true,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var steps []config.NamedVerifyStep

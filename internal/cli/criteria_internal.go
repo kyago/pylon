@@ -11,7 +11,7 @@ import (
 )
 
 func newInternalCriteriaCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "criteria", Hidden: true}
+	cmd := &cobra.Command{Use: "criteria", Short: "Verification criteria snapshots"}
 	cmd.AddCommand(newInternalCriteriaSnapshotCmd())
 	return cmd
 }
@@ -21,7 +21,6 @@ func newInternalCriteriaSnapshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "snapshot",
 		Short:        "Create an immutable verification criteria snapshot",
-		Hidden:       true,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.Now = time.Now

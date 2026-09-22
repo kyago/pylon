@@ -42,7 +42,7 @@ func TestExecuteCommandRequiresStructuredTaskReports(t *testing.T) {
 		`pylon internal trajectory task-report`,
 		`hypotheses_rejected`,
 		`remaining_unknowns`,
-		`attempts/$ATTEMPT/task-report.json`,
+		`tasks/$TASK_ID/task-report.json`,
 	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("execute command is missing trajectory instruction %q", required)
@@ -50,65 +50,33 @@ func TestExecuteCommandRequiresStructuredTaskReports(t *testing.T) {
 	}
 }
 
-func TestExecuteCommandDrivesDurableTaskState(t *testing.T) {
-	content, err := embeddedCommands.ReadFile("commands/pl-execute.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := string(content)
-	for _, required := range []string{
-		`pylon internal state create-run`,
-		`pylon internal state recover`,
-		`pylon internal state create-task`,
-		`pylon internal state ready`,
-		`pylon internal state claim`,
-		`pylon internal state start`,
-		`pylon internal state heartbeat`,
-		`pylon internal state complete`,
-		`state retry`,
-	} {
-		if !strings.Contains(command, required) {
-			t.Fatalf("execute command is missing durable state instruction %q", required)
-		}
-	}
-
-	claim := strings.Index(command, `pylon internal state claim`)
-	start := strings.Index(command, `pylon internal state start`)
-	agent := strings.Index(command, `Agent(prompt=`)
-	complete := strings.Index(command, `pylon internal state complete`)
-	report := strings.Index(command, `pylon internal trajectory task-report`)
-	if claim < 0 || start < claim || agent < start || complete < agent || report < complete {
-		t.Fatalf("durable execution order is invalid: claim=%d start=%d agent=%d complete=%d report=%d", claim, start, agent, complete, report)
-	}
-}
-
-func TestPipelineFinalizesTaskStateAfterEvaluator(t *testing.T) {
+func TestPipelineRecordsVerifiedFlagAfterEvaluator(t *testing.T) {
 	content, err := embeddedCommands.ReadFile("commands/pl-pipeline.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	command := string(content)
 	record := strings.Index(command, `pylon internal evaluator record`)
-	verify := strings.Index(command, `pylon internal state verify`)
-	if record < 0 || verify < record {
-		t.Fatalf("task verification must follow evaluator recording: evaluator=%d state_verify=%d", record, verify)
+	verified := strings.Index(command, `verified: true|false`)
+	if record < 0 || verified < record {
+		t.Fatalf("task verification must follow evaluator recording: evaluator=%d verified=%d", record, verified)
+	}
+	for _, removed := range []string{"pylon internal state", "pylon internal corpus", "pylon internal curator"} {
+		if strings.Contains(command, removed) {
+			t.Fatalf("pipeline command still references removed command %q", removed)
+		}
 	}
 }
 
-func TestPipelineOnlyCreatesCuratorCandidatesAfterCheckpoint(t *testing.T) {
-	content, err := embeddedCommands.ReadFile("commands/pl-pipeline.md")
+func TestExecuteDoesNotReferenceRemovedStateStore(t *testing.T) {
+	content, err := embeddedCommands.ReadFile("commands/pl-execute.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	command := string(content)
-	checkpoint := strings.Index(command, `pylon history checkpoint --pipeline "$PIPELINE_ID" --phase completed`)
-	curator := strings.Index(command, `pylon internal curator propose`)
-	if checkpoint < 0 || curator < 0 || curator < checkpoint {
-		t.Fatalf("curator candidate must follow finalized checkpoint: checkpoint=%d curator=%d", checkpoint, curator)
-	}
-	for _, required := range []string{"active 파일을 자동 수정하지", "curator review", "curator gate"} {
-		if !strings.Contains(command, required) {
-			t.Fatalf("pipeline command is missing curator guard %q", required)
+	for _, removed := range []string{"pylon internal state", "fencing", "lease"} {
+		if strings.Contains(command, removed) {
+			t.Fatalf("execute command still references removed state store %q", removed)
 		}
 	}
 }
