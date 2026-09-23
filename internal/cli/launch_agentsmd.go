@@ -108,10 +108,7 @@ const agentsUpdateHeading = "## pylon 매뉴얼 갱신 필요"
 // kept, so a manual bump costs an incremental revision instead of a full re-authoring.
 // blockData must be a complete block (begin line first, end line last).
 func buildAgentsUpdateNotice(blockData []byte) string {
-	prev := 0
-	if m := usageVersionRe.FindSubmatch(blockData); m != nil {
-		prev, _ = strconv.Atoi(string(m[1]))
-	}
+	prev := blockUsageVersion(blockData)
 	lines := strings.Split(strings.TrimSuffix(string(blockData), "\n"), "\n")
 	body := slices.DeleteFunc(lines[1:len(lines)-1], func(l string) bool { return legacyUsageVersionRe.MatchString(strings.TrimSpace(l)) })
 	var b strings.Builder
@@ -205,15 +202,21 @@ func writeAgentsFile(path string, data []byte) error {
 	return fsutil.WriteFileAtomic(target, data, mode)
 }
 
-// agentsBlockIsCurrent reports whether the given block bytes carry a parseable
-// version stamp at or above pylonUsageVersion.
-func agentsBlockIsCurrent(blockData []byte) bool {
+// blockUsageVersion returns the version stamp inside the block, or 0 when absent
+// or unparseable.
+func blockUsageVersion(blockData []byte) int {
 	m := usageVersionRe.FindSubmatch(blockData)
 	if m == nil {
-		return false
+		return 0
 	}
-	v, err := strconv.Atoi(string(m[1]))
-	return err == nil && v >= pylonUsageVersion
+	v, _ := strconv.Atoi(string(m[1]))
+	return v
+}
+
+// agentsBlockIsCurrent reports whether the given block bytes carry a version
+// stamp at or above pylonUsageVersion.
+func agentsBlockIsCurrent(blockData []byte) bool {
+	return blockUsageVersion(blockData) >= pylonUsageVersion
 }
 
 // isLegacyAgentsMD recognizes the whole-file format used before managed blocks.
