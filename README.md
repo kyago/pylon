@@ -164,7 +164,6 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
               │   ├── /pl:verify ─── 빌드/테스트/린트 검증
               │   ├── /pl:pr ─────── PR 생성
               │   ├── /pl:status ─── 파이프라인 상태 조회
-              │   ├── /pl:cancel ─── 취소 및 정리
               │   ├── /pl:index ─── 코드베이스 인덱싱
               │   ├── /pl:project-list ─ 프로젝트 목록 조회
               │   ├── /pl:add-project ─ 프로젝트 추가
@@ -253,7 +252,6 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
 | `/pl:verify` | 빌드/테스트/린트 교차 검증 |
 | `/pl:pr` | PR 생성 |
 | `/pl:status` | 파이프라인 상태 조회 (파일 기반) |
-| `/pl:cancel` | 파이프라인 취소 및 정리 |
 | `/pl:index` | 프로젝트 코드베이스 인덱싱 |
 | `/pl:project-list` | 프로젝트 목록 및 인덱싱 상태 조회 |
 | `/pl:add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
@@ -311,7 +309,6 @@ Go 바이너리가 제공하는 유틸리티 명령입니다. 루트 에이전�
 | `pylon add-agent <name>` | 커스텀 에이전트 추가 (`--domain`, `--role`) |
 | `pylon add-skill <name>` | 커스텀 스킬 추가 |
 | `pylon status` | 파이프라인 및 에이전트 상태 조회 |
-| `pylon cancel [pipeline-id]` | 진행 중인 파이프라인 취소 |
 | `pylon uninstall` | 워크스페이스 완전 제거 |
 
 ### 프로젝트 메모리

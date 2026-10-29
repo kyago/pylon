@@ -247,7 +247,7 @@ func TestRetiredBuiltins_AreLegacyPathsMissingFromEmbeds(t *testing.T) {
 		"agents/doc-specialist.md", "agents/frontend-dev.md", "agents/lead-researcher.md",
 		"agents/pm.md", "agents/po.md", "agents/report-writer.md", "agents/security-reviewer.md",
 		"agents/tech-writer.md", "agents/test-engineer.md", "agents/tracer.md", "agents/web-searcher.md",
-		"skills/content-writing-guide.md", "skills/marketing-framework.md",
+		"commands/pl-cancel.md", "skills/content-writing-guide.md", "skills/marketing-framework.md",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("retiredBuiltins() =\n%v\nwant\n%v", got, want)

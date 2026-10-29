@@ -12,16 +12,6 @@ BRANCH_ARG=""
 GIT_ROOT_ARG=""
 TERMINAL_PHASE=""
 
-# Keep the old positional branch/true form readable, but no longer trust the
-# boolean alone: a matching history manifest must exist before deletion.
-if [[ $# -gt 0 && "$1" != --* ]]; then
-  BRANCH_ARG="$1"
-  shift
-fi
-if [[ $# -gt 0 && "$1" == "true" ]]; then
-  TERMINAL_PHASE="completed"
-  shift
-fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch) BRANCH_ARG="${2:-}"; shift 2 ;;
