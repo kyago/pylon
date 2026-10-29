@@ -168,7 +168,7 @@ git:
 		"# Pylon built-in resources (regenerated)",
 		".pylon/builtin/",
 		"",
-		"# Pylon root agent files (regenerated; AI-authored)",
+		"# Pylon root agent files (regenerated)",
 		"CLAUDE.md",
 		"AGENTS.md",
 		"",
@@ -217,7 +217,7 @@ git:
 		return err
 	}
 	for _, name := range backedUp {
-		fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다 — pylon이 이 파일을 관리합니다.\n", name, name, rootFileBackupSuffix)
+		fmt.Printf("ℹ 기존 내용을 %s에 백업했습니다 — pylon이 이 파일을 관리합니다.\n", name)
 	}
 
 	fmt.Println()

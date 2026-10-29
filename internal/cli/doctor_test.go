@@ -47,30 +47,34 @@ func TestSyncBuiltinResources_WritesEmbedsAndIsIdempotent(t *testing.T) {
 	}
 }
 
-// 이전 릴리스는 내장 리소스를 .pylon/<kind>/에 직접 복사했다. 그 사본은 내장 이름이라
-// pylon 소유이므로 지워야 하고, 같은 디렉토리의 사용자 파일은 남아야 한다.
-func TestSyncBuiltinResources_RemovesLegacyCopiesKeepsUserFiles(t *testing.T) {
+// 이전 릴리스는 내장 리소스를 .pylon/<kind>/에 직접 복사했다. 내장 이름의 파일은 builtin을
+// 가리지 않도록 비켜나야 한다: 내장과 같은 사본은 삭제, 내용이 다르면 .pylon-bak으로 보관.
+// 같은 디렉토리의 다른 사용자 파일은 그대로 남아야 한다.
+func TestSyncBuiltinResources_ClearsLegacyCopiesKeepsUserFiles(t *testing.T) {
 	root := t.TempDir()
 	files, err := embeddedBuiltinFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var legacyAgent, legacyScript string
+	var agent, script builtinFile
 	for _, f := range files {
 		switch {
-		case legacyAgent == "" && strings.HasPrefix(f.rel, "agents/"):
-			legacyAgent = f.rel
-		case legacyScript == "" && strings.HasPrefix(f.rel, "scripts/bash/"):
-			legacyScript = f.rel
+		case agent.rel == "" && strings.HasPrefix(f.rel, "agents/"):
+			agent = f
+		case script.rel == "" && strings.HasPrefix(f.rel, "scripts/bash/"):
+			script = f
 		}
 	}
-	legacy := []string{legacyAgent, legacyScript, "reference/pylon-usage.md"}
-	for _, rel := range legacy {
+	seed := map[string][]byte{
+		agent.rel:  agent.content,              // 내장과 동일한 사본 → 삭제
+		script.rel: []byte("OLD RELEASE COPY"), // 내용이 다름 → 백업
+	}
+	for rel, content := range seed {
 		path := filepath.Join(layout.PylonDir(root), filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("OLD RELEASE COPY"), 0o644); err != nil {
+		if err := os.WriteFile(path, content, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -79,52 +83,72 @@ func TestSyncBuiltinResources_RemovesLegacyCopiesKeepsUserFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, removed, err := syncBuiltinResources(root)
+	_, cleared, err := syncBuiltinResources(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(removed, ",") != strings.Join(legacy, ",") {
-		t.Errorf("removed = %v, want %v", removed, legacy)
+	if len(cleared) != 2 {
+		t.Errorf("cleared = %v, want 2 entries", cleared)
 	}
-	for _, rel := range legacy {
+	for rel := range seed {
 		if _, err := os.Stat(filepath.Join(layout.PylonDir(root), filepath.FromSlash(rel))); !os.IsNotExist(err) {
 			t.Errorf("legacy copy .pylon/%s survived", rel)
 		}
 	}
+	scriptPath := filepath.Join(layout.PylonDir(root), filepath.FromSlash(script.rel))
+	if got, err := os.ReadFile(scriptPath + rootFileBackupSuffix); err != nil || string(got) != "OLD RELEASE COPY" {
+		t.Errorf("differing copy must be backed up: %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(layout.PylonDir(root), filepath.FromSlash(agent.rel)) + rootFileBackupSuffix); !os.IsNotExist(err) {
+		t.Error("identical copy must be deleted, not backed up")
+	}
 	if got, err := os.ReadFile(userAgent); err != nil || string(got) != "mine" {
 		t.Errorf("user agent touched: %q, %v", got, err)
 	}
-	for _, kind := range []string{"scripts", "reference"} {
-		if _, err := os.Stat(layout.ResourceDir(root, kind)); !os.IsNotExist(err) {
-			t.Errorf("emptied built-in-only dir .pylon/%s should be removed", kind)
-		}
+	if _, err := os.Stat(layout.ResourceDir(root, "reference")); !os.IsNotExist(err) {
+		t.Error("emptied built-in-only dir .pylon/reference should be removed")
 	}
 }
 
-// 내장 집합이 바뀌면(digest 불일치) builtin을 통째로 다시 써서, 바이너리에서 빠진
-// 리소스가 남지 않아야 한다. digest가 없는 것(중단된 쓰기)도 같은 경로로 회복된다.
-func TestSyncBuiltinResources_RewritesWhenDigestDiffers(t *testing.T) {
+// builtin은 매번 파일 단위로 맞춘다: 지워지거나 고쳐진 파일은 복구하고, 내장에 없는 파일은
+// 지운다(바이너리에서 빠진 리소스). 이미 맞으면 아무것도 바꾸지 않는다.
+func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 	root := t.TempDir()
 	if _, _, err := syncBuiltinResources(root); err != nil {
 		t.Fatal(err)
 	}
+	common := filepath.Join(layout.ScriptsDir(root), "common.sh")
+	pm := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "pm.md")
 	dropped := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dropped-in-new-release.md")
+	if err := os.Remove(common); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pm, []byte("edited by a session"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(dropped, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(layout.BuiltinDir(root), builtinDigestFile)); err != nil {
-		t.Fatal(err)
-	}
 
-	wrote, _, err := syncBuiltinResources(root)
+	changed, _, err := syncBuiltinResources(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !wrote {
-		t.Error("missing digest must trigger a rewrite")
+	if !changed {
+		t.Error("a damaged builtin must be reported as changed")
+	}
+	if info, err := os.Stat(common); err != nil || info.Mode().Perm()&0o100 == 0 {
+		t.Errorf("deleted script not restored as executable: %v", err)
+	}
+	want, _ := embeddedAgents.ReadFile("agents/pm.md")
+	if got, _ := os.ReadFile(pm); !bytes.Equal(got, want) {
+		t.Error("edited builtin file not restored")
 	}
 	if _, err := os.Stat(dropped); !os.IsNotExist(err) {
-		t.Error("resource absent from the embeds survived the rewrite")
+		t.Error("resource absent from the embeds survived")
+	}
+	if changed, _, err := syncBuiltinResources(root); err != nil || changed {
+		t.Errorf("repaired builtin must be stable: changed=%v err=%v", changed, err)
 	}
 }
 
@@ -779,7 +803,7 @@ func TestReconcileRootAgentFilesReplacesLegacyGuide(t *testing.T) {
 		t.Error("legacy AGENTS.md should be replaced")
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if string(got) != buildAgentsBlock(root, nil) {
+	if string(got) != buildAgentsBlock(nil) {
 		t.Errorf("AGENTS.md not refreshed to the generated block: %.60q", got)
 	}
 }
@@ -789,7 +813,7 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
 		t.Fatal(err)
 	}
-	current := buildAgentsBlock(root, nil) + "\n# 사용자 규칙\n"
+	current := buildAgentsBlock(nil) + "\n# 사용자 규칙\n"
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(current), 0644); err != nil {
 		t.Fatal(err)
 	}

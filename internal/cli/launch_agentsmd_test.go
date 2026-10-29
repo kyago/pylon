@@ -19,8 +19,7 @@ func TestBuildClaudeMDPointerIsImportMarker(t *testing.T) {
 }
 
 func TestBuildAgentsBlockEmbedsManualAndFacts(t *testing.T) {
-	root := t.TempDir()
-	out := buildAgentsBlock(root, []config.ProjectInfo{{Name: "api"}})
+	out := buildAgentsBlock([]config.ProjectInfo{{Name: "api"}})
 	if !strings.HasPrefix(out, agentsBlockBegin+"\n") || !strings.HasSuffix(out, agentsBlockEnd+"\n") {
 		t.Errorf("block must be wrapped in markers: %s", out)
 	}
@@ -31,18 +30,19 @@ func TestBuildAgentsBlockEmbedsManualAndFacts(t *testing.T) {
 	if !strings.Contains(out, strings.TrimSpace(string(manual))) {
 		t.Error("block must carry the embedded manual verbatim")
 	}
-	if !strings.Contains(out, "`"+root+"`") || !strings.Contains(out, "api") {
+	if !strings.Contains(out, "api") {
 		t.Errorf("block should list workspace facts: %s", out)
 	}
-	// 마이그레이션 인식자와 겹치면 새 블록이 레거시 저작 가이드로 오인되어 매번 백업된다.
-	if isAuthoredLegacyBlock([]byte(out)) || strings.Contains(out, bootstrapAgentsMDHeading) {
-		t.Error("block must not match the legacy recognizers")
+	// 생성 블록으로 인식되지 않으면 매 실행 백업되고, 레거시 인식자와 겹치면 오판된다.
+	if !isPylonGeneratedBlock([]byte(out)) || strings.Contains(out, "pylon-usage-version") ||
+		strings.Contains(out, bootstrapAgentsMDHeading) {
+		t.Error("block must be recognized as generated and must not match the legacy recognizers")
 	}
 	// 매뉴얼 본문의 마커 예시가 블록 경계로 파싱되면 안 된다.
 	if s, e, state := findAgentsBlock([]byte(out)); state != agentsBlockComplete || s != 0 || e != len(out) {
 		t.Errorf("block must parse as one complete block: state=%v [%d,%d) of %d", state, s, e, len(out))
 	}
-	if buildAgentsBlock(root, []config.ProjectInfo{{Name: "api"}}) != out {
+	if buildAgentsBlock([]config.ProjectInfo{{Name: "api"}}) != out {
 		t.Error("block must be deterministic")
 	}
 }
@@ -93,7 +93,7 @@ func TestEnsureRootAgentFilesPrependsBlockToUserAgentsMD(t *testing.T) {
 		t.Errorf("pylon block not prepended: %q", nowAgents)
 	}
 	for _, name := range backedUp {
-		if name == "AGENTS.md" {
+		if strings.HasPrefix(name, "AGENTS.md") {
 			t.Errorf("user AGENTS.md must not be backed up/moved aside, got %v", backedUp)
 		}
 	}
@@ -129,7 +129,10 @@ func TestEnsureRootAgentFilesKeepsManagedBlockWithinCodexDefaultLimit(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	end := bytes.Index(got, []byte(agentsBlockEnd))
+	_, end, state := findAgentsBlock(got)
+	if state != agentsBlockComplete {
+		t.Fatalf("managed block not found: %v", state)
+	}
 	if end < 0 || end >= 32*1024 {
 		t.Fatalf("managed block ends outside Codex's default 32KiB limit: %d", end)
 	}
@@ -186,7 +189,7 @@ func TestEnsureRootAgentFilesBacksUpStaleAuthoredAgentsMD(t *testing.T) {
 	if !updated {
 		t.Error("legacy AGENTS.md should be replaced")
 	}
-	if len(backedUp) != 1 || backedUp[0] != "AGENTS.md" {
+	if len(backedUp) != 1 || backedUp[0] != "AGENTS.md"+rootFileBackupSuffix {
 		t.Errorf("stale authored AGENTS.md should be reported as backed up, got %v", backedUp)
 	}
 	got, err := os.ReadFile(layout.RootAgentsPath(root) + rootFileBackupSuffix)
@@ -204,7 +207,7 @@ func TestEnsureRootAgentFilesReplacesOutdatedBlockPreservingUserContent(t *testi
 	root := t.TempDir()
 	userTop := "# 우리 팀 규칙\n블록 밖 내용\n\n"
 	userBottom := "\n# 블록 아래 추가 규칙\n"
-	outdated := buildAgentsBlock(root, []config.ProjectInfo{{Name: "removed-project"}})
+	outdated := buildAgentsBlock([]config.ProjectInfo{{Name: "removed-project"}})
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(userTop+outdated+userBottom), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +222,7 @@ func TestEnsureRootAgentFilesReplacesOutdatedBlockPreservingUserContent(t *testi
 		t.Errorf("pylon-generated block replacement must not back anything up, got %v", backedUp)
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if string(got) != userTop+buildAgentsBlock(root, nil)+userBottom {
+	if string(got) != userTop+buildAgentsBlock(nil)+userBottom {
 		t.Errorf("block not replaced in place: %q", got)
 	}
 	info, err := os.Stat(layout.RootAgentsPath(root))
@@ -280,7 +283,7 @@ func TestEnsureRootAgentFilesToleratesWhitespaceAroundMarkers(t *testing.T) {
 	userTop := "# 우리 팀 규칙\n\n"
 	mangled := userTop +
 		"  " + agentsBlockBegin + " \n" +
-		"<!-- pylon-usage-version: 0 -->\n" + bootstrapAgentsMDHeading + "\n" +
+		"<!-- pylon-usage-version: 0 -->\n" + bootstrapAgentsMDHeading + "\n\n" + bootstrapAgentsMDNotice + "\n" +
 		"\t" + agentsBlockEnd + "\n"
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(mangled), 0644); err != nil {
 		t.Fatal(err)
@@ -299,7 +302,7 @@ func TestEnsureRootAgentFilesToleratesWhitespaceAroundMarkers(t *testing.T) {
 	if !strings.HasPrefix(string(got), userTop) {
 		t.Errorf("user content above the block was destroyed: %q", got)
 	}
-	if string(got) != userTop+buildAgentsBlock(root, nil) {
+	if string(got) != userTop+buildAgentsBlock(nil) {
 		t.Errorf("block not refreshed: %q", got)
 	}
 }
@@ -385,7 +388,7 @@ func TestEnsureRootAgentFilesDoesNotReplaceUnreadableClaudeMD(t *testing.T) {
 	root := t.TempDir()
 	agentsPath := layout.RootAgentsPath(root)
 	claudePath := layout.RootClaudePath(root)
-	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(root, nil)), 0644); err != nil {
+	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(nil)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	original := []byte("# 읽을 수 없는 사용자 CLAUDE.md\n")
@@ -505,7 +508,7 @@ func TestEnsureRootAgentFilesReplacesLegacyGeneratedClaudeMD(t *testing.T) {
 
 func TestEnsureRootAgentFilesBacksUpClaudeMDWithLegacyHeadingOnly(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(root, nil)), 0644); err != nil {
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(nil)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	original := legacyClaudeMDHeading + "\n\n우리 팀이 직접 작성한 규칙\n"
@@ -518,7 +521,7 @@ func TestEnsureRootAgentFilesBacksUpClaudeMDWithLegacyHeadingOnly(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(backedUp) != 1 || backedUp[0] != "CLAUDE.md" {
+	if len(backedUp) != 1 || backedUp[0] != "CLAUDE.md"+rootFileBackupSuffix {
 		t.Fatalf("title-only user CLAUDE.md must be backed up: %v", backedUp)
 	}
 	got, err := os.ReadFile(claudePath + rootFileBackupSuffix)
@@ -559,7 +562,7 @@ func TestBackupIfHandWrittenDoesNotClobber(t *testing.T) {
 
 func TestEnsureRootAgentFilesLeavesCurrentBlockUntouched(t *testing.T) {
 	root := t.TempDir()
-	current := "# 사용자 규칙\n\n" + buildAgentsBlock(root, nil) + "\n# 아래 규칙\n"
+	current := "# 사용자 규칙\n\n" + buildAgentsBlock(nil) + "\n# 아래 규칙\n"
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(current), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +581,7 @@ func TestEnsureRootAgentFilesLeavesCurrentBlockUntouched(t *testing.T) {
 // 블록 안은 pylon 소유다 — 직접 고친 내용은 백업 없이 되돌아간다.
 func TestEnsureRootAgentFilesRevertsEditsInsideBlock(t *testing.T) {
 	root := t.TempDir()
-	edited := strings.Replace(buildAgentsBlock(root, nil), "## 이 워크스페이스", "## 내가 고친 제목", 1)
+	edited := strings.Replace(buildAgentsBlock(nil), "## 정체성과 책임", "## 내가 고친 제목", 1)
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(edited), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +592,7 @@ func TestEnsureRootAgentFilesRevertsEditsInsideBlock(t *testing.T) {
 	if len(backedUp) != 0 {
 		t.Errorf("edits inside the generated block are not backed up, got %v", backedUp)
 	}
-	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != buildAgentsBlock(root, nil) {
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != buildAgentsBlock(nil) {
 		t.Errorf("edit inside the block was not reverted: %q", got)
 	}
 }
@@ -609,18 +612,70 @@ func TestEnsureRootAgentFilesBacksUpAuthoredLegacyBlockOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !updated || len(backedUp) != 1 || backedUp[0] != "AGENTS.md" {
+	if !updated || len(backedUp) != 1 || backedUp[0] != "AGENTS.md"+rootFileBackupSuffix {
 		t.Fatalf("authored legacy block must be backed up and replaced: updated=%v backedUp=%v", updated, backedUp)
 	}
 	if bak, _ := os.ReadFile(layout.RootAgentsPath(root) + rootFileBackupSuffix); string(bak) != original {
 		t.Errorf("backup must hold the original bytes: %q", bak)
 	}
-	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != userTop+buildAgentsBlock(root, nil)+userBottom {
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != userTop+buildAgentsBlock(nil)+userBottom {
 		t.Errorf("block not replaced in place: %q", got)
 	}
 	// 두 번째 실행은 아무것도 하지 않는다 — 백업이 늘어나면 안 된다.
 	updated, backedUp, err = ensureRootAgentFiles(root, nil)
 	if err != nil || updated || len(backedUp) != 0 {
 		t.Errorf("second run must be a no-op: updated=%v backedUp=%v err=%v", updated, backedUp, err)
+	}
+}
+
+// 판정은 "pylon이 만든 블록이 아니면 백업"이다. 이전 방식에서 세션이 스텁 제목을 남긴 채
+// 저작했거나 스탬프를 지운 블록도 저작본이므로 백업 없이 사라지면 안 된다.
+func TestEnsureRootAgentFilesBacksUpAnyNonGeneratedBlock(t *testing.T) {
+	cases := map[string]string{
+		"stub heading kept": "<!-- pylon-usage-version: 5 -->\n" + bootstrapAgentsMDHeading + "\n\n- 세션이 쓴 규칙\n",
+		"stamp removed":     "# 세션이 저작한 가이드\n\n- 규칙\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			original := agentsBlockBegin + "\n" + body + agentsBlockEnd + "\n"
+			if err := os.WriteFile(layout.RootAgentsPath(root), []byte(original), 0644); err != nil {
+				t.Fatal(err)
+			}
+			_, backedUp, err := ensureRootAgentFiles(root, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(backedUp) != 1 {
+				t.Fatalf("non-generated block must be backed up, got %v", backedUp)
+			}
+			if bak, _ := os.ReadFile(layout.RootAgentsPath(root) + rootFileBackupSuffix); string(bak) != original {
+				t.Errorf("backup must hold the original bytes: %q", bak)
+			}
+		})
+	}
+}
+
+// 이미 .pylon-bak이 있으면 새 백업은 .pylon-bak.1에 쓰이고, 보고도 그 이름이어야 한다.
+func TestEnsureRootAgentFilesReportsActualBackupName(t *testing.T) {
+	root := t.TempDir()
+	agentsPath := layout.RootAgentsPath(root)
+	if err := os.WriteFile(agentsPath+rootFileBackupSuffix, []byte("older backup"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	authored := agentsBlockBegin + "\n<!-- pylon-usage-version: 5 -->\n# 저작 가이드\n" + agentsBlockEnd + "\n"
+	if err := os.WriteFile(agentsPath, []byte(authored), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "AGENTS.md" + rootFileBackupSuffix + ".1"
+	if len(backedUp) != 1 || backedUp[0] != want {
+		t.Fatalf("backedUp = %v, want [%s]", backedUp, want)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, want)); string(got) != authored {
+		t.Errorf("%s does not hold the authored guide: %q", want, got)
 	}
 }

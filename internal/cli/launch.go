@@ -187,7 +187,7 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		return err
 	}
 	for _, name := range backedUp {
-		fmt.Fprintf(os.Stderr, "ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+		fmt.Fprintf(os.Stderr, "ℹ 기존 내용을 %s에 백업했습니다.\n", name)
 	}
 
 	// Refresh the pylon-owned .pylon/builtin/ resources (agents, skills, commands,

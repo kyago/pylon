@@ -60,7 +60,9 @@ func runCancel(cmd *cobra.Command, args []string) error {
 			checkpointed = true
 		}
 
-		// Run cleanup script if available
+		// Run cleanup script if available. 업그레이드 후 launch·doctor 전이면 builtin이 아직
+		// 없을 수 있으므로 먼저 맞춘다 (best effort).
+		_, _, _ = syncBuiltinResources(root)
 		cleanupScript := filepath.Join(layout.ScriptsDir(root), "cleanup-pipeline.sh")
 		if _, err := os.Stat(cleanupScript); err == nil {
 			cleanup := exec.Command("bash", cleanupScript, pipelineDir, branch, fmt.Sprintf("%t", checkpointed))

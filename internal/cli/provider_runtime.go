@@ -102,7 +102,7 @@ func prepareCodexWorkspace(root string, _ *config.Config, projects []config.Proj
 		return err
 	}
 	for _, name := range backedUp {
-		fmt.Fprintf(os.Stderr, "ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+		fmt.Fprintf(os.Stderr, "ℹ 기존 내용을 %s에 백업했습니다.\n", name)
 	}
 	// 파이프라인 커맨드를 codex repo 스킬(.agents/skills/)로 노출한다 — claude의
 	// .claude/commands/ 대응물. launch/doctor가 같은 생성기를 공유한다.
@@ -126,7 +126,7 @@ func syncCodexProviderResourcesIfWorkspace(io.Reader, bool) {
 		fmt.Printf("⚠ 루트 에이전트 파일 갱신 실패: %v\n", err)
 	} else {
 		for _, name := range backedUp {
-			fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+			fmt.Printf("ℹ 기존 내용을 %s에 백업했습니다.\n", name)
 		}
 		if updated {
 			fmt.Println("✓ AGENTS.md의 pylon 블록을 갱신했습니다")

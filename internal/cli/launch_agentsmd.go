@@ -33,10 +33,21 @@ func buildClaudeMDPointer() string {
 	return "@AGENTS.md\n"
 }
 
-// bootstrapAgentsMDHeading is the heading of the unauthored stub that releases before
-// the deterministic block wrote. Kept only as a migration recognizer: a stub is pylon's
-// own output and is replaced without a backup. Do not delete as unused.
-const bootstrapAgentsMDHeading = "# pylon 워크스페이스 — 운영 가이드 (자동 생성 부트스트랩)"
+// bootstrapAgentsMDHeading and bootstrapAgentsMDNotice are the heading and the
+// "not yet authored" sentence of the stub that releases before the deterministic block
+// wrote. Kept only as migration recognizers: a block carrying both is pylon's own
+// unauthored output and is replaced without a backup. Do not delete as unused.
+const (
+	bootstrapAgentsMDHeading = "# pylon 워크스페이스 — 운영 가이드 (자동 생성 부트스트랩)"
+	bootstrapAgentsMDNotice  = "이 블록은 아직 이 워크스페이스에 맞게 저작되지 않았습니다."
+)
+
+// agentsManualTitle and agentsFactsHeading frame every block buildAgentsBlock emits;
+// together they identify a block as generated (see isPylonGeneratedBlock).
+const (
+	agentsManualTitle  = "# pylon 워크스페이스 운영 매뉴얼"
+	agentsFactsHeading = "## 이 워크스페이스"
+)
 
 // legacyClaudeMDHeading is the first line the pre-AGENTS.md generator (buildRootCLAUDEMD,
 // removed in this change) wrote into workspace CLAUDE.md. Kept as a migration recognizer:
@@ -55,15 +66,15 @@ func isPylonClaudeMD(data []byte) bool {
 
 // buildAgentsBlock returns the pylon-managed block (markers included): the embedded
 // usage manual verbatim, followed by the workspace facts Go knows. It is a pure
-// function of the binary and the workspace, so every launch rewrites it whenever
-// either changes and no version tracking is needed.
-func buildAgentsBlock(root string, projects []config.ProjectInfo) string {
+// function of the binary and the project list, so every launch rewrites it whenever
+// either changes and no version tracking is needed. The workspace root is left out on
+// purpose: the same directory reached through different paths must not churn the file.
+func buildAgentsBlock(projects []config.ProjectInfo) string {
 	manual, _ := embeddedReference.ReadFile("reference/pylon-usage.md")
 	var b strings.Builder
 	b.WriteString(agentsBlockBegin + "\n")
 	b.WriteString(strings.TrimSpace(string(manual)) + "\n\n")
-	b.WriteString("## 이 워크스페이스\n\n")
-	fmt.Fprintf(&b, "- **워크스페이스 루트**: `%s`\n", root)
+	b.WriteString(agentsFactsHeading + "\n\n")
 	b.WriteString("- **설정**: `.pylon/config.yml` / **도메인 지식**: `.pylon/domain/`\n")
 	b.WriteString("- **에이전트**: `.pylon/builtin/agents/`(내장), `.pylon/agents/`(사용자 추가)\n")
 	if len(projects) > 0 {
@@ -79,12 +90,18 @@ func buildAgentsBlock(root string, projects []config.ProjectInfo) string {
 	return b.String()
 }
 
-// isAuthoredLegacyBlock reports whether a block was written by a session under the
-// pre-deterministic scheme: it carries the old version stamp but is not the
-// unauthored stub. Such a guide is backed up before the block is replaced.
-func isAuthoredLegacyBlock(blockData []byte) bool {
-	return bytes.Contains(blockData, []byte("pylon-usage-version:")) &&
-		!bytes.Contains(blockData, []byte(bootstrapAgentsMDHeading))
+// isPylonGeneratedBlock reports whether a block is pylon's own output — one
+// buildAgentsBlock emitted (possibly edited in place, which is reverted) or the
+// unauthored stub of older releases — and may be replaced without a backup. Anything
+// else, notably a guide a session authored under the old version-stamp scheme, is
+// backed up first: when unsure, keep a copy.
+func isPylonGeneratedBlock(blockData []byte) bool {
+	generated := bytes.Contains(blockData, []byte(agentsManualTitle+"\n")) &&
+		bytes.Contains(blockData, []byte("\n"+agentsFactsHeading+"\n")) &&
+		!bytes.Contains(blockData, []byte("pylon-usage-version:"))
+	stub := bytes.Contains(blockData, []byte(bootstrapAgentsMDHeading)) &&
+		bytes.Contains(blockData, []byte(bootstrapAgentsMDNotice))
+	return generated || stub
 }
 
 type agentsBlockState uint8
@@ -193,26 +210,27 @@ const maxRootFileBackups = 100
 // backupIfHandWritten renames path aside when it exists and was not written by pylon.
 // pylonAuthored decides that from the current content; a file pylon itself produced is
 // replaced in place, so ordinary launches never churn out backups. An existing backup is
-// never clobbered — the next free suffix is used. Reports whether a backup was taken.
-func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, error) {
+// never clobbered — the next free suffix is used. Returns the backup's file name, or ""
+// when no backup was taken.
+func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil // 없으면 백업할 것도 없다
+			return "", nil // 없으면 백업할 것도 없다
 		}
-		return false, fmt.Errorf("%s 읽기 실패: %w", filepath.Base(path), err)
+		return "", fmt.Errorf("%s 읽기 실패: %w", filepath.Base(path), err)
 	}
 	if pylonAuthored(data) {
-		return false, nil
+		return "", nil
 	}
 	dest, err := nextBackupPath(path)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	if err := os.Rename(path, dest); err != nil {
-		return false, fmt.Errorf("%s 백업 실패: %w", filepath.Base(path), err)
+		return "", fmt.Errorf("%s 백업 실패: %w", filepath.Base(path), err)
 	}
-	return true, nil
+	return filepath.Base(dest), nil
 }
 
 // nextBackupPath returns the first free .pylon-bak[.N] path next to path.
@@ -238,7 +256,7 @@ func nextBackupPath(path string) (string, error) {
 // it before the default instruction-size cap. A guide a session authored under the
 // pre-deterministic scheme (old block or pre-block legacy file) is backed up to
 // .pylon-bak before it is replaced. Returns whether AGENTS.md was written, and the
-// names of any files backed up so callers can tell the user.
+// file names of any backups taken so callers can tell the user where to look.
 func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []string, error) {
 	var backedUp []string
 
@@ -269,14 +287,14 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 	claudePath := layout.RootClaudePath(root)
 	// pylon이 쓴 CLAUDE.md는 두 가지뿐이다: 현재의 마커, 그리고 이 변경 이전 워크스페이스에
 	// 남아 있는 하드코딩 프롬프트. 둘 다 pylon 산출물이므로 백업 없이 교체한다.
-	ok, err := backupIfHandWritten(claudePath, func(b []byte) bool {
+	bak, err := backupIfHandWritten(claudePath, func(b []byte) bool {
 		return isPylonClaudeMD(b)
 	})
 	if err != nil {
 		return false, backedUp, err
 	}
-	if ok {
-		backedUp = append(backedUp, filepath.Base(claudePath))
+	if bak != "" {
+		backedUp = append(backedUp, bak)
 	}
 	pointer := []byte(buildClaudeMDPointer())
 	// 이미 마커면 다시 쓰지 않는다 — 매 실행 mtime 갱신으로 파일 워처를 깨우지 않기 위해.
@@ -286,7 +304,7 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		}
 	}
 
-	block := buildAgentsBlock(root, projects)
+	block := buildAgentsBlock(projects)
 	var out string
 	switch {
 	case readErr != nil:
@@ -296,9 +314,9 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		if string(data[s:e]) == block {
 			return false, backedUp, nil // 이미 최신 — mtime을 건드리지 않는다
 		}
-		// 블록만 교체한다 — 블록 밖 사용자 내용은 그대로 둔다. 이전 방식에서 세션이 저작한
-		// 가이드는 되돌릴 수 있도록 파일 전체를 .pylon-bak으로 복사해 둔다.
-		if isAuthoredLegacyBlock(data[s:e]) {
+		// 블록만 교체한다 — 블록 밖 사용자 내용은 그대로 둔다. pylon이 만든 블록이 아니면(이전
+		// 방식에서 세션이 저작한 가이드 등) 되돌릴 수 있도록 파일 전체를 .pylon-bak으로 복사해 둔다.
+		if !isPylonGeneratedBlock(data[s:e]) {
 			dest, err := nextBackupPath(agentsPath)
 			if err != nil {
 				return false, backedUp, err
@@ -310,20 +328,20 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 			if err := fsutil.WriteFileAtomic(dest, data, mode); err != nil {
 				return false, backedUp, fmt.Errorf("AGENTS.md 백업 실패: %w", err)
 			}
-			backedUp = append(backedUp, filepath.Base(agentsPath))
+			backedUp = append(backedUp, filepath.Base(dest))
 		}
 		out = string(data[:s]) + block + string(data[e:])
 	case isLegacyAgentsMD(data):
 		// 블록 도입 이전의 pylon 전체 파일. 저작되지 않은 스텁만 그냥 버린다. 스탬프 유무로
 		// 판단하면 안 된다 — 스탬프를 가진 세션 저작 가이드까지 조용히 사라진다.
-		ok, err = backupIfHandWritten(agentsPath, func(b []byte) bool {
+		bak, err = backupIfHandWritten(agentsPath, func(b []byte) bool {
 			return strings.Contains(string(b), bootstrapAgentsMDHeading)
 		})
 		if err != nil {
 			return false, backedUp, err
 		}
-		if ok {
-			backedUp = append(backedUp, filepath.Base(agentsPath))
+		if bak != "" {
+			backedUp = append(backedUp, bak)
 		}
 		out = block
 	default:

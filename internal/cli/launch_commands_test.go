@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 func TestPipelineCommandUsesRepoOwnedBranches(t *testing.T) {
@@ -81,15 +82,16 @@ func TestExecuteDoesNotReferenceRemovedStateStore(t *testing.T) {
 	}
 }
 
-// 새 릴리스에서 바뀐 커맨드는 이번 실행에서 바로 .claude/commands/까지 반영되어야 한다
-// (리소스 동기화가 desired 계산보다 먼저 돌아야 한다는 순서 계약).
-func TestGenerateClaudeDir_PropagatesRefreshedCommand(t *testing.T) {
+// 내장 이름의 사용자 커맨드(이전 릴리스가 남긴 낡은 사본)는 내장 커맨드를 가리지 못하고,
+// 같은 실행에서 .pylon-bak으로 비켜난다.
+func TestGenerateClaudeDir_LegacyCommandCopyNeverShadowsBuiltin(t *testing.T) {
 	root := t.TempDir()
-	pylonCmds := filepath.Join(root, ".pylon", "commands")
+	pylonCmds := layout.ResourceDir(root, "commands")
 	if err := os.MkdirAll(pylonCmds, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pylonCmds, "pl-pipeline.md"), []byte("OLD VERSION\n"), 0644); err != nil {
+	legacy := filepath.Join(pylonCmds, "pl-pipeline.md")
+	if err := os.WriteFile(legacy, []byte("OLD VERSION\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,12 +99,7 @@ func TestGenerateClaudeDir_PropagatesRefreshedCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	claudeCmds := filepath.Join(root, ".claude", "commands", "pl")
-	// 워크스페이스에 없던 커맨드도 같은 실행에서 설치·반영된다.
-	if _, err := os.Stat(filepath.Join(claudeCmds, "verify.md")); err != nil {
-		t.Fatalf("새 커맨드가 같은 실행에서 반영되지 않았다: %v", err)
-	}
-	got, err := os.ReadFile(filepath.Join(claudeCmds, "pipeline.md"))
+	got, err := os.ReadFile(filepath.Join(root, ".claude", "commands", "pl", "pipeline.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +108,13 @@ func TestGenerateClaudeDir_PropagatesRefreshedCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != string(want) {
-		t.Fatal("낡은 커맨드가 같은 실행에서 최신 내용으로 반영되지 않았다")
+		t.Fatal("낡은 사본이 내장 커맨드를 가렸다")
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatal("내장 이름의 낡은 사본이 사용자 디렉토리에 남았다")
+	}
+	if bak, err := os.ReadFile(legacy + rootFileBackupSuffix); err != nil || string(bak) != "OLD VERSION\n" {
+		t.Fatalf("내용이 다른 사본은 백업되어야 한다: %q, %v", bak, err)
 	}
 }
 

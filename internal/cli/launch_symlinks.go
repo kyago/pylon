@@ -149,7 +149,16 @@ func removeStaleAgentLinks(claudeAgentsDir string, expected map[string]bool) err
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		// 관리 대상은 심링크와 스킬을 주입해 만든 파일이다 — 그 밖의 사용자 파일은 남긴다.
+		managed := info.Mode()&os.ModeSymlink != 0
+		if !managed && info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			managed = strings.Contains(string(data), skillInjectionMarker)
+		}
+		if managed {
 			if err := os.Remove(path); err != nil {
 				return err
 			}

@@ -40,7 +40,7 @@ func TestGenerateClaudeDirKeepsUserRulesAndLinksBuiltinAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if string(got) != buildAgentsBlock(root, nil)+userRules {
+	if string(got) != buildAgentsBlock(nil)+userRules {
 		t.Errorf("user rules must survive behind the generated block: %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(layout.ClaudeAgentsDir(root), "architect.md")); err != nil {

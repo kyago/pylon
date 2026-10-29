@@ -363,6 +363,11 @@ role: Active Agent
 	// Create a stale symlink in .claude/agents/ (agent was deleted from .pylon/agents/)
 	staleLink := filepath.Join(claudeAgentsDir, "deleted-agent.md")
 	os.Symlink(filepath.Join("..", "..", ".pylon", "agents", "deleted-agent.md"), staleLink)
+	// 스킬 주입으로 만든 일반 파일도 원본이 사라지면 관리 대상이다. 마커 없는 사용자 파일은 남는다.
+	staleInjected := filepath.Join(claudeAgentsDir, "dropped-builtin.md")
+	os.WriteFile(staleInjected, []byte("# x\n\n"+skillInjectionMarker+"\n"), 0644)
+	userOwned := filepath.Join(claudeAgentsDir, "hand-written.md")
+	os.WriteFile(userOwned, []byte("# mine\n"), 0644)
 
 	cfg := &config.Config{
 		Skills: config.SkillsConfig{
@@ -380,6 +385,12 @@ role: Active Agent
 	// Stale symlink should be removed
 	if _, err := os.Lstat(staleLink); !os.IsNotExist(err) {
 		t.Error("stale symlink should be removed")
+	}
+	if _, err := os.Lstat(staleInjected); !os.IsNotExist(err) {
+		t.Error("stale injected agent file should be removed")
+	}
+	if _, err := os.Lstat(userOwned); err != nil {
+		t.Error("hand-written agent file must be kept")
 	}
 
 	// Active agent should still exist

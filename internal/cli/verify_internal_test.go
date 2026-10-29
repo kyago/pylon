@@ -11,6 +11,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/criteria"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 func TestExecuteVerification_RunsConfiguredStepsInOrder(t *testing.T) {
@@ -418,7 +419,7 @@ func TestBuiltInEvaluatorAndInvestigatorPolicies(t *testing.T) {
 func TestRunVerificationScript_DelegatesFromResolvedGitRoot(t *testing.T) {
 	root := t.TempDir()
 	pylonDir := filepath.Join(root, ".pylon")
-	scriptsDir := filepath.Join(pylonDir, "scripts", "bash")
+	scriptsDir := layout.ScriptsDir(root)
 	projectDir := filepath.Join(root, "project")
 	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
 		t.Fatal(err)

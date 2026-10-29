@@ -17,16 +17,19 @@ The workspace root prompt is **generated deterministically from the embedded man
 (`internal/cli/launch_agentsmd.go`) writes workspace `CLAUDE.md` as a deterministic `@AGENTS.md` import
 marker on every launch. Inside `AGENTS.md`, pylon owns only the **managed block** delimited by
 `<!-- pylon:begin -->` / `<!-- pylon:end -->`: `buildAgentsBlock` fills it with the embedded manual
-(`internal/cli/reference/pylon-usage.md`) verbatim plus workspace facts Go knows (root, projects), and the
+(`internal/cli/reference/pylon-usage.md`) verbatim plus workspace facts Go knows (project list — never the
+root path, which would churn the file when one directory is reached through different paths), and the
 block is rewritten whenever its bytes differ — there is no version stamp and no session authoring. Edits
 inside the block are reverted; content outside the block is user-owned and never modified, and a user's own
 `AGENTS.md` (no block) keeps its content with the block prepended so Codex sees it within the default
 instruction size limit (keep the manual well under 32KiB). A malformed marker pair (missing, reversed, or
 duplicated whole-line markers) aborts launch/init/doctor before any file is touched; uninstall skips the
-file with a warning and proceeds. Releases before this scheme had sessions author the block under a
-`<!-- pylon-usage-version: N -->` stamp; such an authored block (or a pre-block legacy whole file) is copied
-to `AGENTS.md.pylon-bak` once before it is replaced. The stamp regex and the old stub heading survive only as
-these migration recognizers — the generated block must never contain either. To change what the root agent
+file with a warning and proceeds. A block is replaced without a backup only when `isPylonGeneratedBlock`
+recognizes it as pylon's own output (this generator's manual title + facts heading and no stamp, or the old
+unauthored stub's heading **and** notice sentence); anything else — notably a guide a session authored under
+the old `<!-- pylon-usage-version: N -->` scheme — is copied to the next free `AGENTS.md.pylon-bak[.N]` first,
+and callers report that exact file name. The stamp regex and old stub strings survive only as these
+migration recognizers — the generated block must never contain them. To change what the root agent
 is told, edit the manual; the next launch propagates it. Go never calls an LLM.
 
 ## Build / test / lint
@@ -79,15 +82,18 @@ CLAUDE.md, `.claude/agents/` symlinks into `.pylon/builtin/agents/` and `.pylon/
 `runLaunch` also appends `.claude/`, `CLAUDE.md`, `AGENTS.md`, `.pylon/logs/`, `.pylon/builtin/` to `.gitignore`.
 
 **Ownership contract for `.pylon/` resources** (`syncBuiltinResources` in `doctor.go`, shared by launch,
-init, doctor and sync-agents): the embedded agents, skills, commands, scripts and manual live in
-**`.pylon/builtin/`** (git-ignored), which is pylon-owned. A digest of the embedded set is written last as
-`.pylon/builtin/.digest`; when it differs (new binary, interrupted write) the whole directory is wiped and
-rewritten, so adding, changing **or deleting** a built-in reaches existing workspaces with no migration step
-(`.claude/commands/`, `.claude/agents/` links and Codex pointer skills prune the dropped entries).
+init, doctor, sync-agents and cancel): the embedded agents, skills, commands, scripts and manual live in
+**`.pylon/builtin/`** (git-ignored), which is pylon-owned. Every sync compares each file with the embeds,
+rewrites missing or differing ones (restoring script exec bits) and deletes files the embeds no longer have —
+never a wholesale wipe, so concurrent launches converge instead of racing and a damaged builtin heals on the
+next launch or doctor. Adding, changing **or deleting** a built-in therefore reaches existing workspaces with
+no migration step (`.claude/commands/`, `.claude/agents/` links and injected files, and Codex pointer skills
+prune the dropped entries).
 The user-owned `.pylon/{agents,skills,commands}/` hold only user resources (`pylon add-agent` /
-`pylon add-skill` or a new filename). **A built-in name always wins**: a same-named file there is a copy
-left by releases that synced into `.pylon/<kind>/` directly and is removed on every sync (`pylon doctor`
-lists them; the launch path's stderr notice is hidden by the TUI). Readers merge both sources —
+`pylon add-skill` or a new filename; `scaffoldMarkdownResource` refuses built-in names). **A built-in name
+always wins**: a same-named file there (usually a copy left by releases that synced into `.pylon/<kind>/`
+directly) is cleared on every sync — deleted when byte-identical to the embed, otherwise moved aside to
+`<name>.pylon-bak[.N]` (`pylon doctor` lists each; the launch path's stderr notice is hidden by the TUI). Readers merge both sources —
 `workspaceAgents`, `loadAgentSkillMap`, `buildDesiredClaudeCommands`, `generateCodexSkills` — built-in
 first. Markdown resources address built-ins as `.pylon/builtin/...` and user agents as `.pylon/agents/...`.
 Config (`config.yml`), domain knowledge, memory, history and runtime state are user data and are never

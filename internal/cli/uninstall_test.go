@@ -190,7 +190,7 @@ func TestUninstallStripsPylonBlockKeepingUserContent(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, ".pylon"), 0755)
 	user := "# 우리 팀 규칙\n\n"
 	agentsPath := layout.RootAgentsPath(root)
-	os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(root, nil)), 0644)
+	os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(nil)), 0644)
 
 	plan, err := buildUninstallPlan(root, false, false)
 	if err != nil {
@@ -338,7 +338,7 @@ func TestExecuteUninstallRechecksAgentsMDBeforeDeleting(t *testing.T) {
 		t.Fatal(err)
 	}
 	agentsPath := layout.RootAgentsPath(root)
-	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(root, nil)), 0644); err != nil {
+	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(nil)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := buildUninstallPlan(root, false, false)
@@ -347,7 +347,7 @@ func TestExecuteUninstallRechecksAgentsMDBeforeDeleting(t *testing.T) {
 	}
 
 	user := "# 확인 중 추가된 사용자 규칙\n\n"
-	if err := os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(root, nil)), 0644); err != nil {
+	if err := os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(nil)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := executeUninstall(root, plan); err != nil {
@@ -407,7 +407,7 @@ func TestBuildUninstallPlan(t *testing.T) {
 
 	// Create the generated root agent files
 	os.WriteFile(layout.RootClaudePath(root), []byte("@AGENTS.md\n"), 0644)
-	os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(root, nil)), 0644)
+	os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(nil)), 0644)
 
 	// Create .gitignore
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("# pylon\n.pylon/runtime/\n"), 0644)
