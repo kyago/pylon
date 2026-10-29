@@ -20,15 +20,21 @@ description: "Pylon 파이프라인 실행 — 요구사항 → 분석 → 설�
 root pipeline은 요구사항과 repo 목록을 묶는 논리 run이며 `branch`가 없습니다(전역 branch를 만들거나
 `.branch`를 읽지 않습니다).
 
-요구사항은 보통 대화에서 이미 정해진 뒤 시작됩니다. 인자가 비었거나 "작업 착수해" 같은 지시뿐이면, 대화에서
-확정된 내용 — 이슈 번호·링크와 본문, 사용자가 답한 결정, 범위 밖으로 정한 것 — 을 정리한 텍스트를
-`$ARGUMENTS` 자리에 넣습니다. `requirement.md`가 그 내용이 됩니다.
+이 명령에 붙인 인자(비어 있을 수 있음): $ARGUMENTS
+
+요구사항은 보통 대화에서 이미 정해진 뒤 시작됩니다. 인자와 대화에서 확정된 내용 — 이슈 번호·링크와 본문, 사용자가
+답한 결정, 범위 밖으로 정한 것 — 을 합쳐 요구사항 본문을 정리합니다. 본문은 따옴표·백틱·`$`가 들어 있어도 그대로
+남도록 따옴표 친 heredoc으로 `requirement.md`에 쓰고, 초기화 스크립트에는 영문·숫자 위주의 짧은 제목만 넘깁니다:
 
 ```bash
-INIT_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$ARGUMENTS")
+TITLE='<짧은 제목, 예: wjpnc-api-189-pos-mchul-org-columns>'
+INIT_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$TITLE")
 PIPELINE_ID=$(echo "$INIT_RESULT" | jq -r '.pipeline_id')
 ROOT_PIPELINE_DIR=$(echo "$INIT_RESULT" | jq -r '.pipeline_dir')
 PIPELINE_DIR="$ROOT_PIPELINE_DIR"
+cat > "$ROOT_PIPELINE_DIR/requirement.md" <<'REQUIREMENT_EOF'
+<요구사항 본문>
+REQUIREMENT_EOF
 ```
 
 ### Step 2: 요구사항 분석 + 도메인 라우팅
@@ -74,7 +80,7 @@ PR은 이 repo sub-pipeline만 소유합니다.
 
 ```bash
 jq -r '.repos[].path' "$ROOT_PIPELINE_DIR/repos.json" | while IFS= read -r REPO; do
-  SUB_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$ARGUMENTS" \
+  SUB_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$PIPELINE_ID" \
     --git-root "$REPO" \
     --pipeline-dir "$ROOT_PIPELINE_DIR")
   REPO_ID=$(echo "$SUB_RESULT" | jq -r '.repo_id')
@@ -308,7 +314,9 @@ root `status.json`을 인계 상태로 바꿉니다:
 
 ```bash
 STATUS_TMP=$(mktemp "$ROOT_PIPELINE_DIR/.status.XXXXXX")
-jq '.stage = "verified" | .status = "awaiting_cleanup"' "$ROOT_PIPELINE_DIR/status.json" > "$STATUS_TMP"
+jq '.stage = "verified" | .status = "awaiting_cleanup"
+    | if .sub_pipelines then .sub_pipelines |= map(.status = "awaiting_cleanup") else . end' \
+  "$ROOT_PIPELINE_DIR/status.json" > "$STATUS_TMP"
 mv "$STATUS_TMP" "$ROOT_PIPELINE_DIR/status.json"
 ```
 

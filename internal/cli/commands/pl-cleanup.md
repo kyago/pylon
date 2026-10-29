@@ -18,7 +18,8 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
 - 대화에서 커밋·PR·이슈를 만든 repo와 번호·URL, 사용한 브랜치·워크트리
 - 미커밋 변경(`git status`)과 미푸시 커밋(upstream이 있으면 `git log @{u}..HEAD`, 없으면 `git log origin/<base>..HEAD`)
 - `.pylon/runtime/` 아래의 run 전부: root run(`status.json`의 `scope`가 `root`), repo-scope run, `status.json`이 없는
-  디렉토리. 대화에 pipeline id가 나온 run이 **이번 세션의 run**입니다. `status`가 `awaiting_cleanup`이면
+  디렉토리. root run 안의 `repos/<id>/`는 그 run의 일부이고, `pylon init`이 만드는 `memory/`·`sessions/`는 run이
+  아닙니다. 대화에 pipeline id가 나온 run이 **이번 세션의 run**입니다. `status`가 `awaiting_cleanup`이면
   `/pl:pipeline`이 끝나 마감을 기다리는 run입니다
 
 메모리는 프로젝트별로 저장되므로 대상은 정식 프로젝트 이름(`/pl:project-list`, `.pylon/config.yml`의
@@ -44,9 +45,11 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
   - `skipped` 없이 `"ok": false` + `checks` — 실제 검증이 돌아 실패한 경우입니다. `verify.yml`이 없어도 `go.mod`가
     있으면 기본 `go build/vet/test`가 돌므로 **진짜 실패**입니다. 실패 항목을 보고하고, 그 repo의 run 마감과
     브랜치 정리는 하지 않습니다.
-- 이미 PR로 머지된 변경은 그 PR의 체크 결과(`gh pr checks <번호>`)를 근거로 씁니다.
-- 파이프라인 run의 `verification.json`·`evaluator-result.json`도 근거입니다. 그 뒤에 바뀐 코드는 위 두 방법으로
-  확인합니다.
+- 이미 PR로 머지된 변경은 다음을 근거로 씁니다:
+  - 이 대화에서 돌린 검증 출력. 검증을 돌린 커밋이 머지된 PR의 head(`gh pr view <번호> --json headRefOid`)와 같을
+    때만 근거가 됩니다.
+  - PR의 체크 결과(`gh pr checks <번호>`). "no checks reported"는 실패가 아니라 "PR 체크 없음"으로 보고합니다.
+  - 파이프라인 run의 `verification.json`·`evaluator-result.json`. 그 뒤에 바뀐 코드는 위 두 근거로 확인합니다.
 
 세션의 결과물마다 확인한 것과 확인하지 않은 것을 나눕니다. 배포 결과, 마이그레이션 적용, 운영 데이터 반영처럼
 코드 밖의 결과는 읽기 전용으로 확인할 수단(배포 run 로그, 조회 쿼리, 상태 API)이 있으면 실제로 조회해 확인하고,
@@ -93,11 +96,14 @@ pylon mem store --project <프로젝트> --category decision --key <슬러그> -
 
 **마감 조건.** 하나라도 맞지 않으면 run을 그대로 두고 이유를 보고합니다(머지 전이면 "머지 후 다시 `/pl:cleanup`").
 - repo가 있는 run: 모든 `sub_pipelines[]`의 작업이 머지되었습니다(판정은 Step 6의 머지 확인 규칙). sub의 `branch`에
-  `base_revision` 이후 커밋이 없으면(`git rev-list --count <base_revision>..<branch>`가 0) 작업은 다른 브랜치에서
-  했으므로, 대화에서 그 repo에 쓴 브랜치나 PR head로 판정합니다. sub의 `repo`가 이미 지운 워크트리 경로면 그
-  워크트리를 만든 프로젝트 repo(대화 기록, 워크트리 이름)에서 판정합니다. 판정할 repo를 찾지 못하면 run을 남깁니다.
-  사용자가 포기를 명시한 run(`PHASE=cancelled`)은 머지 조건을 적용하지 않습니다.
-- 그 sub의 워크트리에 미커밋 변경이 없습니다 — 정리 스크립트는 run 브랜치의 워크트리를 강제로 제거합니다.
+  `base_revision` 이후 커밋이 없으면(`git rev-list --count <base_revision>..<branch>`가 0) 대화에서 그 repo에 쓴
+  브랜치나 PR head로 판정합니다. 대화에도 그 repo에 연결된 브랜치·PR이 없으면 그 sub는 "변경 없음"이며 마감을
+  막지 않습니다. sub의 `repo`가 이미 지운 워크트리 경로면 그 워크트리를 만든 프로젝트 repo(대화 기록, 워크트리
+  이름)에서 판정합니다. 판정할 repo를 찾지 못하면 run을 남깁니다.
+- 사용자가 정리를 요청한 포기 run(`PHASE=cancelled`)과 실패 run(`PHASE=failed`)은 머지 조건을 적용하지 않습니다.
+  머지되지 않은 브랜치는 Step 6에서 지우지 않고 보고에 남깁니다.
+- 그 sub의 워크트리(`git worktree list`에서 run 브랜치에 있는 것)에 미커밋·추적 안 된 파일이 없습니다(`git status
+  --porcelain`). 정리 스크립트도 그런 워크트리는 지우지 않고 출력의 `kept`에 남깁니다. `kept`가 있으면 보고합니다.
 - repo가 없는 비소프트웨어 run: 체크포인트는 `final.md`·`seo.md` 같은 산출물을 보존하지 않으므로, 사용자가 정한
   위치에 저장했거나 커밋한 것을 확인했을 때만 마감합니다. 확인하지 못하면 runtime 경로를 알려 주고 남깁니다.
 
@@ -113,11 +119,12 @@ pylon mem store --project <프로젝트> --category decision --key <슬러그> -
 ```bash
 ROOT_PIPELINE_DIR=.pylon/runtime/<pipeline-id>
 PIPELINE_ID=$(basename "$ROOT_PIPELINE_DIR")
-PHASE=completed   # history에 이미 있는 terminal phase로 정리만 하는 run은 그 phase, 사용자가 포기한 run은 cancelled
+PHASE=completed   # 이미 terminal 체크포인트가 있는 run은 그 phase, 포기한 run은 cancelled, 실패 run은 failed
 ```
 
 `awaiting_cleanup` run이나 사용자가 포기한 run은 상태를 바꾼 뒤 체크포인트를 만듭니다. 같은 phase를 다시
-만들면 최신 상태로 교체됩니다. history에 그 phase의 체크포인트가 이미 있고 마감만 남은 run은 이 블록을 건너뜁니다:
+만들면 최신 상태로 교체됩니다. history에 그 phase의 체크포인트가 이미 있는 run(실패 run은 실패 기록 때 `failed`
+체크포인트가 만들어진다)은 이 블록을 건너뜁니다:
 
 ```bash
 STATUS_TMP=$(mktemp "$ROOT_PIPELINE_DIR/.status.XXXXXX")
@@ -162,7 +169,9 @@ done
 - 로컬 브랜치: `git branch -D <branch>`.
 - 원격 브랜치: `git ls-remote --heads origin <branch>`에 있고, `origin/<branch>`도 머지 확인 규칙을 통과할 때만
   `git push origin --delete <branch>`. 원격에 로컬보다 앞선 커밋이 있으면 남깁니다.
-- 기본 브랜치(`git.default_base`)와 보호 브랜치(`main`, `master`, `develop`, `dev`)는 건드리지 않습니다.
+- 기본 브랜치(`git.default_base`, 원격 기본 브랜치 `git symbolic-ref refs/remotes/origin/HEAD`)와 보호 브랜치(`main`,
+  `master`, `develop`, `dev`)는 건드리지 않습니다. 열린 PR의 base인 브랜치(`gh pr list --base <branch> --state open`이
+  비어 있지 않음)도 지우지 않습니다.
 
 머지되지 않았거나 머지를 확인할 수 없는 브랜치는 남기고 이유를 보고합니다.
 

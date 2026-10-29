@@ -185,6 +185,57 @@ func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	assertBranchMissing(t, repo, agentBranch)
 }
 
+// 정리 스크립트는 run 브랜치의 워크트리를 강제로 지우지 않는다. 미커밋·추적 안 된 파일이 있는 워크트리는
+// git이 거부하므로 남기고 kept로 보고한다 — 머지 후 남은 작업이 사라지지 않게.
+func TestCleanupPipelineKeepsDirtyRunWorktrees(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, base := initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "keep dirty worktree")
+	sub := runInitPipeline(t, workspace, "keep dirty worktree", "--git-root", "service-a", "--pipeline-dir", root.PipelineDir)
+	runPipelineGit(t, repo, "checkout", base) // detached 메인 체크아웃도 스크립트를 멈추지 않아야 한다
+
+	dirty := filepath.Join(workspace, "wt-dirty")
+	runPipelineGit(t, repo, "worktree", "add", dirty, sub.Branch)
+	if err := os.WriteFile(filepath.Join(dirty, "scratch.txt"), []byte("wip\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	clean := filepath.Join(workspace, "wt-clean")
+	runPipelineGit(t, repo, "worktree", "add", "-b", sub.Branch+"--worker", clean, base)
+
+	if _, err := history.NewManager(workspace).Checkpoint(root.PipelineID, history.PhaseCompleted); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(workspace, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-o", filepath.Join(binDir, "pylon"), "./cmd/pylon")
+	build.Dir = repoRoot
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build pylon: %v\n%s", err, output)
+	}
+	cmd := exec.Command(filepath.Join(layout.ScriptsDir(workspace), "cleanup-pipeline.sh"), sub.PipelineDir, "--terminal-phase", "completed")
+	cmd.Dir = workspace
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cleanup failed: %v\n%s", err, output)
+	}
+	if got, err := os.ReadFile(filepath.Join(dirty, "scratch.txt")); err != nil || string(got) != "wip\n" {
+		t.Errorf("dirty worktree must be kept: %q, %v\n%s", got, err, output)
+	}
+	if !strings.Contains(string(output), "kept") || !strings.Contains(string(output), "wt-dirty") {
+		t.Errorf("kept worktree must be reported: %s", output)
+	}
+	if _, err := os.Stat(clean); !os.IsNotExist(err) {
+		t.Errorf("clean worktree must be removed: %v\n%s", err, output)
+	}
+}
+
 func TestMergeBranchesUsesOwningRepo(t *testing.T) {
 	workspace := setupPipelineScriptWorkspace(t)
 	repoA, _ := initGitRepo(t, workspace, "service-a")
