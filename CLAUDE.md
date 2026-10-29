@@ -93,7 +93,12 @@ The user-owned `.pylon/{agents,skills,commands}/` hold only user resources (`pyl
 `pylon add-skill` or a new filename; `scaffoldMarkdownResource` refuses built-in names). **A built-in name
 always wins**: a same-named file there (usually a copy left by releases that synced into `.pylon/<kind>/`
 directly) is cleared on every sync — deleted when byte-identical to the embed, otherwise moved aside to
-`<name>.pylon-bak[.N]` (`pylon doctor` lists each; the launch path's stderr notice is hidden by the TUI). Readers merge both sources —
+`<name>.pylon-bak[.N]` (`pylon doctor` lists each; the launch path's stderr notice is hidden by the TUI). The same
+rule covers **retired built-ins**: `retiredBuiltins` (`doctor.go`) maps each removed agent/skill name to the sha256
+of its last shipped content, so an untouched copy in `.pylon/<kind>/` is deleted and an edited one is backed up
+(`pylon add-agent`/`add-skill` refuse those names). When a built-in is removed, add its name and hash there.
+`pylon doctor` also rewrites the pylon hook groups in `.claude/settings.json` from the embedded `hooks.json`, as
+launch does. Readers merge both sources —
 `workspaceAgents`, `loadAgentSkillMap`, `buildDesiredClaudeCommands`, `generateCodexSkills` — built-in
 first. Markdown resources address built-ins as `.pylon/builtin/...` and user agents as `.pylon/agents/...`.
 Config (`config.yml`), domain knowledge, memory, history and runtime state are user data and are never
