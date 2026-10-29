@@ -776,6 +776,28 @@ func TestMigrateRuntimeBackend_NoopWhenConfigMissing(t *testing.T) {
 	}
 }
 
+func TestStripLegacyRuntimeEnv(t *testing.T) {
+	if got := StripLegacyRuntimeEnv(nil); got != nil {
+		t.Fatalf("nil env = %v, want nil", got)
+	}
+	env := map[string]string{
+		"CLAUDE_CODE_EFFORT_LEVEL":        "high",
+		"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
+		"MY_VAR":                          "keep",
+	}
+	got := StripLegacyRuntimeEnv(env)
+	if len(got) != 1 || got["MY_VAR"] != "keep" {
+		t.Fatalf("stripped = %v, want only MY_VAR", got)
+	}
+	if len(env) != 3 {
+		t.Fatalf("input map must not be mutated: %v", env)
+	}
+	custom := map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "max", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70"}
+	if got := StripLegacyRuntimeEnv(custom); len(got) != 2 || got["CLAUDE_CODE_EFFORT_LEVEL"] != "max" || got["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] != "70" {
+		t.Fatalf("custom values must stay, got %v", got)
+	}
+}
+
 func TestMigrateRuntimeEnvDefaults(t *testing.T) {
 	write := func(t *testing.T, content string) string {
 		t.Helper()

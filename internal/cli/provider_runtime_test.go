@@ -82,6 +82,9 @@ runtime:
   provider: provider-b
   effort: max
   model: provider-b-large
+  env:
+    CLAUDE_CODE_EFFORT_LEVEL: high
+    MY_VAR: keep
   permission_mode: default
 `), 0644); err != nil {
 		t.Fatal(err)
@@ -147,6 +150,10 @@ runtime:
 	}
 	if adapter.lastSpec.Effort != "max" || adapter.lastSpec.Model != "provider-b-large" || adapter.lastSpec.PermissionMode != "sandbox" {
 		t.Fatalf("interactive spec = %+v", adapter.lastSpec)
+	}
+	// 구버전 기본 env 고정값은 config.yml을 고치지 않고 launch에서 걸러낸다.
+	if !reflect.DeepEqual(adapter.lastSpec.EnvironmentOverride, map[string]string{"MY_VAR": "keep"}) {
+		t.Fatalf("environment override = %v", adapter.lastSpec.EnvironmentOverride)
 	}
 }
 

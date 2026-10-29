@@ -238,6 +238,25 @@ var legacyRuntimeEnvDefaults = []struct{ key, value string }{
 	{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "80"},
 }
 
+// StripLegacyRuntimeEnv returns a copy of env without entries that still hold the
+// old pylon-written defaults, so launch stops pinning effort before doctor migrates
+// config.yml. 사용자가 바꾼 값은 그대로 둔다. nil이면 nil을 반환한다.
+func StripLegacyRuntimeEnv(env map[string]string) map[string]string {
+	if env == nil {
+		return nil
+	}
+	stripped := make(map[string]string, len(env))
+	for key, value := range env {
+		stripped[key] = value
+	}
+	for _, legacy := range legacyRuntimeEnvDefaults {
+		if stripped[legacy.key] == legacy.value {
+			delete(stripped, legacy.key)
+		}
+	}
+	return stripped
+}
+
 // MigrateRuntimeEnvDefaults removes runtime.env entries whose value still equals
 // the old pylon-written default; 사용자가 바꾼 값은 남긴다. env가 비면 키째 지운다.
 // MigrateRuntimeBackend와 같은 방식(yaml.Node 편집)으로 주석과 순서를 보존한다.
