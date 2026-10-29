@@ -8,7 +8,8 @@ description: "파이프라인 상태 조회"
 
 ## 실행
 
-1. `.pylon/runtime/` 아래의 파이프라인 디렉토리를 탐색합니다. root run 안의 `repos/<id>/`는 그 run의 일부로 함께 보여 주고,
+1. `.pylon/runtime/` 아래의 파이프라인 디렉토리를 탐색합니다. root run 안의 `repos/<id>/`는 그 run의 일부로 함께 보여 주되
+   상태는 root run의 `status`를 따르고,
    `memory/`·`sessions/`는 run이 아니므로 건너뜁니다
 2. 각 파이프라인의 `status.json`을 읽습니다
 3. 산출물 존재 여부로 진행 단계를 판단합니다:

@@ -24,10 +24,11 @@ root pipeline은 요구사항과 repo 목록을 묶는 논리 run이며 `branch`
 
 요구사항은 보통 대화에서 이미 정해진 뒤 시작됩니다. 인자와 대화에서 확정된 내용 — 이슈 번호·링크와 본문, 사용자가
 답한 결정, 범위 밖으로 정한 것 — 을 합쳐 요구사항 본문을 정리합니다. 본문은 따옴표·백틱·`$`가 들어 있어도 그대로
-남도록 따옴표 친 heredoc으로 `requirement.md`에 쓰고, 초기화 스크립트에는 영문·숫자 위주의 짧은 제목만 넘깁니다:
+남도록 따옴표 친 heredoc으로 `requirement.md`에 쓰고, 초기화 스크립트에는 짧은 제목만 넘깁니다. 제목은 run id에
+들어가므로 영문 소문자·숫자·하이픈만 씁니다:
 
 ```bash
-TITLE='<짧은 제목, 예: wjpnc-api-189-pos-mchul-org-columns>'
+TITLE='<짧은 제목, 예: api-123-add-group-code>'
 INIT_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$TITLE")
 PIPELINE_ID=$(echo "$INIT_RESULT" | jq -r '.pipeline_id')
 ROOT_PIPELINE_DIR=$(echo "$INIT_RESULT" | jq -r '.pipeline_dir')

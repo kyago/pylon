@@ -18,7 +18,8 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
 - 대화에서 커밋·PR·이슈를 만든 repo와 번호·URL, 사용한 브랜치·워크트리
 - 미커밋 변경(`git status`)과 미푸시 커밋(upstream이 있으면 `git log @{u}..HEAD`, 없으면 `git log origin/<base>..HEAD`)
 - `.pylon/runtime/` 아래의 run 전부: root run(`status.json`의 `scope`가 `root`), repo-scope run, `status.json`이 없는
-  디렉토리. root run 안의 `repos/<id>/`는 그 run의 일부이고, `pylon init`이 만드는 `memory/`·`sessions/`는 run이
+  디렉토리. root run 안의 `repos/<id>/`는 그 run의 일부이며 상태는 root run의 `status`를 따르고, `pylon init`이 만드는
+  `memory/`·`sessions/`는 run이
   아닙니다. 대화에 pipeline id가 나온 run이 **이번 세션의 run**입니다. `status`가 `awaiting_cleanup`이면
   `/pl:pipeline`이 끝나 마감을 기다리는 run입니다
 
@@ -169,7 +170,8 @@ done
 - 로컬 브랜치: `git branch -D <branch>`.
 - 원격 브랜치: `git ls-remote --heads origin <branch>`에 있고, `origin/<branch>`도 머지 확인 규칙을 통과할 때만
   `git push origin --delete <branch>`. 원격에 로컬보다 앞선 커밋이 있으면 남깁니다.
-- 기본 브랜치(`git.default_base`, 원격 기본 브랜치 `git symbolic-ref refs/remotes/origin/HEAD`)와 보호 브랜치(`main`,
+- 기본 브랜치(`git.default_base`, 원격 기본 브랜치 — `git symbolic-ref refs/remotes/origin/HEAD`, 설정되어 있지 않으면
+  `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`)와 보호 브랜치(`main`,
   `master`, `develop`, `dev`)는 건드리지 않습니다. 열린 PR의 base인 브랜치(`gh pr list --base <branch> --state open`이
   비어 있지 않음)도 지우지 않습니다.
 

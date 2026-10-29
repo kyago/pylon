@@ -69,6 +69,7 @@ KEPT=()
 # Remove worktrees associated with the branch (exact branch match via porcelain output)
 if [[ "$SCOPE" == "repo" ]]; then
   [[ -n "$REPO" ]] || die "repo pipeline status is missing repo"
+  [[ -n "$BRANCH" ]] || die "repo pipeline status is missing branch"
   resolve_git_root "${GIT_ROOT_ARG:-$REPO}"
   git -C "$GIT_ROOT" rev-parse --git-dir &>/dev/null || die "repo is not a git repository: $REPO"
 
