@@ -17,7 +17,7 @@ description: "Pull Request 생성"
 
 ```bash
 BRANCH=$(jq -r '.branch' "$ARGUMENTS/status.json")
-.pylon/scripts/bash/create-pr.sh "$ARGUMENTS" --branch "$BRANCH" --title "feat: [요약]" --body "[본문]"
+.pylon/builtin/scripts/bash/create-pr.sh "$ARGUMENTS" --branch "$BRANCH" --title "feat: [요약]" --body "[본문]"
 ```
 
 ## 산출물

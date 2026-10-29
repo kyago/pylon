@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +42,20 @@ dist/
 # Pylon-generated Claude Code config (dynamically generated)
 .claude/
 CLAUDE.md
+
+dist/
+`,
+			want: `node_modules/
+
+dist/
+`,
+		},
+		{
+			name: "removes pylon built-in resources section",
+			input: `node_modules/
+
+# Pylon built-in resources (regenerated)
+.pylon/builtin/
 
 dist/
 `,
@@ -259,7 +272,7 @@ func TestBuildUninstallPlanSkipsMalformedAgentsMDAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := "# 우리 팀 규칙\n\n" + agentsBlockBegin +
-		fmt.Sprintf("\n<!-- pylon-usage-version: %d -->\n", pylonUsageVersion) + bootstrapAgentsMDHeading + "\n"
+		"\n<!-- pylon-usage-version: 5 -->\n" + bootstrapAgentsMDHeading + "\n"
 	agentsPath := layout.RootAgentsPath(root)
 	if err := os.WriteFile(agentsPath, []byte(original), 0644); err != nil {
 		t.Fatal(err)
@@ -394,7 +407,7 @@ func TestBuildUninstallPlan(t *testing.T) {
 
 	// Create the generated root agent files
 	os.WriteFile(layout.RootClaudePath(root), []byte("@AGENTS.md\n"), 0644)
-	os.WriteFile(layout.RootAgentsPath(root), []byte(fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# guide", pylonUsageVersion)), 0644)
+	os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(root, nil)), 0644)
 
 	// Create .gitignore
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("# pylon\n.pylon/runtime/\n"), 0644)

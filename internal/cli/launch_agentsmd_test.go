@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,60 +18,43 @@ func TestBuildClaudeMDPointerIsImportMarker(t *testing.T) {
 	}
 }
 
-func TestBuildAgentsBlockHasMarkersStampAndInstruction(t *testing.T) {
-	out := buildAgentsBlock(t.TempDir(), []config.ProjectInfo{{Name: "api"}})
+func TestBuildAgentsBlockEmbedsManualAndFacts(t *testing.T) {
+	root := t.TempDir()
+	out := buildAgentsBlock(root, []config.ProjectInfo{{Name: "api"}})
 	if !strings.HasPrefix(out, agentsBlockBegin+"\n") || !strings.HasSuffix(out, agentsBlockEnd+"\n") {
 		t.Errorf("block must be wrapped in markers: %s", out)
 	}
-	if !strings.Contains(out, fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
-		t.Errorf("block missing version stamp: %s", out)
-	}
-	if !strings.Contains(out, ".pylon/reference/pylon-usage.md") {
-		t.Errorf("block must point at the manual: %s", out)
-	}
-	if !strings.Contains(out, "api") {
-		t.Errorf("block should list project facts: %s", out)
-	}
-}
-
-func TestAgentsMDStale(t *testing.T) {
-	root := t.TempDir()
-	// (1) 파일 없음 → stale
-	if !agentsMDStale(root) {
-		t.Error("missing AGENTS.md should be stale")
-	}
-	// (2) 낮은 버전 스탬프의 블록 → stale
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(agentsBlockBegin+"\n<!-- pylon-usage-version: 0 -->\n# guide\n"+agentsBlockEnd+"\n"), 0644); err != nil {
+	manual, err := embeddedReference.ReadFile("reference/pylon-usage.md")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !agentsMDStale(root) {
-		t.Error("lower version stamp should be stale")
+	if !strings.Contains(out, strings.TrimSpace(string(manual))) {
+		t.Error("block must carry the embedded manual verbatim")
 	}
-	// (3) 블록 없음 → stale (스탬프가 블록 밖에 있어도 마찬가지)
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# no block", pylonUsageVersion)), 0644); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(out, "`"+root+"`") || !strings.Contains(out, "api") {
+		t.Errorf("block should list workspace facts: %s", out)
 	}
-	if !agentsMDStale(root) {
-		t.Error("missing block should be stale even with an outside stamp")
+	// 마이그레이션 인식자와 겹치면 새 블록이 레거시 저작 가이드로 오인되어 매번 백업된다.
+	if isAuthoredLegacyBlock([]byte(out)) || strings.Contains(out, bootstrapAgentsMDHeading) {
+		t.Error("block must not match the legacy recognizers")
 	}
-	// (4) 현재 버전 블록 → not stale (블록 밖 사용자 내용과 무관)
-	current := "# 사용자 규칙\n\n" + agentsBlockBegin + fmt.Sprintf("\n<!-- pylon-usage-version: %d -->\n# guide\n", pylonUsageVersion) + agentsBlockEnd + "\n"
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(current), 0644); err != nil {
-		t.Fatal(err)
+	// 매뉴얼 본문의 마커 예시가 블록 경계로 파싱되면 안 된다.
+	if s, e, state := findAgentsBlock([]byte(out)); state != agentsBlockComplete || s != 0 || e != len(out) {
+		t.Errorf("block must parse as one complete block: state=%v [%d,%d) of %d", state, s, e, len(out))
 	}
-	if agentsMDStale(root) {
-		t.Error("current version stamp should not be stale")
+	if buildAgentsBlock(root, []config.ProjectInfo{{Name: "api"}}) != out {
+		t.Error("block must be deterministic")
 	}
 }
 
 func TestEnsureRootAgentFilesWritesPointerAndBootstrapWhenMissing(t *testing.T) {
 	root := t.TempDir()
-	bootstrapped, _, err := ensureRootAgentFiles(root, nil)
+	updated, _, err := ensureRootAgentFiles(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bootstrapped {
-		t.Error("missing AGENTS.md should be bootstrapped")
+	if !updated {
+		t.Error("missing AGENTS.md should be updated")
 	}
 	ptr, _ := os.ReadFile(layout.RootClaudePath(root))
 	if strings.TrimSpace(string(ptr)) != "@AGENTS.md" {
@@ -94,11 +76,11 @@ func TestEnsureRootAgentFilesPrependsBlockToUserAgentsMD(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	updated, backedUp, err := ensureRootAgentFiles(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bootstrapped {
+	if !updated {
 		t.Error("user AGENTS.md without a block should get the block prepended")
 	}
 
@@ -170,12 +152,12 @@ func TestEnsureRootAgentFilesIsIdempotent(t *testing.T) {
 	first, _ := os.ReadFile(layout.RootAgentsPath(root))
 
 	// 2회차: 블록이 이미 최신이므로 아무것도 바뀌지 않는다.
-	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	updated, backedUp, err := ensureRootAgentFiles(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bootstrapped {
-		t.Error("second run must not re-bootstrap a current block")
+	if updated {
+		t.Error("second run must not rewrite a current block")
 	}
 	if len(backedUp) != 0 {
 		t.Errorf("second run must not back anything up, got %v", backedUp)
@@ -190,19 +172,19 @@ func TestEnsureRootAgentFilesIsIdempotent(t *testing.T) {
 	}
 }
 
-// 버전 스탬프를 올렸을 때, 세션이 저작한 가이드는 stale이지만 버려서는 안 된다.
+// 블록 도입 이전에 세션이 저작한 전체 파일 가이드는 교체되지만 버려서는 안 된다.
 func TestEnsureRootAgentFilesBacksUpStaleAuthoredAgentsMD(t *testing.T) {
 	root := t.TempDir()
 	authored := "<!-- pylon-usage-version: 0 -->\n# 세션이 저작한 소중한 가이드\n상세 운영 규칙"
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	updated, backedUp, err := ensureRootAgentFiles(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bootstrapped {
-		t.Error("stale AGENTS.md should be re-bootstrapped")
+	if !updated {
+		t.Error("legacy AGENTS.md should be replaced")
 	}
 	if len(backedUp) != 1 || backedUp[0] != "AGENTS.md" {
 		t.Errorf("stale authored AGENTS.md should be reported as backed up, got %v", backedUp)
@@ -216,35 +198,29 @@ func TestEnsureRootAgentFilesBacksUpStaleAuthoredAgentsMD(t *testing.T) {
 	}
 }
 
-// stale 블록은 블록만 교체된다 — 블록 밖 사용자 내용은 백업 없이 그 자리에 보존.
-func TestEnsureRootAgentFilesReplacesStaleBlockPreservingUserContent(t *testing.T) {
+// 내용이 달라진 블록(프로젝트 목록·매뉴얼 변경)은 블록만 교체된다 — 블록 밖 사용자 내용은
+// 백업 없이 그 자리에 보존.
+func TestEnsureRootAgentFilesReplacesOutdatedBlockPreservingUserContent(t *testing.T) {
 	root := t.TempDir()
 	userTop := "# 우리 팀 규칙\n블록 밖 내용\n\n"
 	userBottom := "\n# 블록 아래 추가 규칙\n"
-	staleBlock := strings.Replace(buildAgentsBlock(root, nil),
-		fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion), "pylon-usage-version: 0", 1)
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(userTop+staleBlock+userBottom), 0600); err != nil {
+	outdated := buildAgentsBlock(root, []config.ProjectInfo{{Name: "removed-project"}})
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(userTop+outdated+userBottom), 0600); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	updated, backedUp, err := ensureRootAgentFiles(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bootstrapped {
-		t.Error("stale block should be re-bootstrapped")
+	if !updated {
+		t.Error("outdated block should be rewritten")
 	}
 	if len(backedUp) != 0 {
-		t.Errorf("block replacement must not back anything up, got %v", backedUp)
+		t.Errorf("pylon-generated block replacement must not back anything up, got %v", backedUp)
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if !strings.HasPrefix(string(got), userTop) || !strings.HasSuffix(string(got), userBottom) {
-		t.Errorf("user content around the block was not preserved: %q", got)
-	}
-	if !strings.Contains(string(got), fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
-		t.Errorf("block not refreshed to current stamp: %q", got)
-	}
-	if strings.Count(string(got), agentsBlockBegin) != 1 || strings.Count(string(got), agentsBlockEnd) != 1 {
-		t.Errorf("block replacement must stay a single block: %q", got)
+	if string(got) != userTop+buildAgentsBlock(root, nil)+userBottom {
+		t.Errorf("block not replaced in place: %q", got)
 	}
 	info, err := os.Stat(layout.RootAgentsPath(root))
 	if err != nil {
@@ -309,12 +285,12 @@ func TestEnsureRootAgentFilesToleratesWhitespaceAroundMarkers(t *testing.T) {
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(mangled), 0644); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	updated, backedUp, err := ensureRootAgentFiles(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bootstrapped {
-		t.Error("whitespace-mangled stale block should still be re-bootstrapped")
+	if !updated {
+		t.Error("whitespace-mangled legacy stub block should still be replaced")
 	}
 	if len(backedUp) != 0 {
 		t.Errorf("block replacement must not back anything up, got %v", backedUp)
@@ -323,7 +299,7 @@ func TestEnsureRootAgentFilesToleratesWhitespaceAroundMarkers(t *testing.T) {
 	if !strings.HasPrefix(string(got), userTop) {
 		t.Errorf("user content above the block was destroyed: %q", got)
 	}
-	if !strings.Contains(string(got), fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
+	if string(got) != userTop+buildAgentsBlock(root, nil) {
 		t.Errorf("block not refreshed: %q", got)
 	}
 }
@@ -581,69 +557,70 @@ func TestBackupIfHandWrittenDoesNotClobber(t *testing.T) {
 	}
 }
 
-func TestEnsureRootAgentFilesPreservesFreshAgentsMD(t *testing.T) {
+func TestEnsureRootAgentFilesLeavesCurrentBlockUntouched(t *testing.T) {
 	root := t.TempDir()
-	authored := "# 사용자 규칙\n\n" + agentsBlockBegin +
-		fmt.Sprintf("\n<!-- pylon-usage-version: %d -->\n# 세션이 저작한 가이드\n", pylonUsageVersion) +
-		agentsBlockEnd + "\n"
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
+	current := "# 사용자 규칙\n\n" + buildAgentsBlock(root, nil) + "\n# 아래 규칙\n"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(current), 0644); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, _, err := ensureRootAgentFiles(root, nil)
+	updated, _, err := ensureRootAgentFiles(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bootstrapped {
-		t.Error("fresh AGENTS.md must not be bootstrapped over")
+	if updated {
+		t.Error("a current block must not be rewritten")
 	}
-	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if string(got) != authored {
-		t.Errorf("fresh AGENTS.md was overwritten: %q", got)
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != current {
+		t.Errorf("current AGENTS.md was overwritten: %q", got)
 	}
 }
 
-// 스탬프가 오르면 세션이 저작한 블록은 버리지 않는다 — 스탬프를 올리고 갱신 안내만 넣으며,
-// 원본은 .pylon-bak으로 복사한다. 블록 밖 내용은 그대로 (#107).
-func TestEnsureRootAgentFilesKeepsStaleAuthoredBlockWithUpdateNotice(t *testing.T) {
+// 블록 안은 pylon 소유다 — 직접 고친 내용은 백업 없이 되돌아간다.
+func TestEnsureRootAgentFilesRevertsEditsInsideBlock(t *testing.T) {
+	root := t.TempDir()
+	edited := strings.Replace(buildAgentsBlock(root, nil), "## 이 워크스페이스", "## 내가 고친 제목", 1)
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(edited), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, backedUp, err := ensureRootAgentFiles(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backedUp) != 0 {
+		t.Errorf("edits inside the generated block are not backed up, got %v", backedUp)
+	}
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != buildAgentsBlock(root, nil) {
+		t.Errorf("edit inside the block was not reverted: %q", got)
+	}
+}
+
+// 이전 방식에서 세션이 저작한 블록(스탬프 보유, 스텁 아님)은 .pylon-bak으로 한 번 백업한 뒤
+// 생성 블록으로 교체한다. 블록 밖 내용은 그대로.
+func TestEnsureRootAgentFilesBacksUpAuthoredLegacyBlockOnce(t *testing.T) {
 	root := t.TempDir()
 	userTop := "# 우리 팀 규칙\n블록 밖 내용\n\n"
 	userBottom := "\n# 블록 아래 추가 규칙\n"
-	guide := "# 세션이 저작한 운영 가이드\n\n- 규칙 1\n- 규칙 2\n"
-	authored := agentsBlockBegin + "\n<!-- pylon-usage-version: 3 -->\n" + guide + agentsBlockEnd + "\n"
+	authored := agentsBlockBegin + "\n<!-- pylon-usage-version: 5 -->\n# 세션이 저작한 운영 가이드\n\n- 규칙 1\n" + agentsBlockEnd + "\n"
 	original := userTop + authored + userBottom
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(original), 0600); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, backedUp, err := ensureRootAgentFiles(root, nil)
+	updated, backedUp, err := ensureRootAgentFiles(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bootstrapped {
-		t.Error("stale authored block should be updated")
-	}
-	if len(backedUp) != 1 || backedUp[0] != "AGENTS.md" {
-		t.Errorf("stale authored block must be backed up, got %v", backedUp)
+	if !updated || len(backedUp) != 1 || backedUp[0] != "AGENTS.md" {
+		t.Fatalf("authored legacy block must be backed up and replaced: updated=%v backedUp=%v", updated, backedUp)
 	}
 	if bak, _ := os.ReadFile(layout.RootAgentsPath(root) + rootFileBackupSuffix); string(bak) != original {
 		t.Errorf("backup must hold the original bytes: %q", bak)
 	}
-	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	out := string(got)
-	if !strings.HasPrefix(out, userTop) || !strings.HasSuffix(out, userBottom) {
-		t.Errorf("user content around the block was not preserved: %q", out)
-	}
-	if !strings.Contains(out, guide) {
-		t.Errorf("session-authored guide must be kept verbatim: %q", out)
-	}
-	if !strings.Contains(out, fmt.Sprintf("%s (v3 → v%d)", agentsUpdateHeading, pylonUsageVersion)) {
-		t.Errorf("update notice with old/new version missing: %q", out)
-	}
-	if strings.Contains(out, "pylon-usage-version: 3") || !strings.Contains(out, fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
-		t.Errorf("stamp must be raised exactly once: %q", out)
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != userTop+buildAgentsBlock(root, nil)+userBottom {
+		t.Errorf("block not replaced in place: %q", got)
 	}
 	// 두 번째 실행은 아무것도 하지 않는다 — 백업이 늘어나면 안 된다.
-	bootstrapped, backedUp, err = ensureRootAgentFiles(root, nil)
-	if err != nil || bootstrapped || len(backedUp) != 0 {
-		t.Errorf("second run must be a no-op: bootstrapped=%v backedUp=%v err=%v", bootstrapped, backedUp, err)
+	updated, backedUp, err = ensureRootAgentFiles(root, nil)
+	if err != nil || updated || len(backedUp) != 0 {
+		t.Errorf("second run must be a no-op: updated=%v backedUp=%v err=%v", updated, backedUp, err)
 	}
 }

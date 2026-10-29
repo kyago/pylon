@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,76 +12,119 @@ import (
 	"github.com/kyago/pylon/internal/layout"
 )
 
-// firstEmbeddedSkill returns the name of the first embedded skill .md file,
-// skipping the test if none are present.
-func firstEmbeddedSkill(t *testing.T) string {
-	t.Helper()
-	entries, err := embeddedSkills.ReadDir("skills")
+func TestSyncBuiltinResources_WritesEmbedsAndIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	wrote, removed, err := syncBuiltinResources(root)
 	if err != nil {
-		t.Fatalf("read embedded skills: %v", err)
+		t.Fatal(err)
 	}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			return e.Name()
+	if !wrote || len(removed) != 0 {
+		t.Fatalf("first sync: wrote=%v removed=%v, want true/none", wrote, removed)
+	}
+	files, err := embeddedBuiltinFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		path := filepath.Join(layout.BuiltinDir(root), filepath.FromSlash(f.rel))
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, f.content) {
+			t.Fatalf("%s not written from embed (err=%v)", f.rel, err)
+		}
+		if strings.HasSuffix(f.rel, ".sh") {
+			if info, _ := os.Stat(path); info.Mode().Perm()&0o100 == 0 {
+				t.Errorf("%s is not executable", f.rel)
+			}
 		}
 	}
-	t.Skip("no embedded skill files available to test")
-	return ""
-}
-
-// TestSyncEmbeddedDir_RefreshesStaleFile reproduces the version-upgrade bug:
-// an existing file with outdated content (from a previous pylon version) must
-// be refreshed to the embedded content, not silently skipped.
-func TestSyncEmbeddedDir_RefreshesStaleFile(t *testing.T) {
-	targetDir := t.TempDir()
-	name := firstEmbeddedSkill(t)
-
-	want, err := embeddedSkills.ReadFile("skills/" + name)
-	if err != nil {
-		t.Fatalf("read embedded file: %v", err)
+	if _, err := os.Stat(filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md")); err != nil {
+		t.Errorf("usage manual missing: %v", err)
 	}
 
-	// Pre-seed a stale version, simulating a file installed by an older pylon.
-	destPath := filepath.Join(targetDir, name)
-	if err := os.WriteFile(destPath, []byte("STALE OLD VERSION\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	changed, refreshed := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
-
-	got, err := os.ReadFile(destPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("stale file %s was not refreshed to embedded content", name)
-	}
-	if changed == 0 {
-		t.Errorf("expected changed count > 0 when a stale file is refreshed, got 0")
-	}
-	// 덮어쓴 파일은 이름으로 보고되어야 한다 — 사용자가 수정한 파일일 수도 있다.
-	if len(refreshed) != 1 || refreshed[0] != name {
-		t.Errorf("expected refreshed = [%s], got %v", name, refreshed)
+	wrote, removed, err = syncBuiltinResources(root)
+	if err != nil || wrote || len(removed) != 0 {
+		t.Errorf("second sync: wrote=%v removed=%v err=%v, want false/none/nil", wrote, removed, err)
 	}
 }
 
-// TestSyncEmbeddedDir_SkipsUnchangedFile verifies that re-syncing identical
-// content reports no changes (idempotent, no needless rewrites).
-func TestSyncEmbeddedDir_SkipsUnchangedFile(t *testing.T) {
-	targetDir := t.TempDir()
-
-	first, refreshed := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
-	if first == 0 {
-		t.Fatal("expected files to be installed on first sync")
+// 이전 릴리스는 내장 리소스를 .pylon/<kind>/에 직접 복사했다. 그 사본은 내장 이름이라
+// pylon 소유이므로 지워야 하고, 같은 디렉토리의 사용자 파일은 남아야 한다.
+func TestSyncBuiltinResources_RemovesLegacyCopiesKeepsUserFiles(t *testing.T) {
+	root := t.TempDir()
+	files, err := embeddedBuiltinFiles()
+	if err != nil {
+		t.Fatal(err)
 	}
-	// 신규 설치는 '갱신'이 아니다 — 덮어쓴 것이 없으므로 보고 대상도 없다.
-	if len(refreshed) != 0 {
-		t.Errorf("expected no refreshed files on first install, got %v", refreshed)
+	var legacyAgent, legacyScript string
+	for _, f := range files {
+		switch {
+		case legacyAgent == "" && strings.HasPrefix(f.rel, "agents/"):
+			legacyAgent = f.rel
+		case legacyScript == "" && strings.HasPrefix(f.rel, "scripts/bash/"):
+			legacyScript = f.rel
+		}
+	}
+	legacy := []string{legacyAgent, legacyScript, "reference/pylon-usage.md"}
+	for _, rel := range legacy {
+		path := filepath.Join(layout.PylonDir(root), filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("OLD RELEASE COPY"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	userAgent := filepath.Join(layout.ResourceDir(root, "agents"), "my-agent.md")
+	if err := os.WriteFile(userAgent, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	second, _ := syncEmbeddedDir(embeddedSkills, "skills", targetDir, ".md")
-	if second != 0 {
-		t.Errorf("expected 0 changes on second sync of identical content, got %d", second)
+	_, removed, err := syncBuiltinResources(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(removed, ",") != strings.Join(legacy, ",") {
+		t.Errorf("removed = %v, want %v", removed, legacy)
+	}
+	for _, rel := range legacy {
+		if _, err := os.Stat(filepath.Join(layout.PylonDir(root), filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("legacy copy .pylon/%s survived", rel)
+		}
+	}
+	if got, err := os.ReadFile(userAgent); err != nil || string(got) != "mine" {
+		t.Errorf("user agent touched: %q, %v", got, err)
+	}
+	for _, kind := range []string{"scripts", "reference"} {
+		if _, err := os.Stat(layout.ResourceDir(root, kind)); !os.IsNotExist(err) {
+			t.Errorf("emptied built-in-only dir .pylon/%s should be removed", kind)
+		}
+	}
+}
+
+// 내장 집합이 바뀌면(digest 불일치) builtin을 통째로 다시 써서, 바이너리에서 빠진
+// 리소스가 남지 않아야 한다. digest가 없는 것(중단된 쓰기)도 같은 경로로 회복된다.
+func TestSyncBuiltinResources_RewritesWhenDigestDiffers(t *testing.T) {
+	root := t.TempDir()
+	if _, _, err := syncBuiltinResources(root); err != nil {
+		t.Fatal(err)
+	}
+	dropped := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dropped-in-new-release.md")
+	if err := os.WriteFile(dropped, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(layout.BuiltinDir(root), builtinDigestFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	wrote, _, err := syncBuiltinResources(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wrote {
+		t.Error("missing digest must trigger a rewrite")
+	}
+	if _, err := os.Stat(dropped); !os.IsNotExist(err) {
+		t.Error("resource absent from the embeds survived the rewrite")
 	}
 }
 
@@ -375,7 +417,7 @@ func newTestWorkspace(t *testing.T) string {
 // exactly the dynamic slash commands plus the embedded pl-* commands (prefix
 // stripped). This guards the shared source of truth used by launch and doctor.
 func TestBuildDesiredClaudeCommands_Keyset(t *testing.T) {
-	root := newTestWorkspace(t) // empty .pylon/commands -> embedded fallback
+	root := newTestWorkspace(t) // built-in pl-* come straight from the embeds
 
 	desired := buildDesiredClaudeCommands(root)
 
@@ -406,6 +448,25 @@ func TestBuildDesiredClaudeCommands_Keyset(t *testing.T) {
 		if !want[k] {
 			t.Errorf("desired has unexpected key %q", k)
 		}
+	}
+}
+
+// 사용자 커맨드(.pylon/commands/)는 추가되지만, 내장 이름과 겹치면 내장 내용이 이긴다.
+func TestBuildDesiredClaudeCommands_UserCommands(t *testing.T) {
+	root := newTestWorkspace(t)
+	userDir := layout.ResourceDir(root, "commands")
+	for name, body := range map[string]string{"pl-mine.md": "# mine\n", "pl-verify.md": "# shadow\n"} {
+		if err := os.WriteFile(filepath.Join(userDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	desired := buildDesiredClaudeCommands(root)
+	if desired[filepath.Join("pl", "mine.md")] != "# mine\n" {
+		t.Error("user command missing from desired set")
+	}
+	want, _ := embeddedCommands.ReadFile("commands/pl-verify.md")
+	if desired[filepath.Join("pl", "verify.md")] != string(want) {
+		t.Error("user file must not shadow a built-in command")
 	}
 }
 
@@ -701,46 +762,25 @@ func TestInstallHint_NoBrewFormula(t *testing.T) {
 	}
 }
 
-func TestSyncPylonResourcesRefreshesReference(t *testing.T) {
-	pylonDir := t.TempDir()
-	// 오래된 내용을 미리 심어 둔다 — 동기화가 임베디드 버전으로 되돌려야 한다.
-	refDir := filepath.Join(pylonDir, "reference")
-	if err := os.MkdirAll(refDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	stale := filepath.Join(refDir, "pylon-usage.md")
-	if err := os.WriteFile(stale, []byte("STALE"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	syncPylonResources(pylonDir)
-	got, err := os.ReadFile(stale)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(got), "pylon-usage-version:") {
-		t.Errorf("reference not refreshed from embed, got: %.40q", got)
-	}
-}
-
-func TestReconcileRootAgentFilesRebootstrapsStale(t *testing.T) {
+func TestReconcileRootAgentFilesReplacesLegacyGuide(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
 		t.Fatal(err)
 	}
-	// 저버전 스탬프 = stale
+	// 블록 도입 이전의 스탬프 전체 파일 = 레거시 가이드
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte("<!-- pylon-usage-version: 0 -->\n# old"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, _, err := reconcileRootAgentFiles(root)
+	updated, _, err := reconcileRootAgentFiles(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bootstrapped {
-		t.Error("stale AGENTS.md should be re-bootstrapped")
+	if !updated {
+		t.Error("legacy AGENTS.md should be replaced")
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if !strings.Contains(string(got), fmt.Sprintf("pylon-usage-version: %d", pylonUsageVersion)) {
-		t.Errorf("AGENTS.md not refreshed to current stamp: %.60q", got)
+	if string(got) != buildAgentsBlock(root, nil) {
+		t.Errorf("AGENTS.md not refreshed to the generated block: %.60q", got)
 	}
 }
 
@@ -749,19 +789,19 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
 		t.Fatal(err)
 	}
-	authored := agentsBlockBegin + fmt.Sprintf("\n<!-- pylon-usage-version: %d -->\n# 저작됨\n", pylonUsageVersion) + agentsBlockEnd + "\n"
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(authored), 0644); err != nil {
+	current := buildAgentsBlock(root, nil) + "\n# 사용자 규칙\n"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(current), 0644); err != nil {
 		t.Fatal(err)
 	}
-	bootstrapped, _, err := reconcileRootAgentFiles(root)
+	updated, _, err := reconcileRootAgentFiles(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bootstrapped {
+	if updated {
 		t.Error("current AGENTS.md must be left alone")
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if string(got) != authored {
+	if string(got) != current {
 		t.Errorf("current AGENTS.md was overwritten: %q", got)
 	}
 }

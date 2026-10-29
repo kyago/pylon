@@ -12,7 +12,7 @@ import (
 func newCodexSkillsWorkspace(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	commandsDir := layout.CommandsDir(root)
+	commandsDir := layout.BuiltinResourceDir(root, "commands")
 	if err := os.MkdirAll(commandsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -37,10 +37,39 @@ func TestGenerateCodexSkills_CreatesPointerSkill(t *testing.T) {
 		"name: pl-verify",
 		"description: 빌드/테스트/린트 검증 실행",
 		codexSkillMarker,
-		".pylon/commands/pl-verify.md",
+		".pylon/builtin/commands/pl-verify.md",
 	} {
 		if !strings.Contains(skill, want) {
 			t.Fatalf("skill missing %q:\n%s", want, skill)
+		}
+	}
+}
+
+// 사용자 커맨드는 자기 경로를 가리키고, 내장 이름과 겹치면 내장이 우선한다.
+func TestGenerateCodexSkills_UserCommandsPointToUserDir(t *testing.T) {
+	root := newCodexSkillsWorkspace(t)
+	userDir := layout.ResourceDir(root, "commands")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pl-mine.md", "pl-verify.md"} {
+		if err := os.WriteFile(filepath.Join(userDir, name), []byte("# user\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := generateCodexSkills(root); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"pl-mine":   ".pylon/commands/pl-mine.md",
+		"pl-verify": ".pylon/builtin/commands/pl-verify.md",
+	} {
+		data, err := os.ReadFile(filepath.Join(layout.CodexSkillsDir(root), name, "SKILL.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "`"+want+"`") {
+			t.Errorf("%s pointer should name %s:\n%s", name, want, data)
 		}
 	}
 }

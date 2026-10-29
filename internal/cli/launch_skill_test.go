@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 func TestBuildSkillInjection_EmptySkills(t *testing.T) {
@@ -70,6 +71,7 @@ func TestBuildSkillInjection_ProgressiveDisclosure(t *testing.T) {
 			Name:        "research-methodology",
 			Description: "Research methodology guide",
 			Body:        "## Step 1\nDo research",
+			FilePath:    ".pylon/builtin/skills/research-methodology.md",
 		},
 	}
 
@@ -84,7 +86,7 @@ func TestBuildSkillInjection_ProgressiveDisclosure(t *testing.T) {
 	if !strings.Contains(result, "Research methodology guide") {
 		t.Error("should contain description")
 	}
-	if !strings.Contains(result, ".pylon/skills/research-methodology.md") {
+	if !strings.Contains(result, ".pylon/builtin/skills/research-methodology.md") {
 		t.Error("should contain reference to full skill file")
 	}
 	// Should NOT contain the full body
@@ -432,5 +434,47 @@ Skill body`
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
 		t.Error("when preload disabled, agent should be a symlink")
+	}
+}
+
+// 내장 에이전트·스킬은 .pylon/builtin/에 있다. 스킬 주입이 그 디렉토리를 보지 못하면
+// skills: frontmatter를 가진 내장 에이전트가 에러 없이 주입을 잃는다.
+func TestGenerateClaudeAgentsWithSkills_BuiltinAgentsAndSkills(t *testing.T) {
+	root := t.TempDir()
+	if _, _, err := syncBuiltinResources(root); err != nil {
+		t.Fatal(err)
+	}
+	userAgents := layout.ResourceDir(root, "agents")
+	if err := os.MkdirAll(userAgents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userAgents, "my-agent.md"), []byte("---\nname: my-agent\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Skills: config.SkillsConfig{Enabled: true, PreloadToAgents: true, ProgressiveDisclosure: true}}
+	if err := generateClaudeAgentsWithSkills(root, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeAgents := layout.ClaudeAgentsDir(root)
+	injected, err := os.ReadFile(filepath.Join(claudeAgents, "academic-analyst.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(injected), skillInjectionMarker) ||
+		!strings.Contains(string(injected), "`.pylon/builtin/skills/research-methodology.md`") {
+		t.Errorf("builtin skill not injected into builtin agent:\n%s", injected)
+	}
+	for name, want := range map[string]string{
+		"architect.md": layout.BuiltinAgentLinkTarget("architect.md"),
+		"my-agent.md":  layout.AgentLinkTarget("my-agent.md"),
+	} {
+		got, err := os.Readlink(filepath.Join(claudeAgents, name))
+		if err != nil || got != want {
+			t.Errorf("%s link = %q (%v), want %q", name, got, err, want)
+		}
+		if _, err := os.Stat(filepath.Join(claudeAgents, name)); err != nil {
+			t.Errorf("%s link does not resolve: %v", name, err)
+		}
 	}
 }

@@ -415,6 +415,7 @@ func cleanGitignoreFull(path string) error {
 			trimmed == "# Pylon-generated Claude Code config (dynamically generated)" ||
 			// launch(addClaudeDirToGitignore)이 쓰는 헤더 — init의 헤더와 문구가 다르다.
 			trimmed == "# Pylon-generated (dynamically generated)" ||
+			trimmed == "# Pylon built-in resources (regenerated)" ||
 			trimmed == "# Pylon root agent files (regenerated; AI-authored)" {
 			pylonSection = true
 			continue

@@ -22,7 +22,7 @@ pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase cancel
 4. 정리 스크립트를 실행합니다. 체크포인트가 성공했으면 세 번째 인자로 `true`를 넘겨 runtime 디렉토리를 삭제합니다(이력은 .pylon/history/에 보존됨). 체크포인트가 실패했으면 `true`를 넘기지 마세요:
 
 ```bash
-.pylon/scripts/bash/cleanup-pipeline.sh "$PIPELINE_DIR" "$BRANCH" true
+.pylon/builtin/scripts/bash/cleanup-pipeline.sh "$PIPELINE_DIR" "$BRANCH" true
 ```
 
 5. 정리 결과를 보고합니다

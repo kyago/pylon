@@ -179,29 +179,24 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		return err
 	}
 
-	// Root agent files: CLAUDE.md is a deterministic @AGENTS.md import marker; AGENTS.md
-	// is (re)bootstrapped only when missing/stale so a session-authored guide survives
-	// launch. The launched claude session authors AGENTS.md on its first turn.
-	bootstrapped, backedUp, err := ensureRootAgentFiles(root, projects)
+	// Root agent files: CLAUDE.md is a deterministic @AGENTS.md import marker; the pylon
+	// block in AGENTS.md is regenerated (embedded manual + workspace facts) whenever it
+	// differs. Content outside the block is never touched.
+	_, backedUp, err := ensureRootAgentFiles(root, projects)
 	if err != nil {
 		return err
 	}
 	for _, name := range backedUp {
 		fmt.Fprintf(os.Stderr, "ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
 	}
-	if bootstrapped {
-		fmt.Fprintln(os.Stderr, "ℹ AGENTS.md를 부트스트랩했습니다 — 세션이 첫 턴에 이 워크스페이스에 맞게 재작성합니다.")
-	}
 
-	// Refresh the pylon-owned resources under .pylon/ (agents, skills, commands,
-	// scripts) from the embedded defaults. Shared with `pylon doctor` so launch and
-	// maintenance can never drift, and runs before the .claude/commands/
-	// reconciliation below so a command added in a new release reaches Claude Code on
-	// this launch rather than the next one. User-authored files are left untouched —
-	// see syncPylonResources for the ownership contract.
-	if _, overwritten := syncPylonResources(layout.PylonDir(root)); len(overwritten) > 0 {
-		fmt.Fprintf(os.Stderr, "⚠ 내장 버전으로 되돌린 pylon 소유 파일 %d개: %s\n",
-			len(overwritten), strings.Join(overwritten, ", "))
+	// Refresh the pylon-owned .pylon/builtin/ resources (agents, skills, commands,
+	// scripts, reference) from the embedded set. Shared with `pylon doctor` so launch
+	// and maintenance can never drift, and runs before the .claude/ generation below
+	// so the agent links resolve into an up-to-date builtin dir. User-authored files
+	// are left untouched — see syncBuiltinResources for the ownership contract.
+	if err := syncBuiltinForLaunch(root); err != nil {
+		return err
 	}
 
 	// Reconcile .claude/commands/ with the desired command set. The desired-state
@@ -235,7 +230,7 @@ func addClaudeDirToGitignore(root string) error {
 	var missing []string
 	// .agents/skills/pl-*/ 는 codex용으로 생성되는 워크플로우 스킬 포인터다.
 	// .agents/ 전체를 무시하면 사용자 저작 스킬까지 가려지므로 생성 패턴만 무시한다.
-	for _, entry := range []string{".claude/", "CLAUDE.md", "AGENTS.md", ".pylon/logs/", ".agents/skills/pl-*/"} {
+	for _, entry := range []string{".claude/", "CLAUDE.md", "AGENTS.md", ".pylon/logs/", ".pylon/builtin/", ".agents/skills/pl-*/"} {
 		if !strings.Contains(content, entry) {
 			missing = append(missing, entry)
 		}

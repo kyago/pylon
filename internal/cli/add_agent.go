@@ -6,7 +6,6 @@ import (
 
 	"unicode"
 
-	"github.com/kyago/pylon/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -71,7 +70,7 @@ domain: %s
 
 	// Sync Claude agent symlinks
 	if root, rerr := resolveRoot(); rerr == nil {
-		if err := syncClaudeAgentLinks(root, layout.PylonDir(root)); err != nil {
+		if err := syncClaudeAgentLinks(root); err != nil {
 			fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", err)
 		}
 	}

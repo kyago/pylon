@@ -15,7 +15,7 @@ description: "빌드/테스트/린트 검증 실행"
 하위 프로젝트의 `.pylon/verify.yml`을 보지 못합니다:
 
 ```bash
-.pylon/scripts/bash/run-verification.sh "$ARGUMENTS" --git-root <프로젝트 상대경로>
+.pylon/builtin/scripts/bash/run-verification.sh "$ARGUMENTS" --git-root <프로젝트 상대경로>
 ```
 
 `$ARGUMENTS` repo pipeline에는 worker 실행 전에 생성된 `criteria.json`과 digest를 가진 `status.json`이
