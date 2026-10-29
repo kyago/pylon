@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kyago/pylon/internal/history"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 type pipelineInitResult struct {
@@ -107,7 +108,7 @@ func TestInitPipelineRejectsOwnedBranchThatLostBaseAncestry(t *testing.T) {
 	runPipelineGit(t, repo, "checkout", "main")
 	runPipelineGit(t, repo, "branch", "-f", sub.Branch, unrelated)
 
-	cmd := exec.Command(filepath.Join(workspace, ".pylon", "scripts", "bash", "init-pipeline.sh"),
+	cmd := exec.Command(filepath.Join(layout.ScriptsDir(workspace), "init-pipeline.sh"),
 		"stale branch", "--git-root", "service-a", "--pipeline-dir", root.PipelineDir)
 	cmd.Dir = workspace
 	output, err := cmd.CombinedOutput()
@@ -128,7 +129,7 @@ func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	agentBranch := sub.Branch + "--worker"
 	runPipelineGit(t, repo, "branch", agentBranch)
 
-	cleanup := filepath.Join(workspace, ".pylon", "scripts", "bash", "cleanup-pipeline.sh")
+	cleanup := filepath.Join(layout.ScriptsDir(workspace), "cleanup-pipeline.sh")
 	cmd := exec.Command(cleanup, sub.PipelineDir, "--terminal-phase", "completed")
 	cmd.Dir = workspace
 	output, err := cmd.CombinedOutput()
@@ -200,7 +201,7 @@ func TestMergeBranchesUsesOwningRepo(t *testing.T) {
 	runPipelineGit(t, repoA, "commit", "-m", "service-a change")
 	runPipelineGit(t, repoA, "checkout", subA.Branch)
 
-	merge := filepath.Join(workspace, ".pylon", "scripts", "bash", "merge-branches.sh")
+	merge := filepath.Join(layout.ScriptsDir(workspace), "merge-branches.sh")
 	cmd := exec.Command(merge, subA.Branch, "worker-a", "--git-root", "service-a")
 	cmd.Dir = workspace
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -234,7 +235,7 @@ func TestMergeBranchesConflictReturnsFailureAndPreservesRuntime(t *testing.T) {
 	runPipelineGit(t, repo, "commit", "-m", "worker change")
 	runPipelineGit(t, repo, "checkout", sub.Branch)
 
-	merge := filepath.Join(workspace, ".pylon", "scripts", "bash", "merge-branches.sh")
+	merge := filepath.Join(layout.ScriptsDir(workspace), "merge-branches.sh")
 	cmd := exec.Command(merge, sub.Branch, "worker-conflict", "--git-root", "service-a")
 	cmd.Dir = workspace
 	output, err := cmd.Output()
@@ -265,7 +266,7 @@ func TestMergeBranchesConflictReturnsFailureAndPreservesRuntime(t *testing.T) {
 func setupPipelineScriptWorkspace(t *testing.T) string {
 	t.Helper()
 	workspace := t.TempDir()
-	scriptsDir := filepath.Join(workspace, ".pylon", "scripts", "bash")
+	scriptsDir := layout.ScriptsDir(workspace)
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +305,7 @@ func initGitRepo(t *testing.T, workspace, relative string) (string, string) {
 func runInitPipeline(t *testing.T, workspace, requirement string, args ...string) pipelineInitResult {
 	t.Helper()
 	commandArgs := append([]string{requirement}, args...)
-	cmd := exec.Command(filepath.Join(workspace, ".pylon", "scripts", "bash", "init-pipeline.sh"), commandArgs...)
+	cmd := exec.Command(filepath.Join(layout.ScriptsDir(workspace), "init-pipeline.sh"), commandArgs...)
 	cmd.Dir = workspace
 	output, err := cmd.Output()
 	if err != nil {

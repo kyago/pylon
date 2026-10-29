@@ -35,9 +35,22 @@ func HistoryDir(root string) string {
 	return filepath.Join(PylonDir(root), "history")
 }
 
-// CommandsDir returns the pipeline command directory (.pylon/commands).
-func CommandsDir(root string) string {
-	return filepath.Join(PylonDir(root), "commands")
+// BuiltinDir returns the pylon-owned resource directory (.pylon/builtin). It holds
+// the embedded agents, skills, commands, scripts and reference manual, and is wiped
+// and rewritten whenever the embedded set changes — nothing user-authored lives here.
+func BuiltinDir(root string) string {
+	return filepath.Join(PylonDir(root), "builtin")
+}
+
+// ResourceDir returns the user-owned resource directory .pylon/<kind>
+// (e.g. kind "agents", "skills", "commands").
+func ResourceDir(root, kind string) string {
+	return filepath.Join(PylonDir(root), filepath.FromSlash(kind))
+}
+
+// BuiltinResourceDir returns the pylon-owned resource directory .pylon/builtin/<kind>.
+func BuiltinResourceDir(root, kind string) string {
+	return filepath.Join(BuiltinDir(root), filepath.FromSlash(kind))
 }
 
 // VerifyConfigPath returns the verification config path (.pylon/verify.yml) for a
@@ -46,9 +59,9 @@ func VerifyConfigPath(dir string) string {
 	return filepath.Join(PylonDir(dir), "verify.yml")
 }
 
-// ScriptsDir returns the pipeline bash script directory (.pylon/scripts/bash).
+// ScriptsDir returns the pipeline bash script directory (.pylon/builtin/scripts/bash).
 func ScriptsDir(root string) string {
-	return filepath.Join(PylonDir(root), "scripts", "bash")
+	return BuiltinResourceDir(root, "scripts/bash")
 }
 
 // CodexSkillsDir returns the repo-scoped codex skill discovery directory
@@ -74,9 +87,15 @@ func ClaudeCommandsDir(root string) string {
 }
 
 // AgentLinkTarget returns the relative symlink target used inside
-// .claude/agents/ to point at .pylon/agents/<name>.
+// .claude/agents/ to point at the user-owned .pylon/agents/<name>.
 func AgentLinkTarget(name string) string {
 	return filepath.Join("..", "..", ".pylon", "agents", name)
+}
+
+// BuiltinAgentLinkTarget returns the relative symlink target used inside
+// .claude/agents/ to point at the pylon-owned .pylon/builtin/agents/<name>.
+func BuiltinAgentLinkTarget(name string) string {
+	return filepath.Join("..", "..", ".pylon", "builtin", "agents", name)
 }
 
 // RootClaudePath returns the workspace-root CLAUDE.md (a thin @AGENTS.md import marker).
@@ -84,7 +103,7 @@ func RootClaudePath(root string) string {
 	return filepath.Join(root, "CLAUDE.md")
 }
 
-// RootAgentsPath returns the workspace-root AGENTS.md (AI-authored operating guide).
+// RootAgentsPath returns the workspace-root AGENTS.md (pylon-managed block + user content).
 func RootAgentsPath(root string) string {
 	return filepath.Join(root, "AGENTS.md")
 }

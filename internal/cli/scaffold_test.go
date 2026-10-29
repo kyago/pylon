@@ -73,3 +73,17 @@ func TestScaffoldMarkdownResource(t *testing.T) {
 		}
 	})
 }
+
+// 내장 이름은 builtin이 가리고 다음 동기화가 비켜내므로 만들 수 없어야 한다.
+func TestScaffoldMarkdownResourceRefusesBuiltinName(t *testing.T) {
+	dir := newScaffoldWorkspace(t)
+	if _, err := scaffoldMarkdownResource("에이전트", "agents", "architect", "x"); err == nil {
+		t.Fatal("built-in agent name must be refused")
+	}
+	if _, err := scaffoldMarkdownResource("스킬", "skills", "research-methodology", "x"); err == nil {
+		t.Fatal("built-in skill name must be refused")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".pylon", "agents", "architect.md")); !os.IsNotExist(err) {
+		t.Fatal("refused resource must not be written")
+	}
+}

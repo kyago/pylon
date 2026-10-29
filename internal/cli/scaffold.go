@@ -11,7 +11,8 @@ import (
 // scaffoldMarkdownResource creates .pylon/<subdir>/<name>.md with the given
 // template content, shared by add-agent and add-skill. kind is the user-facing
 // resource label ("에이전트", "스킬") used in error messages. The subdirectory is
-// created if missing, and an existing file is never overwritten. Returns the
+// created if missing, an existing file is never overwritten, and a built-in name is
+// refused — the builtin would shadow it and the next sync would clear it. Returns the
 // created file path.
 func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error) {
 	root, err := resolveRoot()
@@ -19,7 +20,11 @@ func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error
 		return "", err
 	}
 
-	dir := filepath.Join(layout.PylonDir(root), subdir)
+	if isBuiltinResource(subdir + "/" + name + ".md") {
+		return "", fmt.Errorf("%s '%s'는 내장 리소스 이름입니다 — 다른 이름을 사용하세요", kind, name)
+	}
+
+	dir := layout.ResourceDir(root, subdir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("%s 디렉토리 생성 실패: %w", subdir, err)
 	}
@@ -34,4 +39,18 @@ func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error
 	}
 
 	return path, nil
+}
+
+// isBuiltinResource reports whether rel (e.g. "agents/pm.md") names an embedded resource.
+func isBuiltinResource(rel string) bool {
+	files, err := embeddedBuiltinFiles()
+	if err != nil {
+		return false
+	}
+	for _, f := range files {
+		if f.rel == rel {
+			return true
+		}
+	}
+	return false
 }

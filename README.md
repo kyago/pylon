@@ -155,7 +155,7 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
 ```
 사용자 ←→ Claude Code TUI (LLM-as-Orchestrator)
               │
-              ├── 슬래시 커맨드 (.pylon/commands/)
+              ├── 슬래시 커맨드 (.pylon/builtin/commands/)
               │   ├── /pl:pipeline ─ 전체 파이프라인
               │   ├── /pl:architect ─ 아키텍처 분석
               │   ├── /pl:breakdown ─ PM 태스크 분해
@@ -169,7 +169,7 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
               │   ├── /pl:add-project ─ 프로젝트 추가
               │   └── /pl:migrate ─── 레거시 마이그레이션 안내
               │
-              └── 셸 스크립트 (.pylon/scripts/bash/)
+              └── 셸 스크립트 (.pylon/builtin/scripts/bash/)
                    ├── init-pipeline.sh
                    ├── run-verification.sh
                    ├── create-pr.sh
@@ -184,8 +184,8 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 |------|------|
 | **`.pylon/`** | 워크스페이스 소스 오브 트루스 (설정, 에이전트 정의, 도메인 지식) |
 | **`.claude/`** | `pylon` 실행 시 `.pylon/`에서 동적 생성되는 Claude Code 설정 (agents 심링크, commands, hooks) |
-| **CLAUDE.md** | 루트 에이전트의 시스템 프롬프트 (실행마다 자동 갱신) |
-| **슬래시 커맨드** | AI가 사용하는 내부 스킬 (`.pylon/commands/`) |
+| **AGENTS.md** | 루트 에이전트 운영 가이드. pylon 블록(매뉴얼 + 워크스페이스 정보)은 실행마다 재생성되고, 블록 밖은 사용자 규칙 영역 (`CLAUDE.md`는 `@AGENTS.md` import 마커) |
+| **슬래시 커맨드** | AI가 사용하는 내부 스킬 (`.pylon/builtin/commands/`, 사용자 추가분은 `.pylon/commands/`) |
 | **파이프라인** | 파일 기반 워크플로우 (산출물 존재 = 단계 완료) |
 | **task runtime** | append-only event와 lease/fencing으로 재시작 가능한 태스크 제어 상태 |
 | **프로젝트 메모리** | `.pylon/memory/` 마크다운 파일 기반 지식 저장소 (git 추적) |
@@ -259,7 +259,7 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
 
 ## 내장 에이전트 (38종)
 
-`pylon init` 시 `.pylon/agents/`에 설치됩니다. `pylon sync-agents`로 최신 버전으로 갱신할 수 있습니다. PO가 요구사항을 분석하여 적절한 도메인의 에이전트를 자동 선택합니다.
+`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). PO가 요구사항을 분석하여 적절한 도메인의 에이전트를 자동 선택합니다.
 
 ### 소프트웨어 개발 (23종)
 
@@ -355,7 +355,7 @@ pylon mem delete --project <name> --key "키"            # 삭제 (--category, -
 
 | 명령어 | 설명 |
 |--------|------|
-| `pylon sync-agents` | 내장 에이전트 정의를 워크스페이스에 동기화 (`--force`로 덮어쓰기) |
+| `pylon sync-agents` | 내장 리소스(`.pylon/builtin/`)와 `.claude/agents/` 심링크를 즉시 동기화 |
 | `pylon sync-memory` | 세션 학습 내용을 프로젝트 메모리에 동기화 |
 
 ### 작업 이력
@@ -432,17 +432,16 @@ pylon history export <pipeline-id>/<phase> --output <new-directory>
 workspace/
 ├── .pylon/                    # 소스 오브 트루스 (git 추적)
 │   ├── config.yml             # 워크스페이스 설정
-│   ├── agents/                # 에이전트 정의 (38종)
-│   ├── skills/                # 에이전트 스킬
+│   ├── builtin/               # 내장 리소스 (git 무시, 버전이 바뀌면 통째로 재생성)
+│   │   ├── agents/            # 에이전트 정의 (38종)
+│   │   ├── skills/            # 에이전트 스킬
+│   │   ├── commands/          # 파이프라인 슬래시 커맨드 (pl-pipeline.md, ...)
+│   │   ├── scripts/bash/      # 파이프라인 셸 스크립트 (common.sh, init-pipeline.sh, ...)
+│   │   └── reference/         # pylon 사용 매뉴얼 (pylon-usage.md)
+│   ├── agents/                # 사용자 추가 에이전트 (pylon add-agent)
+│   ├── skills/                # 사용자 추가 스킬 (pylon add-skill)
+│   ├── commands/              # 사용자 추가 파이프라인 커맨드
 │   ├── domain/                # 팀 도메인 지식 (위키)
-│   ├── commands/              # 파이프라인 슬래시 커맨드
-│   │   ├── pl-pipeline.md
-│   │   ├── pl-architect.md
-│   │   └── ...
-│   ├── scripts/bash/          # 파이프라인 셸 스크립트
-│   │   ├── common.sh
-│   │   ├── init-pipeline.sh
-│   │   └── ...
 │   ├── tasks/                 # 확정된 태스크 스펙
 │   ├── memory/                # 프로젝트 메모리 (git 추적)
 │   │   └── {project}/          # 프로젝트별 <category>/<slug>.md + INDEX.md
@@ -457,11 +456,12 @@ workspace/
 │       └── pipelines/         # {pipeline-id}/{phase}/ 디렉토리 스냅샷
 │
 ├── .claude/                   # 동적 생성 (git 무시)
-│   ├── agents/                # .pylon/agents/ 심링크
+│   ├── agents/                # .pylon/builtin/agents/, .pylon/agents/ 심링크
 │   ├── commands/              # 슬래시 커맨드 심링크
 │   └── settings.json          # Claude Code hooks 설정
 │
-├── CLAUDE.md                  # 루트 에이전트 시스템 프롬프트 (동적 생성)
+├── AGENTS.md                  # 운영 가이드 (pylon 블록은 재생성, 블록 밖은 사용자 소유)
+├── CLAUDE.md                  # @AGENTS.md import 마커 (동적 생성)
 │
 ├── project-a/                 # 프로젝트 디렉토리
 │   └── .pylon/context.md      # 프로젝트 컨텍스트

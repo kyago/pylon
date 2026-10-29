@@ -12,7 +12,7 @@ description: "에이전트 병렬 실행"
 ## 실행
 
 1. `tasks.json`을 읽습니다
-2. `.pylon/agents/` 에이전트 정의를 읽습니다
+2. `.pylon/builtin/agents/`(내장)와 `.pylon/agents/`(사용자 추가)의 에이전트 정의를 읽습니다
 3. 의존성 그래프를 분석하여 wave 단위로 실행합니다:
    - Wave 1: 의존성 없는 태스크 (병렬 Agent 호출)
    - Wave 2: Wave 1에 의존하는 태스크
@@ -85,7 +85,7 @@ pipeline이 `execution-log.json`의 task 항목에 `verified: true|false`로 기
    `status.json.sub_pipelines`에서 태스크의 `repo`와 일치하는 branch를 조회합니다:
 
 ```bash
-.pylon/scripts/bash/merge-branches.sh "$TASK_BRANCH" "$AGENT_BRANCH_1" "$AGENT_BRANCH_2" --git-root "$REPO"
+.pylon/builtin/scripts/bash/merge-branches.sh "$TASK_BRANCH" "$AGENT_BRANCH_1" "$AGENT_BRANCH_2" --git-root "$REPO"
 ```
 
 root pipeline에는 branch가 없으며, 서로 다른 repo의 branch를 한 merge 호출에 섞지 않습니다.

@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/kyago/pylon/internal/config"
@@ -16,22 +14,15 @@ import (
 	"github.com/kyago/pylon/internal/layout"
 )
 
-// pylonUsageVersion is the version of the embedded pylon usage manual
-// (internal/cli/reference/pylon-usage.md). It is the sole trigger that marks an
-// existing AGENTS.md block stale. Bump it ONLY when the manual changes a procedure,
-// command, or path a session must follow — wording, typo, and formatting edits do
-// not bump. A stale session-authored block is not discarded: the stamp is raised and
-// an update notice is inserted so the next session revises the guide incrementally.
-// Independent of pylon's CalVer release version.
-const pylonUsageVersion = 5
-
-var usageVersionRe = regexp.MustCompile(`pylon-usage-version:\s*(\d+)`)
+// legacyUsageVersionRe matches the whole-line version stamp releases before the
+// deterministic block wrote (`<!-- pylon-usage-version: N -->`). Kept only as a
+// migration recognizer: a stamp marks a session-authored guide pylon must back up
+// before replacing it.
 var legacyUsageVersionRe = regexp.MustCompile(`^<!--\s*pylon-usage-version:\s*\d+\s*-->$`)
 
 // agentsBlockBegin/agentsBlockEnd delimit the pylon-managed region inside the
-// workspace-root AGENTS.md. pylon and the launched session only ever rewrite what
-// lies between the markers; anything a user writes outside the block is preserved
-// verbatim across launch, doctor, and version bumps.
+// workspace-root AGENTS.md. pylon regenerates what lies between the markers on every
+// launch; anything a user writes outside the block is preserved verbatim.
 const agentsBlockBegin = "<!-- pylon:begin -->"
 const agentsBlockEnd = "<!-- pylon:end -->"
 
@@ -42,15 +33,21 @@ func buildClaudeMDPointer() string {
 	return "@AGENTS.md\n"
 }
 
-// buildAgentsBlock returns the pylon-managed block (markers included) written into
-// AGENTS.md when the block is missing or stale. Its job is to make the launched
-// session author the real guide inside the block on its first turn; it also stands
-// on its own as a minimal fallback if authoring never happens.
-// bootstrapAgentsMDHeading is the heading buildAgentsBlock emits. It is the
-// signature that tells an unauthored stub apart from a guide a session actually wrote:
-// only the stub may be discarded without a backup (pre-block legacy files only —
-// with the block in place, replacement never touches user content).
-const bootstrapAgentsMDHeading = "# pylon 워크스페이스 — 운영 가이드 (자동 생성 부트스트랩)"
+// bootstrapAgentsMDHeading and bootstrapAgentsMDNotice are the heading and the
+// "not yet authored" sentence of the stub that releases before the deterministic block
+// wrote. Kept only as migration recognizers: a block carrying both is pylon's own
+// unauthored output and is replaced without a backup. Do not delete as unused.
+const (
+	bootstrapAgentsMDHeading = "# pylon 워크스페이스 — 운영 가이드 (자동 생성 부트스트랩)"
+	bootstrapAgentsMDNotice  = "이 블록은 아직 이 워크스페이스에 맞게 저작되지 않았습니다."
+)
+
+// agentsManualTitle and agentsFactsHeading frame every block buildAgentsBlock emits;
+// together they identify a block as generated (see isPylonGeneratedBlock).
+const (
+	agentsManualTitle  = "# pylon 워크스페이스 운영 매뉴얼"
+	agentsFactsHeading = "## 이 워크스페이스"
+)
 
 // legacyClaudeMDHeading is the first line the pre-AGENTS.md generator (buildRootCLAUDEMD,
 // removed in this change) wrote into workspace CLAUDE.md. Kept as a migration recognizer:
@@ -67,31 +64,25 @@ func isPylonClaudeMD(data []byte) bool {
 	return strings.HasPrefix(content, legacyPrefix)
 }
 
-func buildAgentsBlock(root string, projects []config.ProjectInfo) string {
+// buildAgentsBlock returns the pylon-managed block (markers included): the embedded
+// usage manual verbatim, followed by the workspace facts Go knows. It is a pure
+// function of the binary and the project list, so every launch rewrites it whenever
+// either changes and no version tracking is needed. The workspace root is left out on
+// purpose: the same directory reached through different paths must not churn the file.
+func buildAgentsBlock(projects []config.ProjectInfo) string {
+	manual, _ := embeddedReference.ReadFile("reference/pylon-usage.md")
 	var b strings.Builder
 	b.WriteString(agentsBlockBegin + "\n")
-	fmt.Fprintf(&b, "<!-- pylon-usage-version: %d -->\n", pylonUsageVersion)
-	b.WriteString(bootstrapAgentsMDHeading + "\n\n")
-	b.WriteString("이 블록(`pylon:begin`~`pylon:end`)은 pylon이 관리합니다 — 블록 밖에 적은 내용은 절대 건드리지 않으니\n")
-	b.WriteString("워크스페이스 자체 규칙은 블록 밖에 자유롭게 작성하세요.\n\n")
-	b.WriteString("이 블록은 아직 이 워크스페이스에 맞게 저작되지 않았습니다.\n")
-	b.WriteString("**다른 작업을 하기 전에**, `.pylon/reference/pylon-usage.md`와 실제 리포지토리·`.pylon/`을 읽고\n")
-	b.WriteString("이 블록의 내용을 이 워크스페이스의 운영 가이드로 다시 작성하세요.\n")
-	fmt.Fprintf(&b, "마커 두 줄과 `<!-- pylon-usage-version: %d -->` 스탬프는 블록 안에 그대로 유지하고,\n", pylonUsageVersion)
-	b.WriteString("블록 밖의 내용은 수정하지 마세요.\n\n")
-	b.WriteString("관리 블록에는 `.pylon/`과 등록 프로젝트에서 확인한 기능만 반영하고,\n")
-	b.WriteString("pylon이 제공하지 않는 외부 도구·스킬을 추가하거나 필수 절차로 지정하지 마세요.\n\n")
-	fmt.Fprintf(&b, "- **워크스페이스 루트**: `%s`\n", root)
-	b.WriteString("- **매뉴얼**: `.pylon/reference/pylon-usage.md`\n")
-	b.WriteString("- **설정**: `.pylon/config.yml` / **도메인 지식**: `.pylon/domain/` / **에이전트**: `.pylon/agents/`\n")
+	b.WriteString(strings.TrimSpace(string(manual)) + "\n\n")
+	b.WriteString(agentsFactsHeading + "\n\n")
+	b.WriteString("- **설정**: `.pylon/config.yml` / **도메인 지식**: `.pylon/domain/`\n")
+	b.WriteString("- **에이전트**: `.pylon/builtin/agents/`(내장), `.pylon/agents/`(사용자 추가)\n")
 	if len(projects) > 0 {
-		fmt.Fprintf(&b, "- **프로젝트 %d개**: ", len(projects))
 		names := make([]string, len(projects))
 		for i, p := range projects {
 			names[i] = p.Name
 		}
-		b.WriteString(strings.Join(names, ", "))
-		b.WriteString("\n")
+		fmt.Fprintf(&b, "- **프로젝트 %d개**: %s\n", len(projects), strings.Join(names, ", "))
 	} else {
 		b.WriteString("- **프로젝트**: 없음 — `pylon add-project <git-url>`로 추가\n")
 	}
@@ -99,29 +90,18 @@ func buildAgentsBlock(root string, projects []config.ProjectInfo) string {
 	return b.String()
 }
 
-// agentsUpdateHeading opens the notice buildAgentsUpdateNotice inserts into a stale
-// session-authored block. The session removes the whole notice once the guide is revised.
-const agentsUpdateHeading = "## pylon 매뉴얼 갱신 필요"
-
-// buildAgentsUpdateNotice returns blockData with its stamp raised to pylonUsageVersion
-// and an update notice inserted right after the stamp. Everything the session wrote is
-// kept, so a manual bump costs an incremental revision instead of a full re-authoring.
-// blockData must be a complete block (begin line first, end line last).
-func buildAgentsUpdateNotice(blockData []byte) string {
-	prev := blockUsageVersion(blockData)
-	lines := strings.Split(strings.TrimSuffix(string(blockData), "\n"), "\n")
-	body := slices.DeleteFunc(lines[1:len(lines)-1], func(l string) bool { return legacyUsageVersionRe.MatchString(strings.TrimSpace(l)) })
-	var b strings.Builder
-	b.WriteString(lines[0] + "\n")
-	fmt.Fprintf(&b, "<!-- pylon-usage-version: %d -->\n", pylonUsageVersion)
-	fmt.Fprintf(&b, "%s (v%d → v%d)\n\n", agentsUpdateHeading, prev, pylonUsageVersion)
-	b.WriteString("pylon 매뉴얼이 갱신되었습니다. **다른 작업을 하기 전에** `.pylon/reference/pylon-usage.md`를 다시 읽고\n")
-	b.WriteString("달라진 절차·명령·경로만 아래 가이드에 반영하세요. 기존 내용은 처음부터 다시 쓰지 말고 고칩니다.\n")
-	b.WriteString("반영이 끝나면 이 안내 문단(제목 포함)을 삭제하고, 마커 두 줄과 스탬프는 그대로 두며, 블록 밖의 내용은\n")
-	b.WriteString("수정하지 마세요.\n\n")
-	b.WriteString(strings.Join(body, "\n") + "\n")
-	b.WriteString(lines[len(lines)-1] + "\n")
-	return b.String()
+// isPylonGeneratedBlock reports whether a block is pylon's own output — one
+// buildAgentsBlock emitted (possibly edited in place, which is reverted) or the
+// unauthored stub of older releases — and may be replaced without a backup. Anything
+// else, notably a guide a session authored under the old version-stamp scheme, is
+// backed up first: when unsure, keep a copy.
+func isPylonGeneratedBlock(blockData []byte) bool {
+	generated := bytes.Contains(blockData, []byte(agentsManualTitle+"\n")) &&
+		bytes.Contains(blockData, []byte("\n"+agentsFactsHeading+"\n")) &&
+		!bytes.Contains(blockData, []byte("pylon-usage-version:"))
+	stub := bytes.Contains(blockData, []byte(bootstrapAgentsMDHeading)) &&
+		bytes.Contains(blockData, []byte(bootstrapAgentsMDNotice))
+	return generated || stub
 }
 
 type agentsBlockState uint8
@@ -202,23 +182,6 @@ func writeAgentsFile(path string, data []byte) error {
 	return fsutil.WriteFileAtomic(target, data, mode)
 }
 
-// blockUsageVersion returns the version stamp inside the block, or 0 when absent
-// or unparseable.
-func blockUsageVersion(blockData []byte) int {
-	m := usageVersionRe.FindSubmatch(blockData)
-	if m == nil {
-		return 0
-	}
-	v, _ := strconv.Atoi(string(m[1]))
-	return v
-}
-
-// agentsBlockIsCurrent reports whether the given block bytes carry a version
-// stamp at or above pylonUsageVersion.
-func agentsBlockIsCurrent(blockData []byte) bool {
-	return blockUsageVersion(blockData) >= pylonUsageVersion
-}
-
 // isLegacyAgentsMD recognizes the whole-file format used before managed blocks.
 // Legacy sessions were instructed to keep the version stamp at the top. Requiring
 // it to be the first non-empty, whole line prevents examples in user documentation
@@ -234,19 +197,6 @@ func isLegacyAgentsMD(data []byte) bool {
 	return false
 }
 
-// agentsMDStale reports whether the pylon block in the workspace-root AGENTS.md
-// needs (re)authoring: file missing, no complete block, no parseable version stamp
-// inside the block, or a stamp older than pylonUsageVersion. The stamp is only
-// looked for inside the block, so user content cannot mask a stale block.
-func agentsMDStale(root string) bool {
-	data, err := os.ReadFile(layout.RootAgentsPath(root))
-	if err != nil {
-		return true
-	}
-	s, e, state := findAgentsBlock(data)
-	return state != agentsBlockComplete || !agentsBlockIsCurrent(data[s:e])
-}
-
 // rootFileBackupSuffix is appended to a hand-written root file that pylon is about to
 // replace, so `pylon init` in a repo that already has its own CLAUDE.md/AGENTS.md never
 // destroys it silently — the root files are gitignored, so an untracked original would
@@ -260,26 +210,27 @@ const maxRootFileBackups = 100
 // backupIfHandWritten renames path aside when it exists and was not written by pylon.
 // pylonAuthored decides that from the current content; a file pylon itself produced is
 // replaced in place, so ordinary launches never churn out backups. An existing backup is
-// never clobbered — the next free suffix is used. Reports whether a backup was taken.
-func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (bool, error) {
+// never clobbered — the next free suffix is used. Returns the backup's file name, or ""
+// when no backup was taken.
+func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil // 없으면 백업할 것도 없다
+			return "", nil // 없으면 백업할 것도 없다
 		}
-		return false, fmt.Errorf("%s 읽기 실패: %w", filepath.Base(path), err)
+		return "", fmt.Errorf("%s 읽기 실패: %w", filepath.Base(path), err)
 	}
 	if pylonAuthored(data) {
-		return false, nil
+		return "", nil
 	}
 	dest, err := nextBackupPath(path)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	if err := os.Rename(path, dest); err != nil {
-		return false, fmt.Errorf("%s 백업 실패: %w", filepath.Base(path), err)
+		return "", fmt.Errorf("%s 백업 실패: %w", filepath.Base(path), err)
 	}
-	return true, nil
+	return filepath.Base(dest), nil
 }
 
 // nextBackupPath returns the first free .pylon-bak[.N] path next to path.
@@ -299,13 +250,13 @@ func nextBackupPath(path string) (string, error) {
 
 // ensureRootAgentFiles keeps the two workspace-root files in the desired state:
 // CLAUDE.md is always (re)written to the deterministic @AGENTS.md import marker, and
-// the pylon block inside AGENTS.md is re-bootstrapped ONLY when stale — a
-// session-authored, current block is left untouched, and content outside the block
-// is NEVER modified. A user's own AGENTS.md (no block) keeps its content and gets
-// the block prepended so Codex sees it before the default instruction-size cap;
-// only pre-block legacy pylon files are replaced whole (with a
-// .pylon-bak backup when session-authored). Returns whether the block was
-// bootstrapped, and the names of any files backed up so callers can tell the user.
+// the pylon block inside AGENTS.md is rewritten whenever it differs from
+// buildAgentsBlock — content outside the block is NEVER modified. A user's own
+// AGENTS.md (no block) keeps its content and gets the block prepended so Codex sees
+// it before the default instruction-size cap. A guide a session authored under the
+// pre-deterministic scheme (old block or pre-block legacy file) is backed up to
+// .pylon-bak before it is replaced. Returns whether AGENTS.md was written, and the
+// file names of any backups taken so callers can tell the user where to look.
 func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []string, error) {
 	var backedUp []string
 
@@ -336,14 +287,14 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 	claudePath := layout.RootClaudePath(root)
 	// pylon이 쓴 CLAUDE.md는 두 가지뿐이다: 현재의 마커, 그리고 이 변경 이전 워크스페이스에
 	// 남아 있는 하드코딩 프롬프트. 둘 다 pylon 산출물이므로 백업 없이 교체한다.
-	ok, err := backupIfHandWritten(claudePath, func(b []byte) bool {
+	bak, err := backupIfHandWritten(claudePath, func(b []byte) bool {
 		return isPylonClaudeMD(b)
 	})
 	if err != nil {
 		return false, backedUp, err
 	}
-	if ok {
-		backedUp = append(backedUp, filepath.Base(claudePath))
+	if bak != "" {
+		backedUp = append(backedUp, bak)
 	}
 	pointer := []byte(buildClaudeMDPointer())
 	// 이미 마커면 다시 쓰지 않는다 — 매 실행 mtime 갱신으로 파일 워처를 깨우지 않기 위해.
@@ -353,25 +304,19 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		}
 	}
 
-	if blockState == agentsBlockComplete && agentsBlockIsCurrent(data[s:e]) {
-		return false, backedUp, nil
-	}
-
-	block := buildAgentsBlock(root, projects)
-	if readErr != nil {
+	block := buildAgentsBlock(projects)
+	var out string
+	switch {
+	case readErr != nil:
 		// 파일 없음 → 블록만으로 새로 만든다.
-		if err := writeAgentsFile(agentsPath, []byte(block)); err != nil {
-			return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
+		out = block
+	case blockState == agentsBlockComplete:
+		if string(data[s:e]) == block {
+			return false, backedUp, nil // 이미 최신 — mtime을 건드리지 않는다
 		}
-		return true, backedUp, nil
-	}
-
-	if blockState == agentsBlockComplete {
-		// stale 블록만 손댄다 — 블록 밖 사용자 내용은 그대로 둔다. 저작되지 않은 스텁은 새
-		// 스텁으로 교체하고, 세션이 저작한 가이드는 버리지 않고 스탬프를 올린 뒤 갱신 안내만
-		// 넣는다. 저작된 가이드는 되돌릴 수 있도록 파일 전체를 .pylon-bak으로 복사해 둔다.
-		newBlock := block
-		if !bytes.Contains(data[s:e], []byte(bootstrapAgentsMDHeading)) {
+		// 블록만 교체한다 — 블록 밖 사용자 내용은 그대로 둔다. pylon이 만든 블록이 아니면(이전
+		// 방식에서 세션이 저작한 가이드 등) 되돌릴 수 있도록 파일 전체를 .pylon-bak으로 복사해 둔다.
+		if !isPylonGeneratedBlock(data[s:e]) {
 			dest, err := nextBackupPath(agentsPath)
 			if err != nil {
 				return false, backedUp, err
@@ -383,39 +328,29 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 			if err := fsutil.WriteFileAtomic(dest, data, mode); err != nil {
 				return false, backedUp, fmt.Errorf("AGENTS.md 백업 실패: %w", err)
 			}
-			backedUp = append(backedUp, filepath.Base(agentsPath))
-			newBlock = buildAgentsUpdateNotice(data[s:e])
+			backedUp = append(backedUp, filepath.Base(dest))
 		}
-		out := string(data[:s]) + newBlock + string(data[e:])
-		if err := writeAgentsFile(agentsPath, []byte(out)); err != nil {
-			return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
-		}
-		return true, backedUp, nil
-	}
-
-	if isLegacyAgentsMD(data) {
+		out = string(data[:s]) + block + string(data[e:])
+	case isLegacyAgentsMD(data):
 		// 블록 도입 이전의 pylon 전체 파일. 저작되지 않은 스텁만 그냥 버린다. 스탬프 유무로
 		// 판단하면 안 된다 — 스탬프를 가진 세션 저작 가이드까지 조용히 사라진다.
-		ok, err = backupIfHandWritten(agentsPath, func(b []byte) bool {
+		bak, err = backupIfHandWritten(agentsPath, func(b []byte) bool {
 			return strings.Contains(string(b), bootstrapAgentsMDHeading)
 		})
 		if err != nil {
 			return false, backedUp, err
 		}
-		if ok {
-			backedUp = append(backedUp, filepath.Base(agentsPath))
+		if bak != "" {
+			backedUp = append(backedUp, bak)
 		}
-		if err := writeAgentsFile(agentsPath, []byte(block)); err != nil {
-			return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
-		}
-		return true, backedUp, nil
+		out = block
+	default:
+		// 사용자가 직접 쓴 AGENTS.md — Codex의 기본 project_doc_max_bytes(32KiB)에
+		// 잘리지 않도록 블록을 앞에 두고, 기존 사용자 바이트는 그대로 뒤에 보존한다.
+		out = block + string(data)
 	}
-
-	// 사용자가 직접 쓴 AGENTS.md — Codex의 기본 project_doc_max_bytes(32KiB)에
-	// 잘리지 않도록 블록을 앞에 두고, 기존 사용자 바이트는 그대로 뒤에 보존한다.
-	out := block + string(data)
 	if err := writeAgentsFile(agentsPath, []byte(out)); err != nil {
-		return false, backedUp, fmt.Errorf("AGENTS.md 부트스트랩 실패: %w", err)
+		return false, backedUp, fmt.Errorf("AGENTS.md 생성 실패: %w", err)
 	}
 	return true, backedUp, nil
 }

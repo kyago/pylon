@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +42,20 @@ dist/
 # Pylon-generated Claude Code config (dynamically generated)
 .claude/
 CLAUDE.md
+
+dist/
+`,
+			want: `node_modules/
+
+dist/
+`,
+		},
+		{
+			name: "removes pylon built-in resources section",
+			input: `node_modules/
+
+# Pylon built-in resources (regenerated)
+.pylon/builtin/
 
 dist/
 `,
@@ -177,7 +190,7 @@ func TestUninstallStripsPylonBlockKeepingUserContent(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, ".pylon"), 0755)
 	user := "# 우리 팀 규칙\n\n"
 	agentsPath := layout.RootAgentsPath(root)
-	os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(root, nil)), 0644)
+	os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(nil)), 0644)
 
 	plan, err := buildUninstallPlan(root, false, false)
 	if err != nil {
@@ -259,7 +272,7 @@ func TestBuildUninstallPlanSkipsMalformedAgentsMDAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := "# 우리 팀 규칙\n\n" + agentsBlockBegin +
-		fmt.Sprintf("\n<!-- pylon-usage-version: %d -->\n", pylonUsageVersion) + bootstrapAgentsMDHeading + "\n"
+		"\n<!-- pylon-usage-version: 5 -->\n" + bootstrapAgentsMDHeading + "\n"
 	agentsPath := layout.RootAgentsPath(root)
 	if err := os.WriteFile(agentsPath, []byte(original), 0644); err != nil {
 		t.Fatal(err)
@@ -325,7 +338,7 @@ func TestExecuteUninstallRechecksAgentsMDBeforeDeleting(t *testing.T) {
 		t.Fatal(err)
 	}
 	agentsPath := layout.RootAgentsPath(root)
-	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(root, nil)), 0644); err != nil {
+	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(nil)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := buildUninstallPlan(root, false, false)
@@ -334,7 +347,7 @@ func TestExecuteUninstallRechecksAgentsMDBeforeDeleting(t *testing.T) {
 	}
 
 	user := "# 확인 중 추가된 사용자 규칙\n\n"
-	if err := os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(root, nil)), 0644); err != nil {
+	if err := os.WriteFile(agentsPath, []byte(user+buildAgentsBlock(nil)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := executeUninstall(root, plan); err != nil {
@@ -394,7 +407,7 @@ func TestBuildUninstallPlan(t *testing.T) {
 
 	// Create the generated root agent files
 	os.WriteFile(layout.RootClaudePath(root), []byte("@AGENTS.md\n"), 0644)
-	os.WriteFile(layout.RootAgentsPath(root), []byte(fmt.Sprintf("<!-- pylon-usage-version: %d -->\n# guide", pylonUsageVersion)), 0644)
+	os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(nil)), 0644)
 
 	// Create .gitignore
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("# pylon\n.pylon/runtime/\n"), 0644)

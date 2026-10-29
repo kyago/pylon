@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/provider"
 	providerclaude "github.com/kyago/pylon/internal/provider/claude"
 	providercodex "github.com/kyago/pylon/internal/provider/codex"
@@ -95,19 +94,15 @@ func newProviderCatalog(cfg *config.Config) (*providerCatalog, error) {
 // pylon 소유 리소스 갱신은 launch 계약(모든 launch에서 refresh)에 따라
 // claude 경로(generateClaudeDir)와 동일하게 수행한다.
 func prepareCodexWorkspace(root string, _ *config.Config, projects []config.ProjectInfo) error {
-	if _, overwritten := syncPylonResources(layout.PylonDir(root)); len(overwritten) > 0 {
-		fmt.Fprintf(os.Stderr, "⚠ 내장 버전으로 되돌린 pylon 소유 파일 %d개: %s\n",
-			len(overwritten), strings.Join(overwritten, ", "))
+	if err := syncBuiltinForLaunch(root); err != nil {
+		return err
 	}
-	bootstrapped, backedUp, err := ensureRootAgentFiles(root, projects)
+	_, backedUp, err := ensureRootAgentFiles(root, projects)
 	if err != nil {
 		return err
 	}
 	for _, name := range backedUp {
-		fmt.Fprintf(os.Stderr, "ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
-	}
-	if bootstrapped {
-		fmt.Fprintln(os.Stderr, "ℹ AGENTS.md를 부트스트랩했습니다 — 세션이 첫 턴에 이 워크스페이스에 맞게 재작성합니다.")
+		fmt.Fprintf(os.Stderr, "ℹ 기존 내용을 %s에 백업했습니다.\n", name)
 	}
 	// 파이프라인 커맨드를 codex repo 스킬(.agents/skills/)로 노출한다 — claude의
 	// .claude/commands/ 대응물. launch/doctor가 같은 생성기를 공유한다.
@@ -119,22 +114,22 @@ func prepareCodexWorkspace(root string, _ *config.Config, projects []config.Proj
 
 // syncCodexProviderResourcesIfWorkspace reconciles the codex-owned workspace
 // artifacts on `pylon doctor`, mirroring the claude provider's doctor sync:
-// codex는 루트 AGENTS.md를 네이티브로 읽으므로 doctor가 stale 가이드
-// 재부트스트랩을 보고할 수 있어야 한다 (launch stderr는 TUI에 가려진다).
+// codex는 루트 AGENTS.md를 네이티브로 읽으므로 doctor가 블록 갱신·백업을
+// 보고할 수 있어야 한다 (launch stderr는 TUI에 가려진다).
 func syncCodexProviderResourcesIfWorkspace(io.Reader, bool) {
 	root, err := resolveRoot()
 	if err != nil {
 		return
 	}
-	bootstrapped, backedUp, err := reconcileRootAgentFiles(root)
+	updated, backedUp, err := reconcileRootAgentFiles(root)
 	if err != nil {
 		fmt.Printf("⚠ 루트 에이전트 파일 갱신 실패: %v\n", err)
 	} else {
 		for _, name := range backedUp {
-			fmt.Printf("ℹ 기존 %s를 %s%s로 백업했습니다.\n", name, name, rootFileBackupSuffix)
+			fmt.Printf("ℹ 기존 내용을 %s에 백업했습니다.\n", name)
 		}
-		if bootstrapped {
-			fmt.Println("✓ AGENTS.md를 부트스트랩했습니다 — 다음 실행 시 세션이 이 워크스페이스에 맞게 재작성합니다.")
+		if updated {
+			fmt.Println("✓ AGENTS.md의 pylon 블록을 갱신했습니다")
 		}
 	}
 	if err := generateCodexSkills(root); err != nil {

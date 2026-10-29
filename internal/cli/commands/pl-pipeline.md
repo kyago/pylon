@@ -36,7 +36,7 @@ handoffs:
 root pipeline은 요구사항과 repo 목록을 묶는 논리 run입니다. 이 단계에서는 branch를 만들지 않습니다.
 
 ```bash
-INIT_RESULT=$(.pylon/scripts/bash/init-pipeline.sh "$ARGUMENTS")
+INIT_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$ARGUMENTS")
 PIPELINE_ID=$(echo "$INIT_RESULT" | jq -r '.pipeline_id')
 ROOT_PIPELINE_DIR=$(echo "$INIT_RESULT" | jq -r '.pipeline_dir')
 PIPELINE_DIR="$ROOT_PIPELINE_DIR"
@@ -84,17 +84,17 @@ Claude Code가 직접 PO 역할을 수행합니다.
 
 ### Step 3: 아키텍처 분석
 
-`.pylon/agents/architect.md`를 읽어 에이전트 정의를 가져온 뒤 Agent 도구로 실행합니다.
+`.pylon/builtin/agents/architect.md`를 읽어 에이전트 정의를 가져온 뒤 Agent 도구로 실행합니다.
 
 ```
 // 1. 에이전트 정의 로드
-ARCHITECT_DEF=$(cat .pylon/agents/architect.md)
+ARCHITECT_DEF=$(cat .pylon/builtin/agents/architect.md)
 
 // 2. 아키텍트 에이전트 실행
 Agent(prompt="$ARCHITECT_DEF\n\n## 태스크\n다음 요구사항을 분석하고 아키텍처 설계를 작성하세요: [requirement-analysis.md 내용]\n코드베이스 구조를 파악하고 영향 받는 repo, 파일, 변경 사항, 새로 생성할 파일을 명시하세요.\n결과를 $PIPELINE_DIR/architecture.md에 저장하고, 변경 대상 repo를 {\"repos\":[{\"path\":\"workspace 상대경로\"}]} 형식으로 $PIPELINE_DIR/repos.json에 저장하세요.")
 ```
 
-에이전트 정의는 `.pylon/agents/architect.md`에서 읽어 프롬프트에 주입합니다.
+에이전트 정의는 `.pylon/builtin/agents/architect.md`에서 읽어 프롬프트에 주입합니다.
 
 ### Step 3B: repo sub-pipeline 초기화
 
@@ -103,7 +103,7 @@ PR은 이 repo sub-pipeline만 소유합니다.
 
 ```bash
 jq -r '.repos[].path' "$ROOT_PIPELINE_DIR/repos.json" | while IFS= read -r REPO; do
-  SUB_RESULT=$(.pylon/scripts/bash/init-pipeline.sh "$ARGUMENTS" \
+  SUB_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$ARGUMENTS" \
     --git-root "$REPO" \
     --pipeline-dir "$ROOT_PIPELINE_DIR")
   REPO_ID=$(echo "$SUB_RESULT" | jq -r '.repo_id')
@@ -131,7 +131,7 @@ held-out 명령은 manifest에 binding된 `$REPO_PIPELINE_DIR/evaluator-only/hel
 ### Step 4: 사전조건 검증
 
 ```bash
-.pylon/scripts/bash/check-prerequisites.sh \
+.pylon/builtin/scripts/bash/check-prerequisites.sh \
   --pipeline-dir "$PIPELINE_DIR" \
   --require-requirement \
   --require-architecture \
@@ -182,7 +182,7 @@ Agent 결과는 검증 출력이 첨부된 경우에만 trajectory와 `execution
 
 ```
 // 의존성 없는 태스크를 동시에 실행 (T002, T003도 동일한 형식)
-Agent(prompt="[에이전트 정의 — .pylon/agents/{agent}.md]
+Agent(prompt="[에이전트 정의 — .pylon/builtin/agents/{agent}.md, 없으면 .pylon/agents/{agent}.md]
 
 ## 설계 근거
 [architecture.md 중 이 태스크에 해당하는 섹션 전문]
@@ -217,7 +217,7 @@ Agent(prompt="[에이전트 정의 — .pylon/agents/{agent}.md]
 pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase executed
 ```
 
-에이전트 정의는 `.pylon/agents/{agent-name}.md`에서 읽어 프롬프트에 주입합니다.
+에이전트 정의는 `.pylon/builtin/agents/{agent-name}.md`(사용자가 추가한 에이전트는 `.pylon/agents/{agent-name}.md`)에서 읽어 프롬프트에 주입합니다.
 
 격리 실행한 태스크가 있으면 검증 전에 **같은 repo의** 에이전트 브랜치를 해당 repo의 태스크 브랜치로 머지합니다.
 머지하지 않으면 Step 7은 에이전트가 쓴 코드가 없는 트리를 검증하게 됩니다:
@@ -225,7 +225,7 @@ pylon history checkpoint --pipeline "$(basename "$PIPELINE_DIR")" --phase execut
 ```bash
 REPO="service-a"
 TASK_BRANCH=$(jq -r --arg repo "$REPO" '.sub_pipelines[] | select(.repo == $repo) | .branch' "$ROOT_PIPELINE_DIR/status.json")
-.pylon/scripts/bash/merge-branches.sh "$TASK_BRANCH" "$AGENT_BRANCH_1" "$AGENT_BRANCH_2" --git-root "$REPO"
+.pylon/builtin/scripts/bash/merge-branches.sh "$TASK_BRANCH" "$AGENT_BRANCH_1" "$AGENT_BRANCH_2" --git-root "$REPO"
 ```
 
 다른 repo의 branch를 같은 merge 호출에 섞지 않습니다. merge 실패 시 checkpoint와 runtime을 보존하고
@@ -239,7 +239,7 @@ cleanup을 실행하지 않습니다.
 ```bash
 REPO="service-a"
 REPO_PIPELINE_DIR=$(jq -r --arg repo "$REPO" '.sub_pipelines[] | select(.repo == $repo) | .pipeline_dir' "$ROOT_PIPELINE_DIR/status.json")
-.pylon/scripts/bash/run-verification.sh "$REPO_PIPELINE_DIR" --git-root "$REPO"
+.pylon/builtin/scripts/bash/run-verification.sh "$REPO_PIPELINE_DIR" --git-root "$REPO"
 ```
 
 여러 프로젝트를 수정했다면 프로젝트마다 실행합니다.
@@ -356,14 +356,14 @@ VERIFIED=false
 `config.yml`에서 `git.pr.auto_pr` 값을 읽어 `true`인 경우에만 실행합니다:
 
 ```bash
-source .pylon/scripts/bash/common.sh
+source .pylon/builtin/scripts/bash/common.sh
 AUTO_PR=$(config_get "git.pr.auto_pr" "false")
 if [[ "$AUTO_PR" == "true" ]]; then
   jq -c '.sub_pipelines[]' "$ROOT_PIPELINE_DIR/status.json" | while IFS= read -r SUB; do
     REPO=$(echo "$SUB" | jq -r '.repo')
     REPO_PIPELINE_DIR=$(echo "$SUB" | jq -r '.pipeline_dir')
     TASK_BRANCH=$(echo "$SUB" | jq -r '.branch')
-    .pylon/scripts/bash/create-pr.sh "$REPO_PIPELINE_DIR" --git-root "$REPO" \
+    .pylon/builtin/scripts/bash/create-pr.sh "$REPO_PIPELINE_DIR" --git-root "$REPO" \
       --branch "$TASK_BRANCH" --title "feat: [요구사항 요약]"
   done
 fi
@@ -383,9 +383,9 @@ terminal checkpoint manifest를 다시 확인합니다. 체크포인트가 실�
 ```bash
 jq -c '.sub_pipelines[]' "$ROOT_PIPELINE_DIR/status.json" | while IFS= read -r SUB; do
   REPO_PIPELINE_DIR=$(echo "$SUB" | jq -r '.pipeline_dir')
-  .pylon/scripts/bash/cleanup-pipeline.sh "$REPO_PIPELINE_DIR" --terminal-phase completed
+  .pylon/builtin/scripts/bash/cleanup-pipeline.sh "$REPO_PIPELINE_DIR" --terminal-phase completed
 done
-.pylon/scripts/bash/cleanup-pipeline.sh "$ROOT_PIPELINE_DIR" --terminal-phase completed
+.pylon/builtin/scripts/bash/cleanup-pipeline.sh "$ROOT_PIPELINE_DIR" --terminal-phase completed
 ```
 
 학습 반영은 세션이 `.pylon/memory/`에 직접 기록하며 자동 적용은 없습니다.
@@ -400,7 +400,7 @@ done
 
 ## 리서치 파이프라인 (detected_domain: research)
 
-> 에이전트 정의는 `.pylon/agents/{agent-name}.md`에서 읽어 프롬프트에 주입합니다.
+> 에이전트 정의는 `.pylon/builtin/agents/{agent-name}.md`(사용자가 추가한 에이전트는 `.pylon/agents/{agent-name}.md`)에서 읽어 프롬프트에 주입합니다.
 > 각 단계 실행 전, 이전 단계의 산출물이 `$PIPELINE_DIR/`에 존재하는지 확인합니다.
 
 ### Step R1: 병렬 조사 (fan_out)
@@ -441,7 +441,7 @@ PO가 직접 보고서를 검토합니다:
 
 ## 콘텐츠 파이프라인 (detected_domain: content)
 
-> 에이전트 정의는 `.pylon/agents/{agent-name}.md`에서 읽어 프롬프트에 주입합니다.
+> 에이전트 정의는 `.pylon/builtin/agents/{agent-name}.md`(사용자가 추가한 에이전트는 `.pylon/agents/{agent-name}.md`)에서 읽어 프롬프트에 주입합니다.
 > 각 단계 실행 전, 이전 단계의 산출물이 `$PIPELINE_DIR/`에 존재하는지 확인합니다.
 
 ### Step C1: 콘텐츠 전략 수립
@@ -482,7 +482,7 @@ Agent(prompt="[seo-specialist 에이전트 정의]\n\n## 최종 콘텐츠\n[draf
 
 ## 마케팅 파이프라인 (detected_domain: marketing)
 
-> 에이전트 정의는 `.pylon/agents/{agent-name}.md`에서 읽어 프롬프트에 주입합니다.
+> 에이전트 정의는 `.pylon/builtin/agents/{agent-name}.md`(사용자가 추가한 에이전트는 `.pylon/agents/{agent-name}.md`)에서 읽어 프롬프트에 주입합니다.
 > 각 단계 실행 전, 이전 단계의 산출물이 `$PIPELINE_DIR/`에 존재하는지 확인합니다.
 
 ### Step M1: 시장 조사 (fan_out)

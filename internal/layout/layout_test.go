@@ -15,12 +15,15 @@ func TestLayoutPaths(t *testing.T) {
 		{"PylonDir", PylonDir(root), filepath.Join(root, ".pylon")},
 		{"ConfigPath", ConfigPath(root), filepath.Join(root, ".pylon", "config.yml")},
 		{"RuntimeDir", RuntimeDir(root), filepath.Join(root, ".pylon", "runtime")},
-		{"CommandsDir", CommandsDir(root), filepath.Join(root, ".pylon", "commands")},
-		{"ScriptsDir", ScriptsDir(root), filepath.Join(root, ".pylon", "scripts", "bash")},
+		{"BuiltinDir", BuiltinDir(root), filepath.Join(root, ".pylon", "builtin")},
+		{"ResourceDir", ResourceDir(root, "commands"), filepath.Join(root, ".pylon", "commands")},
+		{"BuiltinResourceDir", BuiltinResourceDir(root, "scripts/bash"), filepath.Join(root, ".pylon", "builtin", "scripts", "bash")},
+		{"ScriptsDir", ScriptsDir(root), filepath.Join(root, ".pylon", "builtin", "scripts", "bash")},
 		{"ClaudeDir", ClaudeDir(root), filepath.Join(root, ".claude")},
 		{"ClaudeAgentsDir", ClaudeAgentsDir(root), filepath.Join(root, ".claude", "agents")},
 		{"ClaudeCommandsDir", ClaudeCommandsDir(root), filepath.Join(root, ".claude", "commands")},
 		{"AgentLinkTarget", AgentLinkTarget("a.md"), filepath.Join("..", "..", ".pylon", "agents", "a.md")},
+		{"BuiltinAgentLinkTarget", BuiltinAgentLinkTarget("a.md"), filepath.Join("..", "..", ".pylon", "builtin", "agents", "a.md")},
 	}
 	for _, c := range cases {
 		if c.got != c.want {

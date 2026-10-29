@@ -114,36 +114,35 @@ func buildDesiredClaudeCommands(root string) map[string]string {
 		desired[filepath.FromSlash(name)+".md"] = content
 	}
 
-	// Pipeline slash commands → pl/: read from .pylon/commands/, which callers refresh
-	// from the embedded defaults first (see syncPylonResources — shipped names are
-	// pylon-owned, user-added ones are not). Fall back to the embeds for workspaces
-	// that have no .pylon/commands/ yet.
-	pylonCmdsDir := layout.CommandsDir(root)
-	if entries, err := os.ReadDir(pylonCmdsDir); err == nil && len(entries) > 0 {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			content, err := os.ReadFile(filepath.Join(pylonCmdsDir, entry.Name()))
-			if err != nil {
-				continue
-			}
-			destName := strings.TrimPrefix(entry.Name(), "pl-")
-			desired[filepath.Join("pl", destName)] = string(content)
+	// Pipeline slash commands → pl/: the built-ins come straight from the embeds
+	// (.pylon/builtin/commands/ is a copy of them), then user-added commands from
+	// .pylon/commands/. A built-in name always wins — see syncBuiltinResources.
+	embedded, _ := embeddedCommands.ReadDir("commands")
+	for _, entry := range embedded {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
 		}
-	} else {
-		embedded, _ := embeddedCommands.ReadDir("commands")
-		for _, entry := range embedded {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			content, err := embeddedCommands.ReadFile("commands/" + entry.Name())
-			if err != nil {
-				continue
-			}
-			destName := strings.TrimPrefix(entry.Name(), "pl-")
-			desired[filepath.Join("pl", destName)] = string(content)
+		content, err := embeddedCommands.ReadFile("commands/" + entry.Name())
+		if err != nil {
+			continue
 		}
+		desired[filepath.Join("pl", strings.TrimPrefix(entry.Name(), "pl-"))] = string(content)
+	}
+	userCmdsDir := layout.ResourceDir(root, "commands")
+	entries, _ := os.ReadDir(userCmdsDir)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		dest := filepath.Join("pl", strings.TrimPrefix(entry.Name(), "pl-"))
+		if _, builtin := desired[dest]; builtin {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(userCmdsDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		desired[dest] = string(content)
 	}
 
 	return desired

@@ -10,52 +10,90 @@ import (
 	"github.com/kyago/pylon/internal/layout"
 )
 
+// agentSource is one agent definition and the .claude/agents/ link target for it.
+type agentSource struct {
+	path   string
+	target string
+}
+
+// workspaceAgents lists the agent definitions keyed by file name: built-ins from
+// .pylon/builtin/agents/, then user-added ones from .pylon/agents/. A built-in name
+// always wins — see syncBuiltinResources.
+func workspaceAgents(root string) (map[string]agentSource, error) {
+	agents := make(map[string]agentSource)
+	for _, src := range []struct {
+		dir    string
+		target func(string) string
+	}{
+		{layout.BuiltinResourceDir(root, "agents"), layout.BuiltinAgentLinkTarget},
+		{layout.ResourceDir(root, "agents"), layout.AgentLinkTarget},
+	} {
+		entries, err := os.ReadDir(src.dir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			if _, taken := agents[entry.Name()]; !taken {
+				agents[entry.Name()] = agentSource{filepath.Join(src.dir, entry.Name()), src.target(entry.Name())}
+			}
+		}
+	}
+	return agents, nil
+}
+
 func generateClaudeAgentsWithSkills(root string, cfg *config.Config) error {
-	pylonAgentsDir := filepath.Join(layout.PylonDir(root), "agents")
 	claudeAgentsDir := layout.ClaudeAgentsDir(root)
 	if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(pylonAgentsDir)
-	if os.IsNotExist(err) {
-		return nil
-	}
+	agents, err := workspaceAgents(root)
 	if err != nil {
 		return err
 	}
-
-	skillMap, err := loadAgentSkillMap(cfg, filepath.Join(layout.PylonDir(root), "skills"))
+	skillMap, err := loadAgentSkillMap(root, cfg)
 	if err != nil {
 		return err
 	}
 	expected := make(map[string]bool)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		expected[entry.Name()] = true
+	for name, agent := range agents {
+		expected[name] = true
 		if err := materializeClaudeAgent(
-			filepath.Join(pylonAgentsDir, entry.Name()),
-			filepath.Join(claudeAgentsDir, entry.Name()),
-			layout.AgentLinkTarget(entry.Name()), cfg, skillMap,
+			agent.path, filepath.Join(claudeAgentsDir, name), agent.target, cfg, skillMap,
 		); err != nil {
-			return fmt.Errorf("%s 에이전트 동기화 실패: %w", entry.Name(), err)
+			return fmt.Errorf("%s 에이전트 동기화 실패: %w", name, err)
 		}
 	}
 	return removeStaleAgentLinks(claudeAgentsDir, expected)
 }
 
-func loadAgentSkillMap(cfg *config.Config, skillsDir string) (map[string]*config.SkillConfig, error) {
+// loadAgentSkillMap discovers skills from .pylon/builtin/skills/, then user-added
+// .pylon/skills/ (a built-in name wins). FilePath is rewritten relative to root so
+// progressive disclosure can point the agent at the file.
+func loadAgentSkillMap(root string, cfg *config.Config) (map[string]*config.SkillConfig, error) {
 	skillMap := make(map[string]*config.SkillConfig)
 	if !cfg.Skills.Enabled || !cfg.Skills.PreloadToAgents {
 		return skillMap, nil
 	}
-	skills, err := config.DiscoverSkills(skillsDir)
-	if err != nil {
-		return nil, fmt.Errorf("스킬 로드 실패: %w", err)
-	}
-	for _, skill := range skills {
-		skillMap[skill.Name] = skill
+	for _, dir := range []string{layout.BuiltinResourceDir(root, "skills"), layout.ResourceDir(root, "skills")} {
+		skills, err := config.DiscoverSkills(dir)
+		if err != nil {
+			return nil, fmt.Errorf("스킬 로드 실패: %w", err)
+		}
+		for _, skill := range skills {
+			if _, taken := skillMap[skill.Name]; taken {
+				continue
+			}
+			if rel, err := filepath.Rel(root, skill.FilePath); err == nil {
+				skill.FilePath = filepath.ToSlash(rel)
+			}
+			skillMap[skill.Name] = skill
+		}
 	}
 	return skillMap, nil
 }
@@ -111,7 +149,16 @@ func removeStaleAgentLinks(claudeAgentsDir string, expected map[string]bool) err
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		// 관리 대상은 심링크와 스킬을 주입해 만든 파일이다 — 그 밖의 사용자 파일은 남긴다.
+		managed := info.Mode()&os.ModeSymlink != 0
+		if !managed && info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			managed = strings.Contains(string(data), skillInjectionMarker)
+		}
+		if managed {
 			if err := os.Remove(path); err != nil {
 				return err
 			}
@@ -143,7 +190,7 @@ func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillC
 			if skill.Description != "" {
 				b.WriteString(fmt.Sprintf("%s\n", skill.Description))
 			}
-			b.WriteString(fmt.Sprintf("\n> 전체 내용은 `.pylon/skills/%s.md`를 참조하세요.\n\n", skill.Name))
+			b.WriteString(fmt.Sprintf("\n> 전체 내용은 `%s`를 참조하세요.\n\n", skill.FilePath))
 		} else {
 			// Full body injection (italic description to visually separate from body content)
 			b.WriteString(fmt.Sprintf("### %s\n", skill.Name))
@@ -160,21 +207,19 @@ func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillC
 	return b.String()
 }
 
-// syncClaudeAgentLinks ensures .claude/agents/ has symlinks for all .pylon/agents/*.md files.
-func syncClaudeAgentLinks(workDir, pylonDir string) error {
-	claudeAgentsDir := layout.ClaudeAgentsDir(workDir)
+// syncClaudeAgentLinks ensures .claude/agents/ has symlinks for every workspace agent
+// (built-in and user-added).
+func syncClaudeAgentLinks(root string) error {
+	claudeAgentsDir := layout.ClaudeAgentsDir(root)
 	if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(filepath.Join(pylonDir, "agents"))
+	agents, err := workspaceAgents(root)
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		if err := ensureSymlink(filepath.Join(claudeAgentsDir, entry.Name()), layout.AgentLinkTarget(entry.Name())); err != nil {
+	for name, agent := range agents {
+		if err := ensureSymlink(filepath.Join(claudeAgentsDir, name), agent.target); err != nil {
 			return err
 		}
 	}
