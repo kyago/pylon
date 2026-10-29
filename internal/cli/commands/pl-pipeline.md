@@ -109,7 +109,8 @@ acceptance criteria만 담습니다. held-out 명령(`evaluator-only/held-out.js
 루트 세션이 `requirement-analysis.md`와 `architecture.md`를 기반으로 태스크를 분해합니다.
 
 각 태스크에 ID, 제목, 설명, 담당 에이전트(`subagent_type` 이름), 의존성, `repo_id`, `repo`를 부여해
-`$PIPELINE_DIR/tasks.json`에 씁니다. 의존성이 없는 태스크는 병렬로 실행됩니다:
+`$PIPELINE_DIR/tasks.json`에 씁니다. 의존성이 없는 태스크는 병렬로 실행됩니다.
+`agent`는 `.pylon/builtin/agents/`의 내장 20개 이름 또는 `.pylon/agents/`의 사용자 에이전트 이름이어야 하며, tasks.json에 옛 이름이 남아 있으면 Step 6에서 `/pl:execute`(`.pylon/builtin/commands/pl-execute.md`)의 옛 에이전트 이름 매핑대로 바꿔 호출합니다:
 
 ```json
 {"tasks": [
