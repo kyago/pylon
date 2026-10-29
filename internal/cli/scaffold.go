@@ -24,7 +24,7 @@ func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error
 		return "", fmt.Errorf("%s '%s'는 내장 리소스 이름입니다 — 다른 이름을 사용하세요", kind, name)
 	}
 	// 은퇴한 내장 이름의 파일은 다음 sync가 .pylon-bak으로 비켜 놓는다 — syncBuiltinResources 참고.
-	if _, retired := retiredBuiltins[subdir+"/"+name+".md"]; retired {
+	if legacyShipped[subdir+"/"+name+".md"] != nil {
 		return "", fmt.Errorf("%s '%s'는 은퇴한 내장 리소스 이름입니다 — 다른 이름을 사용하세요", kind, name)
 	}
 

@@ -119,10 +119,8 @@ func TestSyncBuiltinResources_ClearsLegacyCopiesKeepsUserFiles(t *testing.T) {
 func TestSyncBuiltinResources_ClearsRetiredBuiltins(t *testing.T) {
 	root := t.TempDir()
 	shipped := []byte("retired built-in as shipped")
-	sum := sha256.Sum256(shipped)
 	for _, rel := range []string{"agents/retired-agent.md", "skills/retired-skill.md"} {
-		retiredBuiltins[rel] = hex.EncodeToString(sum[:])
-		t.Cleanup(func() { delete(retiredBuiltins, rel) })
+		addLegacyShipped(t, rel, shipped)
 	}
 	agent := filepath.Join(layout.ResourceDir(root, "agents"), "retired-agent.md")
 	skill := filepath.Join(layout.ResourceDir(root, "skills"), "retired-skill.md")
@@ -179,6 +177,90 @@ func TestSyncBuiltinResources_ClearsRetiredBuiltins(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(claudeAgents, "my-agent.md")); err != nil {
 		t.Errorf("user agent link missing: %v", err)
+	}
+}
+
+// addLegacyShipped registers content as a previously shipped version of rel for one test.
+func addLegacyShipped(t *testing.T, rel string, content []byte) {
+	t.Helper()
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	if legacyShipped[rel] == nil {
+		legacyShipped[rel] = map[string]bool{}
+		t.Cleanup(func() { delete(legacyShipped, rel) })
+	} else {
+		t.Cleanup(func() { delete(legacyShipped[rel], hash) })
+	}
+	legacyShipped[rel][hash] = true
+}
+
+// 2026.9.2 이전 레이아웃은 git 추적 .pylon/<kind>/에 내장 사본을 두었다. 이번 릴리스가 내용을 바꾼
+// 내장이라도, 손대지 않은 과거 출하본이면 백업하지 않고 삭제해야 한다.
+func TestSyncBuiltinResources_DeletesLegacyShippedCopiesOfCurrentBuiltins(t *testing.T) {
+	root := t.TempDir()
+	oldAgent := []byte("architect as shipped by 2026.9.2")
+	oldCommand := []byte("pl-pipeline as shipped by 2026.9.2")
+	addLegacyShipped(t, "agents/architect.md", oldAgent)
+	addLegacyShipped(t, "commands/pl-pipeline.md", oldCommand)
+	files := map[string][]byte{
+		filepath.Join(layout.ResourceDir(root, "agents"), "architect.md"):     oldAgent,
+		filepath.Join(layout.ResourceDir(root, "commands"), "pl-pipeline.md"): oldCommand,
+		filepath.Join(layout.ResourceDir(root, "agents"), "critic.md"):        []byte("critic edited by user"),
+	}
+	for path, content := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, _, err := syncBuiltinResources(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"agents/architect.md", "commands/pl-pipeline.md"} {
+		path := filepath.Join(layout.ResourceDir(root, filepath.Dir(rel)), filepath.Base(rel))
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("%s: unedited legacy copy must be deleted", rel)
+		}
+		if _, err := os.Lstat(path + rootFileBackupSuffix); !os.IsNotExist(err) {
+			t.Errorf("%s: unedited legacy copy must not be backed up", rel)
+		}
+	}
+	critic := filepath.Join(layout.ResourceDir(root, "agents"), "critic.md")
+	if got, err := os.ReadFile(critic + rootFileBackupSuffix); err != nil || string(got) != "critic edited by user" {
+		t.Errorf("edited copy must be backed up: %q, %v", got, err)
+	}
+}
+
+// 은퇴 목록은 과거 출하 기록 중 현재 임베드에 없는 경로다 — 이번 릴리스가 지운 에이전트 20개와 스킬 2개.
+func TestRetiredBuiltins_AreLegacyPathsMissingFromEmbeds(t *testing.T) {
+	got, err := retiredBuiltins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"agents/academic-analyst.md", "agents/backend-dev.md", "agents/brand-strategist.md",
+		"agents/campaign-planner.md", "agents/code-simplifier.md", "agents/content-reviewer.md",
+		"agents/content-strategist.md", "agents/copywriter.md", "agents/data-analyst.md",
+		"agents/doc-specialist.md", "agents/frontend-dev.md", "agents/lead-researcher.md",
+		"agents/pm.md", "agents/po.md", "agents/report-writer.md", "agents/security-reviewer.md",
+		"agents/tech-writer.md", "agents/test-engineer.md", "agents/tracer.md", "agents/web-searcher.md",
+		"skills/content-writing-guide.md", "skills/marketing-framework.md",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("retiredBuiltins() =\n%v\nwant\n%v", got, want)
+	}
+	for rel, hashes := range legacyShipped {
+		if len(hashes) == 0 {
+			t.Errorf("%s: no shipped hash", rel)
+		}
+		for h := range hashes {
+			if len(h) != 64 {
+				t.Errorf("%s: malformed hash %q", rel, h)
+			}
+		}
 	}
 }
 
