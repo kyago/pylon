@@ -384,7 +384,7 @@ func TestNewInternalCmd_IsHidden(t *testing.T) {
 }
 
 func TestBuiltInEvaluatorAndInvestigatorPolicies(t *testing.T) {
-	decision := []string{"verifier", "critic", "code-reviewer", "security-reviewer", "fact-checker", "content-reviewer"}
+	decision := []string{"verifier", "critic", "code-reviewer", "fact-checker", "content-reviewer"}
 	for _, name := range decision {
 		data, err := embeddedAgents.ReadFile("agents/" + name + ".md")
 		if err != nil {
@@ -401,7 +401,7 @@ func TestBuiltInEvaluatorAndInvestigatorPolicies(t *testing.T) {
 			t.Fatalf("decision agent %s tools=%v disallowed=%v", name, agent.Tools, agent.DisallowedTools)
 		}
 	}
-	for _, name := range []string{"explorer", "tracer", "analyst", "researcher", "doc-specialist"} {
+	for _, name := range []string{"explorer", "analyst", "researcher"} {
 		data, err := embeddedAgents.ReadFile("agents/" + name + ".md")
 		if err != nil {
 			t.Fatal(err)

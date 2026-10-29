@@ -41,7 +41,7 @@ func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error
 	return path, nil
 }
 
-// isBuiltinResource reports whether rel (e.g. "agents/pm.md") names an embedded resource.
+// isBuiltinResource reports whether rel (e.g. "agents/architect.md") names an embedded resource.
 func isBuiltinResource(rel string) bool {
 	files, err := embeddedBuiltinFiles()
 	if err != nil {

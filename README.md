@@ -230,7 +230,7 @@ deterministic gate가 통과하면 Pylon은 requirement, criteria snapshot, veri
 별도 read-only evaluator bundle로 복사합니다. 결정 evaluator는 `Read/Grep/Glob`과 structured output만
 사용하며 Bash/Edit/Write, 구현 agent memory, 전체 대화 이력을 받지 않습니다. evaluator 응답은 Pylon이
 request digest와 모든 criterion coverage를 검증한 뒤 `evaluator-result.json`으로 기록합니다. `explorer`,
-`tracer`, `analyst`, `researcher`, `doc-specialist`는 조사 역할이며 최종 PASS/FAIL을 소유하지 않습니다.
+`analyst`, `researcher`는 조사 역할이며 최종 PASS/FAIL을 소유하지 않습니다.
 
 각 task attempt는 provider 자연어 응답 대신 digest가 포함된 `task-report.json`을 남깁니다. 보고서에는
 provider/capability, 변경 파일, 검증 증거, 배제된 가설, 남은 불확실성이 포함됩니다. terminal failure는
@@ -257,67 +257,39 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
 | `/pl:add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
 | `/pl:migrate` | 레거시 워크스페이스(SQLite/Fossil) 폐기·이전 절차 안내 |
 
-## 내장 에이전트 (38종)
+## 내장 에이전트 (20종)
 
-`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). PO가 요구사항을 분석하여 적절한 도메인의 에이전트를 자동 선택합니다.
+`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). 루트 세션이 요구사항의 도메인을 판별해 적절한 에이전트를 고릅니다.
 
-### 소프트웨어 개발 (23종)
+### 소프트웨어 개발 (14종)
 
 | 에이전트 | 역할 |
 |----------|------|
-| po | 프로덕트 오너 (요구사항 분석, 도메인 라우팅) |
-| pm | 프로젝트 매니저 (태스크 분해, 조율) |
-| architect | 아키텍트 (기술 방향성, 의존성 분석) |
-| analyst | 분석가 (요구사항 분석) |
-| backend-dev | 백엔드 개발자 |
-| frontend-dev | 프론트엔드 개발자 |
-| designer | UI/UX 디자이너 |
-| test-engineer | 테스트 엔지니어 |
-| code-reviewer | 코드 리뷰어 |
-| code-simplifier | 코드 단순화 |
-| debugger | 디버거 |
-| devops | DevOps 엔지니어 |
+| architect | 아키텍트 (설계, `architecture.md`·`repos.json` 작성) |
+| dev | 개발자 (백엔드·프론트엔드·테스트 구현) |
+| code-reviewer | 코드 리뷰어 (보안 점검 포함) |
+| critic | 계획·설계 비평 |
+| verifier | 격리 evaluator 검증 |
+| debugger | 디버거 (근본 원인 추적, 진단 전용 모드) |
 | explorer | 코드베이스 탐색 |
-| git-master | Git 워크플로 |
+| researcher | 리서치 (웹·학술·공식 문서) |
+| analyst | 요구사항 분석 |
+| refactorer | 리팩토링·코드 단순화 |
 | perf-engineer | 성능 엔지니어 |
-| refactorer | 리팩토링 |
-| researcher | 리서치 |
-| security-reviewer | 보안 리뷰 |
-| tech-writer | 기술 문서 작성 |
-| doc-specialist | 외부 문서 전문가 |
-| tracer | 추적/디버깅 |
-| verifier | 검증 |
-| critic | 비평/리뷰 |
+| devops | DevOps (인프라, CI, 배포 설정) |
+| git-master | Git 워크플로 |
+| designer | UI/UX 디자이너 |
 
-### 리서치/조사 (5종)
+### 리서치·콘텐츠·마케팅 (6종)
 
 | 에이전트 | 역할 |
 |----------|------|
-| lead-researcher | 리서치 리더 (조사 계획, 팀 조율) |
-| web-searcher | 웹 검색 전문가 |
-| academic-analyst | 학술 자료 분석가 |
-| fact-checker | 팩트 체커 (교차 검증) |
-| report-writer | 보고서 작성자 |
-
-### 콘텐츠 제작 (5종)
-
-| 에이전트 | 역할 |
-|----------|------|
-| content-strategist | 콘텐츠 전략가 |
-| writer | 콘텐츠 작가 |
-| editor | 편집자 |
-| seo-specialist | SEO 전문가 |
-| content-reviewer | 콘텐츠 QA 리뷰어 |
-
-### 마케팅 (5종)
-
-| 에이전트 | 역할 |
-|----------|------|
+| writer | 작가 (콘텐츠, 보고서, 카피) |
+| editor | 편집자 (콘텐츠 QA) |
+| strategist | 전략가 (콘텐츠, 브랜드, 캠페인) |
 | market-researcher | 시장 조사 분석가 |
-| copywriter | 카피라이터 |
-| campaign-planner | 캠페인 기획자 |
-| data-analyst | 마케팅 데이터 분석가 |
-| brand-strategist | 브랜드 전략가 |
+| fact-checker | 팩트 체커 (교차 검증) |
+| seo-specialist | SEO 전문가 |
 
 ## CLI 명령어
 
@@ -433,7 +405,7 @@ workspace/
 ├── .pylon/                    # 소스 오브 트루스 (git 추적)
 │   ├── config.yml             # 워크스페이스 설정
 │   ├── builtin/               # 내장 리소스 (git 무시, 버전이 바뀌면 통째로 재생성)
-│   │   ├── agents/            # 에이전트 정의 (38종)
+│   │   ├── agents/            # 에이전트 정의 (20종)
 │   │   ├── skills/            # 에이전트 스킬
 │   │   ├── commands/          # 파이프라인 슬래시 커맨드 (pl-pipeline.md, ...)
 │   │   ├── scripts/bash/      # 파이프라인 셸 스크립트 (common.sh, init-pipeline.sh, ...)

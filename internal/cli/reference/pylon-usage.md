@@ -34,10 +34,10 @@
 
 | 도메인 | 키워드/신호 | 워크플로우 | 핵심 에이전트 |
 |--------|-----------|-----------|-------------|
-| **소프트웨어 개발** | 구현, 코드, API, 버그, PR, 테스트 | feature/bugfix/hotfix | architect, backend-dev, frontend-dev, test-engineer |
-| **리서치/조사** | 조사, 분석, 비교, 보고서, 논문, 트렌드 | research | lead-researcher, web-searcher, academic-analyst, fact-checker |
-| **콘텐츠 제작** | 글, 블로그, 문서, 번역, 편집, 작성 | content | writer, editor, seo-specialist |
-| **마케팅** | 캠페인, 광고, SEO, 타겟, 퍼널, 시장 | marketing | market-researcher, copywriter, data-analyst |
+| **소프트웨어 개발** | 구현, 코드, API, 버그, PR, 테스트 | feature/bugfix/hotfix | architect, dev, verifier |
+| **리서치/조사** | 조사, 분석, 비교, 보고서, 논문, 트렌드 | research | researcher, fact-checker, writer |
+| **콘텐츠 제작** | 글, 블로그, 문서, 번역, 편집, 작성 | content | strategist, writer, editor |
+| **마케팅** | 캠페인, 광고, SEO, 타겟, 퍼널, 시장 | marketing | market-researcher, strategist, writer |
 
 도메인이 모호하면 가장 적합한 도메인을 택하되 확신이 없으면 사용자에게 확인합니다.
 혼합 작업(예: '리서치 후 구현')은 단계별로 도메인을 전환합니다.
@@ -115,8 +115,8 @@
 | 구현을 끝냈고 스스로 통과 판정하면 안 됨 | `verifier` | 자기 승인 방지 |
 | 계획·설계 누락 점검 | `critic` | 별도 컨텍스트라야 전제를 의심 |
 | PR diff 리뷰 | `code-reviewer` | 전용 체크리스트 보유 |
-| 원인 모르는 버그 | `debugger`, `tracer` | 가설 검증에 긴 시행착오 |
-| 겹치지 않는 구현 태스크 3개 이상 | `backend-dev`, `frontend-dev`, `test-engineer` | 병렬화 이득 |
+| 원인 모르는 버그 | `debugger` | 가설 검증에 긴 시행착오 |
+| 겹치지 않는 구현 태스크 3개 이상 | `dev` | 병렬화 이득 |
 
 목록에 있다는 이유만으로 에이전트를 쓰지 않습니다. 대부분 작업에 필요한 에이전트는 0개.
 

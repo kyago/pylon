@@ -679,7 +679,7 @@ func syncClaudeProviderResourcesIfWorkspace(in io.Reader, autoYes bool) {
 }
 
 // builtinFile is one embedded resource, addressed by its slash path under
-// .pylon/builtin/ (e.g. "agents/pm.md").
+// .pylon/builtin/ (e.g. "agents/architect.md").
 type builtinFile struct {
 	rel     string
 	content []byte

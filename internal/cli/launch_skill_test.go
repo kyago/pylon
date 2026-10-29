@@ -468,7 +468,7 @@ func TestGenerateClaudeAgentsWithSkills_BuiltinAgentsAndSkills(t *testing.T) {
 	}
 
 	claudeAgents := layout.ClaudeAgentsDir(root)
-	injected, err := os.ReadFile(filepath.Join(claudeAgents, "academic-analyst.md"))
+	injected, err := os.ReadFile(filepath.Join(claudeAgents, "fact-checker.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

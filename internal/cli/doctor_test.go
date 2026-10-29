@@ -118,12 +118,12 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 		t.Fatal(err)
 	}
 	common := filepath.Join(layout.ScriptsDir(root), "common.sh")
-	pm := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "pm.md")
+	builtinAgent := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "architect.md")
 	dropped := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dropped-in-new-release.md")
 	if err := os.Remove(common); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(pm, []byte("edited by a session"), 0o644); err != nil {
+	if err := os.WriteFile(builtinAgent, []byte("edited by a session"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dropped, []byte("x"), 0o644); err != nil {
@@ -140,8 +140,8 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 	if info, err := os.Stat(common); err != nil || info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("deleted script not restored as executable: %v", err)
 	}
-	want, _ := embeddedAgents.ReadFile("agents/pm.md")
-	if got, _ := os.ReadFile(pm); !bytes.Equal(got, want) {
+	want, _ := embeddedAgents.ReadFile("agents/architect.md")
+	if got, _ := os.ReadFile(builtinAgent); !bytes.Equal(got, want) {
 		t.Error("edited builtin file not restored")
 	}
 	if _, err := os.Stat(dropped); !os.IsNotExist(err) {
