@@ -310,7 +310,7 @@ done
 .pylon/builtin/scripts/bash/cleanup-pipeline.sh "$ROOT_PIPELINE_DIR" --terminal-phase completed
 ```
 
-학습은 세션이 `.pylon/memory/`에 직접 기록합니다.
+학습은 `pylon mem store --project <p> --category learning --key <슬러그> --content ...`로 저장합니다(프런트매터 없는 파일은 인덱스에 잡히지 않는다).
 
 실행 결과(생성/변경 파일, 테스트 결과, PR URL, 소요 시간)를 요약합니다.
 
@@ -351,8 +351,8 @@ Agent(subagent_type="researcher", run_in_background=true, prompt="sources: acade
 
 `editor`에 must-fix가 있거나 `fact-checker`에 `contradicted`가 하나라도 있으면 `writer`에 현재 초안과 해당
 항목 전문을 넘겨 `draft.md`를 고쳐 쓰게 하고 Step N3를 다시 실행합니다. 상한은 3회입니다 — 라운드마다 검토
-비용이 들기 때문이며, 넘으면 멈추고 남은 항목을 사용자에게 보고합니다. 끝나면 `draft.md`를
-`$PIPELINE_DIR/final.md`로 복사합니다.
+비용이 들기 때문입니다. 루프가 끝나거나 3회 상한에 도달하면 `draft.md`를 `$PIPELINE_DIR/final.md`로 복사하고
+Step N5로 진행합니다. 상한에 도달했다면 남은 must-fix·`contradicted` 항목을 완료 보고에 미해결로 적습니다.
 
 ### Step N5: 완료
 
@@ -366,7 +366,7 @@ Agent(subagent_type="researcher", run_in_background=true, prompt="sources: acade
 파이프라인 시작 시 관련 도메인 지식을 검색해 에이전트 프롬프트에 넣습니다:
 
 ```bash
-pylon mem search --project <project-name> "<요구사항 키워드>"
+pylon mem search --project <project-name> --query "<요구사항 키워드>"
 ```
 
 ## 에러 처리

@@ -2,7 +2,7 @@
 
 **사람은 요구사항만 전달하고, AI 에이전트 팀이 알아서 수행합니다.**
 
-Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `pylon`을 실행하면 설정과 capability에 맞는 interactive provider adapter가 선택되고, 루트 에이전트(PO)가 사용자의 요구사항을 분석하여 적절한 도메인과 전문 에이전트 팀을 오케스트레이션합니다. 기본 제공 adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
+Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `pylon`을 실행하면 설정과 capability에 맞는 interactive provider adapter가 선택되고, 루트 에이전트(루트 세션)가 사용자의 요구사항을 분석하여 적절한 도메인과 전문 에이전트 팀을 오케스트레이션합니다. 기본 제공 adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
 
 ## 요구 사항
 
@@ -140,7 +140,7 @@ TUI 세션에서 슬래시 커맨드 또는 자연어로 요구사항을 전달�
 ```
 > 로그인 기능 구현해줘
 
-PO: 몇 가지 확인이 필요합니다.
+루트 세션: 몇 가지 확인이 필요합니다.
   1. 인증 방식은 JWT와 세션 중 어떤 것을 선호하시나요?
   2. 소셜 로그인도 필요한가요?
   ...
@@ -158,7 +158,7 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
               ├── 슬래시 커맨드 (.pylon/builtin/commands/)
               │   ├── /pl:pipeline ─ 전체 파이프라인
               │   ├── /pl:architect ─ 아키텍처 분석
-              │   ├── /pl:breakdown ─ PM 태스크 분해
+              │   ├── /pl:breakdown ─ 태스크 분해
               │   ├── /pl:execute ─── 에이전트 병렬 실행
               │   ├── /pl:verify ─── 빌드/테스트/린트 검증
               │   ├── /pl:pr ─────── PR 생성
@@ -196,10 +196,10 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 /pl:pipeline "로그인 기능 구현"
     │
     ├─ [1] root pipeline 초기화 ── requirement.md (branch 없음)
-    ├─ [2] PO 분석 ────────────── requirement-analysis.md
+    ├─ [2] 루트 세션 분석 ──────── requirement-analysis.md
     ├─ [3] Architect 분석 ──────── architecture.md + repos.json
     ├─ [4] repo sub-pipeline ───── repo별 branch + base revision
-    ├─ [5] PM 태스크 분해 ──────── tasks.json (repo 소유권 포함)
+    ├─ [5] 루트 세션 태스크 분해 ─ tasks.json (repo 소유권 포함)
     ├─ [6] Agent 병렬 실행 ─────── execution-log.json
     ├─ [7] repo별 검증/PR ──────── verification.json + pr.json
     ├─ [8] terminal checkpoint
@@ -246,7 +246,7 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
 |--------|------|
 | `/pl:pipeline` | 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → PR) |
 | `/pl:architect` | 아키텍처 분석 단독 실행 |
-| `/pl:breakdown` | PM 태스크 분해 |
+| `/pl:breakdown` | 태스크 분해 |
 | `/pl:execute` | 에이전트 병렬 실행 |
 | `/pl:verify` | 빌드/테스트/린트 교차 검증 |
 | `/pl:pr` | PR 생성 |
@@ -328,7 +328,7 @@ pylon mem delete --project <name> --key "키"            # 삭제 (--category, -
 | 명령어 | 설명 |
 |--------|------|
 | `pylon sync-agents` | 내장 리소스(`.pylon/builtin/`)와 `.claude/agents/` 심링크를 즉시 동기화 |
-| `pylon mem inject` | SessionStart 훅이 호출 — 만료 메모리(`retention_days`)를 정리한 뒤 프로젝트 메모리를 세션 컨텍스트에 주입 |
+| `pylon mem inject` | 세션 시작 시 호출(Claude Code 훅; Codex는 수동 `pylon mem inject`) — 만료 메모리(`retention_days`)를 정리한 뒤 프로젝트 메모리를 세션 컨텍스트에 주입 |
 
 ### 작업 이력
 
@@ -484,7 +484,7 @@ wiki:
     - pr_merged
 
 memory:
-  proactive_injection: true    # 세션 시작(SessionStart 훅) 시 프로젝트 메모리 주입 on/off
+  proactive_injection: true    # 세션 시작 시 프로젝트 메모리 주입 on/off (Claude Code 훅; Codex는 수동 `pylon mem inject`)
   proactive_max_tokens: 2000   # 주입 예산(토큰, 1토큰≈4바이트로 환산)
   retention_days:        # 카테고리별 보존 일수 — 미지정/0 이하 = 영구 보존, {} = 전체 영구 보존
     learning: 30

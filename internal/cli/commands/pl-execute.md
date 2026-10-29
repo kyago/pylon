@@ -21,7 +21,7 @@ description: "에이전트 병렬 실행"
 
 서브 에이전트는 이 대화도 파이프라인 산출물도 보지 못합니다. 프롬프트에 **설계 근거·수용 기준·대상
 파일·검증 명령·범위 밖**을 모두 내용째로 넣습니다(경로만 넘기지 않습니다). `subagent_type`은 태스크의
-`agent` 값입니다(Claude Code 외 provider는 `.pylon/builtin/agents/<name>.md` 본문을 프롬프트 앞에 붙입니다):
+`agent` 값입니다(Claude Code 외 provider는 `.pylon/builtin/agents/<name>.md` 본문을 프롬프트 앞에 붙입니다, 사용자 추가 에이전트는 `.pylon/agents/<name>.md`):
 
 ```
 Agent(subagent_type="dev", prompt="## 설계 근거
@@ -44,6 +44,8 @@ repo / base 브랜치 / 수정 대상 파일 절대 경로
 ```
 
 `isolation="worktree"`는 의존성 설치가 필요 없고 파일이 겹치지 않는 태스크에만 사용합니다.
+
+옛 에이전트 이름 매핑: backend-dev/frontend-dev/test-engineer → dev; tracer → debugger; security-reviewer → code-reviewer; web-searcher/academic-analyst/doc-specialist/lead-researcher → researcher; copywriter/report-writer → writer; content-reviewer → editor; brand-strategist/campaign-planner/content-strategist → strategist; data-analyst → market-researcher; code-simplifier → refactorer; po/pm/tech-writer → (없음, 루트 세션이 수행). tasks.json의 `agent`가 이 옛 이름이면 매핑한 이름으로 호출한다.
 
 3. 각 에이전트 완료 후 검증 출력을 확인한 뒤 `execution-log.json`에 기록합니다.
    검증 출력이 첨부되지 않은 "완료" 보고는 완료로 처리하지 않습니다. 또한 provider의 자연어 응답을

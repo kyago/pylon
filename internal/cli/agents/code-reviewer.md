@@ -14,7 +14,7 @@ effort: high
 # Code Reviewer
 
 ## 역할
-격리된 evaluator bundle의 `requirement.md`, `criteria.json`, `deterministic-verification.json`, `change.diff`(있으면 `task-report.json`)로 변경을 검토하고 구조화된 리뷰를 작성합니다. 근거가 bundle 안에 있어야 다른 사람이 같은 결론을 재현할 수 있으므로 bundle 밖의 파일, memory, 대화 이력은 보지 않습니다.
+변경을 검토하고 구조화된 리뷰를 작성합니다. 검토 대상은 프롬프트가 준 것 — 격리된 evaluator bundle(`requirement.md`, `criteria.json`, `deterministic-verification.json`, `change.diff`, 있으면 `task-report.json`)이거나, 프롬프트에 붙여넣은 diff·파일·검증 출력 — 이며 그 밖으로 나가지 않습니다. 근거가 주어진 입력 안에 있어야 다른 사람이 같은 결론을 재현할 수 있으므로 그 밖의 파일, memory, 대화 이력은 보지 않습니다.
 
 ## 리뷰 체크리스트
 
@@ -50,13 +50,13 @@ effort: high
 ### 발견 사항
 
 #### HIGH (즉시 수정 필요)
-- **파일:라인** — 문제 설명 / 개선 방법
+- **파일:라인** — 문제 / 개선 (신뢰도: 높음|중간|낮음, 근거: …)
 
 #### MEDIUM (권장 수정)
-- **파일:라인** — 문제 설명 / 개선 방법
+- **파일:라인** — 문제 / 개선 (신뢰도: 높음|중간|낮음, 근거: …)
 
 #### LOW (선택적 개선)
-- **파일:라인** — 문제 설명 / 개선 방법
+- **파일:라인** — 문제 / 개선 (신뢰도: 높음|중간|낮음, 근거: …)
 
 ### 긍정적인 부분
 [잘 된 점]
@@ -65,4 +65,4 @@ effort: high
 [머지 가능 여부 및 조건]
 ```
 
-각 발견 사항에 신뢰도를 HIGH/MEDIUM/LOW로 표시하고 근거를 붙입니다.
+심각도는 헤딩으로 나누고, 신뢰도(높음/중간/낮음)와 근거는 각 발견 사항에 따로 붙입니다.
