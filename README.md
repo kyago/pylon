@@ -478,11 +478,9 @@ version: "0.2"
 runtime:
   provider: auto               # provider 이름 또는 auto
   execution_mode: session-native
-  max_concurrent: 5            # 동시 에이전트 수
-  max_turns: 50                # worker 최대 턴 수
-  max_attempts: 2              # 검증 재시도 횟수
-  task_timeout: 30m            # 태스크 타임아웃
   permission_mode: acceptEdits # default | acceptEdits | bypassPermissions
+  # effort: high               # 선택, 기본값 없음 — provider별 허용값 (claude: low|medium|high|xhigh|max, codex: model_reasoning_effort 값)
+  # model: opus                # 선택, 기본값 없음 — provider별 모델 이름
 
 providers:
   claude-code:
@@ -530,7 +528,7 @@ skills:
 
 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 전체 필드와 기본값을 보여주며,
 명시하지 않은 필드는 로드 시 코드 기본값으로 자동 채워집니다. `pylon init`이 처음 생성하는 `config.yml`은
-최소 필드(`runtime`의 `provider`/`execution_mode`/`max_concurrent`/`max_turns`/`permission_mode`)만 포함하고, 이후
+최소 필드(`runtime`의 `provider`/`execution_mode`/`permission_mode`)만 포함하고, 이후
 `pylon doctor`가 누락된 필드를 감지해 기본값으로 동기화합니다.
 
 ## 개발

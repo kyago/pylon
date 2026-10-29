@@ -29,6 +29,7 @@ type Check struct {
 	Verify      func() (version string, err error)
 	InstallURL  string
 	BrewFormula string // Homebrew formula name; empty when brew install is not documented
+	Warn        bool   // Verify 실패를 경고로만 표시하고 doctor 실패로 세지 않는다
 }
 
 var baseChecks = []Check{
@@ -78,7 +79,9 @@ func runChecks(checks []Check) (allPassed bool, failures []Check) {
 		if check.Required {
 			reqLabel = " [required]"
 		}
-		if err != nil {
+		if err != nil && check.Warn {
+			fmt.Printf("\u26a0 %-10s %v\n", check.Name, err)
+		} else if err != nil {
 			allPassed = false
 			failures = append(failures, check)
 			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "missing", reqLabel)
@@ -389,7 +392,7 @@ func RunDoctorChecks() (bool, error) {
 func currentDoctorChecks() []Check {
 	checks := append([]Check(nil), baseChecks...)
 	cfg, err := doctorProviderConfig()
-	return append(checks, newProviderCheck(cfg, err))
+	return append(checks, newProviderCheck(cfg, err), newRuntimeEnvCheck(cfg))
 }
 
 func doctorProviderConfig() (*config.Config, error) {
@@ -434,6 +437,30 @@ func newProviderCheck(cfg *config.Config, configErr error) Check {
 				return "", err
 			}
 			return selection.Adapter.Name() + " " + version, nil
+		},
+	}
+}
+
+// newRuntimeEnvCheck warns when runtime.env pins env vars that override every
+// per-session and per-agent effort/compact control (Claude Code gives them top priority).
+func newRuntimeEnvCheck(cfg *config.Config) Check {
+	return Check{
+		Name: "runtime.env",
+		Warn: true,
+		Verify: func() (string, error) {
+			if cfg == nil {
+				return "ok", nil // 설정 로드 실패는 provider 체크가 보고한다
+			}
+			var keys []string
+			for _, key := range []string{"CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"} {
+				if _, ok := cfg.Runtime.Env[key]; ok {
+					keys = append(keys, key)
+				}
+			}
+			if len(keys) == 0 {
+				return "ok", nil
+			}
+			return "", fmt.Errorf("runtime.env의 %s는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. runtime.effort 또는 제거를 권장", strings.Join(keys, ", "))
 		},
 	}
 }

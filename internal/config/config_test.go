@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,10 +27,6 @@ func TestParseConfig_FullConfig(t *testing.T) {
 	}{
 		{"version", cfg.Version, "0.1"},
 		{"runtime.backend", cfg.Runtime.Backend, "claude-code"},
-		{"runtime.max_concurrent", cfg.Runtime.MaxConcurrent, 5},
-		{"runtime.task_timeout", cfg.Runtime.TaskTimeout, "30m"},
-		{"runtime.max_attempts", cfg.Runtime.MaxAttempts, 2},
-		{"runtime.max_turns", cfg.Runtime.MaxTurns, 50},
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "acceptEdits"},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "task"},
 		{"git.default_base", cfg.Git.DefaultBase, "main"},
@@ -94,9 +89,6 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 	if cfg.Runtime.Backend != "claude-code" {
 		t.Errorf("runtime.backend: got %q, expected %q", cfg.Runtime.Backend, "claude-code")
 	}
-	if cfg.Runtime.MaxConcurrent != 5 {
-		t.Errorf("runtime.max_concurrent: got %d, expected %d", cfg.Runtime.MaxConcurrent, 5)
-	}
 
 	// Verify defaults were applied
 	defaults := []struct {
@@ -104,8 +96,6 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 		got      interface{}
 		expected interface{}
 	}{
-		{"runtime.task_timeout (default)", cfg.Runtime.TaskTimeout, "30m"},
-		{"runtime.max_attempts (default)", cfg.Runtime.MaxAttempts, 2},
 		{"git.branch_prefix (default)", cfg.Git.BranchPrefix, "task"},
 		{"git.default_base (default)", cfg.Git.DefaultBase, "main"},
 		{"git.auto_push (default)", cfg.Git.AutoPush, true},
@@ -186,8 +176,27 @@ func TestParseConfig_VersionOnly(t *testing.T) {
 	if cfg.Runtime.Provider != "auto" || cfg.Runtime.Backend != "" {
 		t.Errorf("expected default provider auto without backend alias, got provider=%q backend=%q", cfg.Runtime.Provider, cfg.Runtime.Backend)
 	}
-	if cfg.Runtime.MaxConcurrent != 5 {
-		t.Errorf("expected default max_concurrent 5, got %d", cfg.Runtime.MaxConcurrent)
+}
+
+func TestParseConfig_RuntimeKnobsHaveNoDefaults(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`version: "0.1"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// env 기본 주입은 세션·에이전트별 effort 설정을 덮어쓰므로 비워 둔다.
+	if cfg.Runtime.Env != nil {
+		t.Errorf("runtime.env must stay nil by default, got %v", cfg.Runtime.Env)
+	}
+	if cfg.Runtime.Effort != "" || cfg.Runtime.Model != "" {
+		t.Errorf("effort/model must have no default, got effort=%q model=%q", cfg.Runtime.Effort, cfg.Runtime.Model)
+	}
+
+	cfg, err = ParseConfig([]byte("version: \"0.1\"\nruntime:\n  effort: xhigh\n  model: opus\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runtime.Effort != "xhigh" || cfg.Runtime.Model != "opus" {
+		t.Errorf("effort/model = %q/%q, want xhigh/opus", cfg.Runtime.Effort, cfg.Runtime.Model)
 	}
 }
 
@@ -243,33 +252,6 @@ routing:
 	}
 }
 
-func TestParseTaskTimeout(t *testing.T) {
-	tests := []struct {
-		name     string
-		timeout  string
-		expected time.Duration
-	}{
-		{"기본 30분", "30m", 30 * time.Minute},
-		{"1시간", "1h", time.Hour},
-		{"10초", "10s", 10 * time.Second},
-		{"2시간30분", "2h30m", 2*time.Hour + 30*time.Minute},
-		{"0초 fallback", "0s", 30 * time.Minute},
-		{"음수 fallback", "-5m", 30 * time.Minute},
-		{"잘못된 형식 fallback", "invalid", 30 * time.Minute},
-		{"빈 문자열 fallback", "", 30 * time.Minute},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rc := RuntimeConfig{TaskTimeout: tt.timeout}
-			got := rc.ParseTaskTimeout()
-			if got != tt.expected {
-				t.Errorf("ParseTaskTimeout(%q) = %v, want %v", tt.timeout, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestLoadConfig_FileNotFound(t *testing.T) {
 	_, err := LoadConfig("/nonexistent/path/config.yml")
 	if err == nil {
@@ -314,10 +296,6 @@ func TestParseConfig_CustomValues(t *testing.T) {
 version: "0.2"
 runtime:
   backend: openai
-  max_concurrent: 10
-  task_timeout: 1h
-  max_attempts: 3
-  max_turns: 100
   permission_mode: bypassPermissions
 git:
   branch_prefix: feature
@@ -340,10 +318,6 @@ conversation:
 	}{
 		{"version", cfg.Version, "0.2"},
 		{"runtime.backend", cfg.Runtime.Backend, "openai"},
-		{"runtime.max_concurrent", cfg.Runtime.MaxConcurrent, 10},
-		{"runtime.task_timeout", cfg.Runtime.TaskTimeout, "1h"},
-		{"runtime.max_attempts", cfg.Runtime.MaxAttempts, 3},
-		{"runtime.max_turns", cfg.Runtime.MaxTurns, 100},
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "bypassPermissions"},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "feature"},
 		{"git.default_base", cfg.Git.DefaultBase, "develop"},
@@ -667,7 +641,7 @@ func TestMigrateRuntimeBackend_RenamesKey(t *testing.T) {
 # runtime settings
 runtime:
   backend: claude-code # my provider
-  max_concurrent: 3
+  permission_mode: bypassPermissions
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -698,7 +672,7 @@ runtime:
 	if providerName != "claude-code" || deprecated {
 		t.Fatalf("effective provider = %q deprecated=%v", providerName, deprecated)
 	}
-	if cfg.Runtime.MaxConcurrent != 3 {
+	if cfg.Runtime.PermissionMode != "bypassPermissions" {
 		t.Fatalf("sibling keys must survive: %+v", cfg.Runtime)
 	}
 }
@@ -809,7 +783,7 @@ func TestSetRuntimeProvider(t *testing.T) {
 # runtime section
 runtime:
   provider: auto
-  max_concurrent: 3
+  permission_mode: bypassPermissions
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -831,7 +805,7 @@ runtime:
 	if providerName, _ := cfg.Runtime.EffectiveProvider(); providerName != "codex" {
 		t.Fatalf("effective provider = %q", providerName)
 	}
-	if cfg.Runtime.MaxConcurrent != 3 {
+	if cfg.Runtime.PermissionMode != "bypassPermissions" {
 		t.Fatalf("sibling keys must survive: %+v", cfg.Runtime)
 	}
 }

@@ -100,7 +100,11 @@ func loadAgentSkillMap(root string, cfg *config.Config) (map[string]*config.Skil
 
 func materializeClaudeAgent(agentPath, linkPath, target string, cfg *config.Config, skillMap map[string]*config.SkillConfig) error {
 	agent, err := config.ParseAgentFile(agentPath)
-	if err != nil || !cfg.Skills.Enabled || !cfg.Skills.PreloadToAgents || len(agent.Skills) == 0 {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "경고: 에이전트 정의 파싱 실패 %s: %v\n", agentPath, err)
+		return ensureSymlink(linkPath, target)
+	}
+	if !cfg.Skills.Enabled || !cfg.Skills.PreloadToAgents || len(agent.Skills) == 0 {
 		return ensureSymlink(linkPath, target)
 	}
 	content, err := os.ReadFile(agentPath)

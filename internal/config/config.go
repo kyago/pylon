@@ -10,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -42,18 +41,16 @@ type SkillsConfig struct {
 // RuntimeConfig defines agent runtime settings.
 // Spec Reference: Section 16 "runtime"
 type RuntimeConfig struct {
-	Provider              string            `yaml:"provider,omitempty"`
-	Backend               string            `yaml:"backend,omitempty"`
-	ExecutionMode         string            `yaml:"execution_mode,omitempty"`
-	MaxConcurrent         int               `yaml:"max_concurrent"`
-	MaxPipelines          int               `yaml:"max_pipelines"`
-	TaskTimeout           string            `yaml:"task_timeout"`
-	MaxAttempts           int               `yaml:"max_attempts"`
-	MaxTurns              int               `yaml:"max_turns"`
-	PermissionMode        string            `yaml:"permission_mode"`
+	Provider       string `yaml:"provider,omitempty"`
+	Backend        string `yaml:"backend,omitempty"`
+	ExecutionMode  string `yaml:"execution_mode,omitempty"`
+	PermissionMode string `yaml:"permission_mode"`
+	// Effort는 provider별 허용값을 그대로 전달한다(claude: low|medium|high|xhigh|max,
+	// codex: model_reasoning_effort 값). Effort·Model이 비어 있으면 provider 자체 기본값을 쓴다.
+	Effort                string            `yaml:"effort,omitempty"`
+	Model                 string            `yaml:"model,omitempty"`
 	AutoApproveTaskReview bool              `yaml:"auto_approve_task_review"`
-	Env                   map[string]string `yaml:"env"`
-	WorkerLimits          map[string]int    `yaml:"worker_limits"` // model → max concurrent
+	Env                   map[string]string `yaml:"env,omitempty"`
 }
 
 type ProviderConfig struct {
@@ -150,16 +147,6 @@ func (r *retentionPolicy) UnmarshalYAML(value *yaml.Node) error {
 type WorkflowConfig struct {
 	DefaultWorkflow string `yaml:"default_workflow"`
 	TemplateDir     string `yaml:"template_dir"`
-}
-
-// ParseTaskTimeout parses the TaskTimeout string into a time.Duration.
-// Returns 30 minutes as fallback if parsing fails or the value is non-positive.
-func (r RuntimeConfig) ParseTaskTimeout() time.Duration {
-	d, err := time.ParseDuration(r.TaskTimeout)
-	if err != nil || d <= 0 {
-		return 30 * time.Minute
-	}
-	return d
 }
 
 // MigrateRuntimeBackend rewrites deprecated runtime.backend to runtime.provider
@@ -527,26 +514,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Runtime.ExecutionMode == "" {
 		cfg.Runtime.ExecutionMode = "session-native"
 	}
-	if cfg.Runtime.MaxConcurrent == 0 {
-		cfg.Runtime.MaxConcurrent = 5
-	}
-	if cfg.Runtime.TaskTimeout == "" {
-		cfg.Runtime.TaskTimeout = "30m"
-	}
-	if cfg.Runtime.MaxAttempts == 0 {
-		cfg.Runtime.MaxAttempts = 2
-	}
-	if cfg.Runtime.MaxTurns == 0 {
-		cfg.Runtime.MaxTurns = 50
-	}
 	if cfg.Runtime.PermissionMode == "" {
 		cfg.Runtime.PermissionMode = "acceptEdits"
-	}
-	if cfg.Runtime.Env == nil {
-		cfg.Runtime.Env = map[string]string{
-			"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
-			"CLAUDE_CODE_EFFORT_LEVEL":        "high",
-		}
 	}
 	if cfg.Routing.Fallback == "" {
 		cfg.Routing.Fallback = "serial"

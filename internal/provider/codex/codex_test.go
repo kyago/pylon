@@ -74,6 +74,24 @@ func TestPrepareInteractivePassesSandboxMode(t *testing.T) {
 	}
 }
 
+func TestPrepareInteractivePassesModelAndEffort(t *testing.T) {
+	adapter := New("", WithLookPath(func(command string) (string, error) {
+		return "/usr/local/bin/" + command, nil
+	}))
+	process, err := adapter.PrepareInteractive(context.Background(), provider.InteractiveSpec{
+		PermissionMode: "workspace-write",
+		Effort:         "high",
+		Model:          "gpt-5-codex",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"codex", "-m", "gpt-5-codex", "-c", "model_reasoning_effort=high", "--sandbox", "workspace-write"}
+	if !reflect.DeepEqual(process.Args, want) {
+		t.Fatalf("args = %v, want %v", process.Args, want)
+	}
+}
+
 func TestPrepareInteractiveOmitsUnknownPermissionMode(t *testing.T) {
 	adapter := New("", WithLookPath(func(command string) (string, error) {
 		return "/usr/local/bin/" + command, nil
@@ -81,7 +99,6 @@ func TestPrepareInteractiveOmitsUnknownPermissionMode(t *testing.T) {
 	// claude 전용 permission mode는 codex 플래그로 넘기지 않는다.
 	process, err := adapter.PrepareInteractive(context.Background(), provider.InteractiveSpec{
 		PermissionMode: "acceptEdits",
-		MaxTurns:       10,
 	})
 	if err != nil {
 		t.Fatal(err)

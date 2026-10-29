@@ -21,10 +21,6 @@ func TestParseAgentFile_FullAgent(t *testing.T) {
 		{"description", agent.Description, "Implements project-api backend features following Go standard project layout"},
 		{"role", agent.Role, "Backend Developer"},
 		{"backend", agent.Backend, "claude-code"},
-		{"maxTurns", agent.MaxTurns, 30},
-		{"permissionMode", agent.PermissionMode, "acceptEdits"},
-		{"isolation", agent.Isolation, "worktree"},
-		{"model", agent.Model, "sonnet"},
 		{"filePath", agent.FilePath, path},
 	}
 
@@ -158,12 +154,6 @@ func TestParseAgentFile_MinimalAgent(t *testing.T) {
 	if agent.Backend != "" {
 		t.Errorf("backend should be empty, got %q", agent.Backend)
 	}
-	if agent.MaxTurns != 0 {
-		t.Errorf("maxTurns should be 0, got %d", agent.MaxTurns)
-	}
-	if agent.PermissionMode != "" {
-		t.Errorf("permissionMode should be empty, got %q", agent.PermissionMode)
-	}
 	if len(agent.Scope) != 0 {
 		t.Errorf("scope should be empty, got %v", agent.Scope)
 	}
@@ -269,41 +259,6 @@ Verifier
 	}
 }
 
-func TestAgentConfigDecisionDefaultsEnforceIsolation(t *testing.T) {
-	cfg := &Config{Runtime: RuntimeConfig{Provider: "claude-code", PermissionMode: "bypassPermissions"}}
-	agent := &AgentConfig{
-		Name:                 "verifier",
-		Role:                 "Verifier",
-		RequiredCapabilities: []string{"run_shell", "edit_files"},
-		Tools:                []string{"Read", "Bash", "Write"},
-	}
-	agent.ResolveDefaults(cfg)
-	if !agent.CanIssueFinalVerdict() || agent.AccessMode != AccessModeReadOnly || agent.InputPolicy != InputPolicyIsolatedEvidence {
-		t.Fatalf("decision policy = %+v", agent)
-	}
-	if agent.PermissionMode != "default" || agent.Isolation != "readonly" {
-		t.Fatalf("decision execution boundary = permission %q isolation %q", agent.PermissionMode, agent.Isolation)
-	}
-	capabilities, err := agent.RequiredCapabilitySet()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !capabilities.ReadFiles || !capabilities.StructuredOutput || !capabilities.ToolRestrictions || capabilities.RunShell || capabilities.EditFiles {
-		t.Fatalf("decision capabilities = %+v", capabilities)
-	}
-	if len(agent.Tools) != 1 || agent.Tools[0] != "Read" {
-		t.Fatalf("decision tools = %v", agent.Tools)
-	}
-}
-
-func TestInvestigationAgentCannotIssueFinalVerdict(t *testing.T) {
-	agent := &AgentConfig{Name: "explorer", Role: "Explorer"}
-	agent.ResolveDefaults(&Config{})
-	if agent.EvaluationRole != EvaluationRoleInvestigation || agent.CanIssueFinalVerdict() {
-		t.Fatalf("investigation policy = %+v", agent)
-	}
-}
-
 func TestParseAgentData_MissingClosingDelimiter(t *testing.T) {
 	data := []byte(`---
 name: broken
@@ -313,102 +268,6 @@ role: Broken Agent
 	_, err := ParseAgentData(data)
 	if err == nil {
 		t.Fatal("expected error for missing closing delimiter, got nil")
-	}
-}
-
-func TestAgentConfig_ResolveDefaults(t *testing.T) {
-	cfg := &Config{
-		Runtime: RuntimeConfig{
-			Provider:       "claude-code",
-			MaxTurns:       50,
-			PermissionMode: "acceptEdits",
-			Env: map[string]string{
-				"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
-				"CLAUDE_CODE_EFFORT_LEVEL":        "high",
-			},
-		},
-	}
-
-	tests := []struct {
-		name     string
-		agent    *AgentConfig
-		checkFn  func(*AgentConfig) bool
-		expected string
-	}{
-		{
-			name:  "inherits provider from config",
-			agent: &AgentConfig{Name: "test", Role: "Test"},
-			checkFn: func(a *AgentConfig) bool {
-				return a.Provider == "claude-code"
-			},
-			expected: "provider should be claude-code",
-		},
-		{
-			name:  "inherits maxTurns from config",
-			agent: &AgentConfig{Name: "test", Role: "Test"},
-			checkFn: func(a *AgentConfig) bool {
-				return a.MaxTurns == 50
-			},
-			expected: "maxTurns should be 50",
-		},
-		{
-			name:  "inherits permissionMode from config",
-			agent: &AgentConfig{Name: "test", Role: "Test"},
-			checkFn: func(a *AgentConfig) bool {
-				return a.PermissionMode == "acceptEdits"
-			},
-			expected: "permissionMode should be acceptEdits",
-		},
-		{
-			name:  "defaults isolation to worktree",
-			agent: &AgentConfig{Name: "test", Role: "Test"},
-			checkFn: func(a *AgentConfig) bool {
-				return a.Isolation == "worktree"
-			},
-			expected: "isolation should be worktree",
-		},
-		{
-			name:  "agent backend alias overrides config",
-			agent: &AgentConfig{Name: "test", Role: "Test", Backend: "openai"},
-			checkFn: func(a *AgentConfig) bool {
-				provider, deprecated := a.EffectiveProvider()
-				return provider == "openai" && deprecated
-			},
-			expected: "backend alias should remain effective",
-		},
-		{
-			name:  "agent maxTurns overrides config",
-			agent: &AgentConfig{Name: "test", Role: "Test", MaxTurns: 30},
-			checkFn: func(a *AgentConfig) bool {
-				return a.MaxTurns == 30
-			},
-			expected: "maxTurns should remain 30",
-		},
-		{
-			name:  "agent permissionMode overrides config",
-			agent: &AgentConfig{Name: "test", Role: "Test", PermissionMode: "default"},
-			checkFn: func(a *AgentConfig) bool {
-				return a.PermissionMode == "default"
-			},
-			expected: "permissionMode should remain default",
-		},
-		{
-			name:  "agent isolation overrides default",
-			agent: &AgentConfig{Name: "test", Role: "Test", Isolation: "none"},
-			checkFn: func(a *AgentConfig) bool {
-				return a.Isolation == "none"
-			},
-			expected: "isolation should remain none",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.agent.ResolveDefaults(cfg)
-			if !tt.checkFn(tt.agent) {
-				t.Error(tt.expected)
-			}
-		})
 	}
 }
 
@@ -436,37 +295,6 @@ func TestInferAgentType(t *testing.T) {
 	}
 }
 
-func TestAgentConfig_ResolveDefaults_TypeInference(t *testing.T) {
-	cfg := &Config{
-		Runtime: RuntimeConfig{
-			Backend:        "claude-code",
-			MaxTurns:       50,
-			PermissionMode: "acceptEdits",
-		},
-	}
-
-	// Type is inferred from name
-	agent := &AgentConfig{Name: "backend-dev", Role: "Backend Dev"}
-	agent.ResolveDefaults(cfg)
-	if agent.Type != "dev" {
-		t.Errorf("expected inferred type 'dev', got %q", agent.Type)
-	}
-
-	// Explicit type is preserved
-	agent2 := &AgentConfig{Name: "backend-dev", Role: "Backend Dev", Type: "infra"}
-	agent2.ResolveDefaults(cfg)
-	if agent2.Type != "infra" {
-		t.Errorf("expected explicit type 'infra' to be preserved, got %q", agent2.Type)
-	}
-
-	// Unknown name → empty type
-	agent3 := &AgentConfig{Name: "custom-agent", Role: "Custom"}
-	agent3.ResolveDefaults(cfg)
-	if agent3.Type != "" {
-		t.Errorf("expected empty type for unknown name, got %q", agent3.Type)
-	}
-}
-
 func TestParseAgentData_TypeField(t *testing.T) {
 	data := []byte(`---
 name: my-dev
@@ -481,50 +309,6 @@ Custom dev agent.
 	}
 	if agent.Type != "dev" {
 		t.Errorf("expected type 'dev', got %q", agent.Type)
-	}
-}
-
-func TestAgentConfig_ResolveDefaults_EnvMerge(t *testing.T) {
-	cfg := &Config{
-		Runtime: RuntimeConfig{
-			Backend:        "claude-code",
-			MaxTurns:       50,
-			PermissionMode: "acceptEdits",
-			Env: map[string]string{
-				"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
-				"CLAUDE_CODE_EFFORT_LEVEL":        "high",
-				"GLOBAL_VAR":                      "global",
-			},
-		},
-	}
-
-	agent := &AgentConfig{
-		Name: "test",
-		Role: "Test",
-		Env: map[string]string{
-			"CLAUDE_CODE_EFFORT_LEVEL": "low",   // Override global
-			"AGENT_VAR":                "agent", // Agent-specific
-		},
-	}
-
-	agent.ResolveDefaults(cfg)
-
-	// Agent env should override global env
-	if v := agent.Env["CLAUDE_CODE_EFFORT_LEVEL"]; v != "low" {
-		t.Errorf("expected agent override to win, got %q", v)
-	}
-
-	// Global env should be present if not overridden
-	if v := agent.Env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"]; v != "80" {
-		t.Errorf("expected global env to persist, got %q", v)
-	}
-	if v := agent.Env["GLOBAL_VAR"]; v != "global" {
-		t.Errorf("expected global var to persist, got %q", v)
-	}
-
-	// Agent-specific env should be present
-	if v := agent.Env["AGENT_VAR"]; v != "agent" {
-		t.Errorf("expected agent var to persist, got %q", v)
 	}
 }
 

@@ -459,7 +459,7 @@ func TestGenerateClaudeAgentsWithSkills_BuiltinAgentsAndSkills(t *testing.T) {
 	if err := os.MkdirAll(userAgents, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(userAgents, "my-agent.md"), []byte("---\nname: my-agent\n---\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(userAgents, "my-agent.md"), []byte("---\nname: my-agent\nrole: Custom\n---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Skills: config.SkillsConfig{Enabled: true, PreloadToAgents: true, ProgressiveDisclosure: true}}

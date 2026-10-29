@@ -100,8 +100,11 @@ func (adapter *Adapter) PrepareInteractive(_ context.Context, spec provider.Inte
 	}
 
 	args := []string{adapter.command}
-	if spec.MaxTurns > 0 {
-		args = append(args, "--max-turns", fmt.Sprintf("%d", spec.MaxTurns))
+	if spec.Model != "" {
+		args = append(args, "--model", spec.Model)
+	}
+	if spec.Effort != "" {
+		args = append(args, "--effort", spec.Effort)
 	}
 	if spec.PermissionMode != "" {
 		args = append(args, "--permission-mode", spec.PermissionMode)

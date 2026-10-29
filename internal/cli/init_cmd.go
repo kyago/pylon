@@ -116,8 +116,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 runtime:
   provider: %s
   execution_mode: session-native
-  max_concurrent: 5
-  max_turns: 50
   permission_mode: acceptEdits
 
 git:

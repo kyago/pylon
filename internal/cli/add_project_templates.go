@@ -104,7 +104,6 @@ func suggestAgents(stack techStack) []agentSuggestion {
 name: backend-dev
 role: Backend Developer
 provider: auto
-maxTurns: 50
 permissionMode: acceptEdits
 ---
 
@@ -129,7 +128,6 @@ Implement backend features, APIs, and business logic in Go.
 name: frontend-dev
 role: Frontend Developer
 provider: auto
-maxTurns: 50
 permissionMode: acceptEdits
 ---
 
@@ -151,7 +149,6 @@ Implement UI components, pages, and frontend logic.
 name: fullstack-dev
 role: Fullstack Developer
 provider: auto
-maxTurns: 50
 permissionMode: acceptEdits
 ---
 
@@ -173,7 +170,6 @@ Implement features across the full stack.
 name: backend-dev
 role: Backend Developer
 provider: auto
-maxTurns: 50
 permissionMode: acceptEdits
 ---
 
@@ -198,7 +194,6 @@ Implement backend features, APIs, and business logic in Python.
 name: backend-dev
 role: Backend Developer
 provider: auto
-maxTurns: 50
 permissionMode: acceptEdits
 ---
 
@@ -222,7 +217,6 @@ Implement features and business logic in Rust.
 name: developer
 role: Developer
 provider: auto
-maxTurns: 50
 permissionMode: acceptEdits
 ---
 
@@ -243,7 +237,6 @@ Implement features and business logic.
 name: qa
 role: QA Engineer
 provider: auto
-maxTurns: 30
 permissionMode: acceptEdits
 ---
 

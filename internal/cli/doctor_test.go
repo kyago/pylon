@@ -786,6 +786,54 @@ func TestInstallHint_NoBrewFormula(t *testing.T) {
 	}
 }
 
+func TestRuntimeEnvCheckWarnsOnOverridingKeys(t *testing.T) {
+	const suffix = "는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. runtime.effort 또는 제거를 권장"
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"nil env", nil, ""},
+		{"unrelated key", map[string]string{"FOO": "1"}, ""},
+		{"effort key", map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "high"}, "runtime.env의 CLAUDE_CODE_EFFORT_LEVEL" + suffix},
+		{"both keys", map[string]string{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80", "CLAUDE_CODE_EFFORT_LEVEL": "high"},
+			"runtime.env의 CLAUDE_CODE_EFFORT_LEVEL, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" + suffix},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check := newRuntimeEnvCheck(&config.Config{Runtime: config.RuntimeConfig{Env: tt.env}})
+			_, err := check.Verify()
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Fatalf("Verify() error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	// 설정 로드 실패(cfg nil)는 provider 체크가 보고하므로 여기서는 통과시킨다.
+	if _, err := newRuntimeEnvCheck(nil).Verify(); err != nil {
+		t.Fatalf("nil config must not warn: %v", err)
+	}
+}
+
+func TestRunChecksTreatsWarnCheckAsNonFailure(t *testing.T) {
+	var allPassed bool
+	var failures []Check
+	output := captureStdout(t, func() {
+		allPassed, failures = runChecks([]Check{
+			newRuntimeEnvCheck(&config.Config{Runtime: config.RuntimeConfig{Env: map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "high"}}}),
+		})
+	})
+	if !allPassed || len(failures) != 0 {
+		t.Fatalf("warn check must not fail doctor: allPassed=%v failures=%v", allPassed, failures)
+	}
+	if !strings.Contains(output, "⚠ runtime.env") || !strings.Contains(output, "CLAUDE_CODE_EFFORT_LEVEL는") {
+		t.Fatalf("warning not printed:\n%s", output)
+	}
+}
+
 func TestReconcileRootAgentFilesReplacesLegacyGuide(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
