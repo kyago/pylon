@@ -58,8 +58,7 @@ pylon doctor
 - `.pylon/config.yml`에서 더 이상 사용되지 않는 키는 제거할 수 있습니다(남겨도 무해):
   `history:` 섹션 전체, `memory.compaction_threshold`, `memory.session_archive`,
   `conversation:` 섹션 전체.
-- `.claude/settings.json` 등에 수동으로 추가한 `pylon sync-memory --incremental` hook이
-  있으면 제거합니다 (이제 아무것도 저장하지 않는 no-op입니다).
+- `.claude/settings.json`의 `pylon sync-memory` Stop 훅은 `pylon` 실행 또는 `pylon doctor`가 SessionStart 훅으로 교체합니다.
 
 ## Step 5: 결과 보고
 

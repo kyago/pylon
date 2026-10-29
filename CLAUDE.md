@@ -63,7 +63,7 @@ go test ./internal/memory/... -race
 The agents, skills, pipeline commands, and bash scripts that end up in a user's `.pylon/` are **Go-embedded
 from `internal/cli/`** (`//go:embed` directives in `init_cmd.go`, `launch_commands.go`, `launch_hooks.go`):
 
-- `internal/cli/agents/*.md`   → 38 agent definitions
+- `internal/cli/agents/*.md`   → 20 agent definitions
 - `internal/cli/commands/*.md`  → `/pl:*` slash commands
 - `internal/cli/scripts/bash/*.sh` → atomic pipeline steps
 - `internal/cli/skills/*.md`    → agent skills
@@ -92,8 +92,14 @@ prune the dropped entries).
 The user-owned `.pylon/{agents,skills,commands}/` hold only user resources (`pylon add-agent` /
 `pylon add-skill` or a new filename; `scaffoldMarkdownResource` refuses built-in names). **A built-in name
 always wins**: a same-named file there (usually a copy left by releases that synced into `.pylon/<kind>/`
-directly) is cleared on every sync — deleted when byte-identical to the embed, otherwise moved aside to
-`<name>.pylon-bak[.N]` (`pylon doctor` lists each; the launch path's stderr notice is hidden by the TUI). Readers merge both sources —
+directly) is cleared on every sync — deleted when byte-identical to the embed or to any version a release
+shipped (`legacy_shipped.txt`, every built-in's sha256 from 2026.3.1–2026.9.2), otherwise moved aside to
+`<name>.pylon-bak[.N]` (`pylon doctor` lists each; the launch path's stderr notice is hidden by the TUI). The same
+rule covers **retired built-ins** (`retiredBuiltins()`: shipped paths the embeds no longer have), and
+`pylon add-agent`/`add-skill` refuse those names. That record is frozen: from 2026.10.1 built-ins live only in
+`.pylon/builtin/`, so changing or removing a built-in needs no new entry.
+`pylon doctor` also rewrites the pylon hook groups in `.claude/settings.json` from the embedded `hooks.json`, as
+launch does. Readers merge both sources —
 `workspaceAgents`, `loadAgentSkillMap`, `buildDesiredClaudeCommands`, `generateCodexSkills` — built-in
 first. Markdown resources address built-ins as `.pylon/builtin/...` and user agents as `.pylon/agents/...`.
 Config (`config.yml`), domain knowledge, memory, history and runtime state are user data and are never

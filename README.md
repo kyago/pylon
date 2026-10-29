@@ -2,7 +2,7 @@
 
 **사람은 요구사항만 전달하고, AI 에이전트 팀이 알아서 수행합니다.**
 
-Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `pylon`을 실행하면 설정과 capability에 맞는 interactive provider adapter가 선택되고, 루트 에이전트(PO)가 사용자의 요구사항을 분석하여 적절한 도메인과 전문 에이전트 팀을 오케스트레이션합니다. 기본 제공 adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
+Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `pylon`을 실행하면 설정과 capability에 맞는 interactive provider adapter가 선택되고, 루트 에이전트(루트 세션)가 사용자의 요구사항을 분석하여 적절한 도메인과 전문 에이전트 팀을 오케스트레이션합니다. 기본 제공 adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
 
 ## 요구 사항
 
@@ -140,7 +140,7 @@ TUI 세션에서 슬래시 커맨드 또는 자연어로 요구사항을 전달�
 ```
 > 로그인 기능 구현해줘
 
-PO: 몇 가지 확인이 필요합니다.
+루트 세션: 몇 가지 확인이 필요합니다.
   1. 인증 방식은 JWT와 세션 중 어떤 것을 선호하시나요?
   2. 소셜 로그인도 필요한가요?
   ...
@@ -158,7 +158,7 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
               ├── 슬래시 커맨드 (.pylon/builtin/commands/)
               │   ├── /pl:pipeline ─ 전체 파이프라인
               │   ├── /pl:architect ─ 아키텍처 분석
-              │   ├── /pl:breakdown ─ PM 태스크 분해
+              │   ├── /pl:breakdown ─ 태스크 분해
               │   ├── /pl:execute ─── 에이전트 병렬 실행
               │   ├── /pl:verify ─── 빌드/테스트/린트 검증
               │   ├── /pl:pr ─────── PR 생성
@@ -196,10 +196,10 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 /pl:pipeline "로그인 기능 구현"
     │
     ├─ [1] root pipeline 초기화 ── requirement.md (branch 없음)
-    ├─ [2] PO 분석 ────────────── requirement-analysis.md
+    ├─ [2] 루트 세션 분석 ──────── requirement-analysis.md
     ├─ [3] Architect 분석 ──────── architecture.md + repos.json
     ├─ [4] repo sub-pipeline ───── repo별 branch + base revision
-    ├─ [5] PM 태스크 분해 ──────── tasks.json (repo 소유권 포함)
+    ├─ [5] 루트 세션 태스크 분해 ─ tasks.json (repo 소유권 포함)
     ├─ [6] Agent 병렬 실행 ─────── execution-log.json
     ├─ [7] repo별 검증/PR ──────── verification.json + pr.json
     ├─ [8] terminal checkpoint
@@ -230,7 +230,7 @@ deterministic gate가 통과하면 Pylon은 requirement, criteria snapshot, veri
 별도 read-only evaluator bundle로 복사합니다. 결정 evaluator는 `Read/Grep/Glob`과 structured output만
 사용하며 Bash/Edit/Write, 구현 agent memory, 전체 대화 이력을 받지 않습니다. evaluator 응답은 Pylon이
 request digest와 모든 criterion coverage를 검증한 뒤 `evaluator-result.json`으로 기록합니다. `explorer`,
-`tracer`, `analyst`, `researcher`, `doc-specialist`는 조사 역할이며 최종 PASS/FAIL을 소유하지 않습니다.
+`analyst`, `researcher`는 조사 역할이며 최종 PASS/FAIL을 소유하지 않습니다.
 
 각 task attempt는 provider 자연어 응답 대신 digest가 포함된 `task-report.json`을 남깁니다. 보고서에는
 provider/capability, 변경 파일, 검증 증거, 배제된 가설, 남은 불확실성이 포함됩니다. terminal failure는
@@ -246,7 +246,7 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
 |--------|------|
 | `/pl:pipeline` | 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → PR) |
 | `/pl:architect` | 아키텍처 분석 단독 실행 |
-| `/pl:breakdown` | PM 태스크 분해 |
+| `/pl:breakdown` | 태스크 분해 |
 | `/pl:execute` | 에이전트 병렬 실행 |
 | `/pl:verify` | 빌드/테스트/린트 교차 검증 |
 | `/pl:pr` | PR 생성 |
@@ -257,67 +257,39 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
 | `/pl:add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
 | `/pl:migrate` | 레거시 워크스페이스(SQLite/Fossil) 폐기·이전 절차 안내 |
 
-## 내장 에이전트 (38종)
+## 내장 에이전트 (20종)
 
-`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). PO가 요구사항을 분석하여 적절한 도메인의 에이전트를 자동 선택합니다.
+`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). 루트 세션이 요구사항의 도메인을 판별해 적절한 에이전트를 고릅니다.
 
-### 소프트웨어 개발 (23종)
+### 소프트웨어 개발 (14종)
 
 | 에이전트 | 역할 |
 |----------|------|
-| po | 프로덕트 오너 (요구사항 분석, 도메인 라우팅) |
-| pm | 프로젝트 매니저 (태스크 분해, 조율) |
-| architect | 아키텍트 (기술 방향성, 의존성 분석) |
-| analyst | 분석가 (요구사항 분석) |
-| backend-dev | 백엔드 개발자 |
-| frontend-dev | 프론트엔드 개발자 |
-| designer | UI/UX 디자이너 |
-| test-engineer | 테스트 엔지니어 |
-| code-reviewer | 코드 리뷰어 |
-| code-simplifier | 코드 단순화 |
-| debugger | 디버거 |
-| devops | DevOps 엔지니어 |
+| architect | 아키텍트 (설계, `architecture.md`·`repos.json` 작성) |
+| dev | 개발자 (백엔드·프론트엔드·테스트 구현) |
+| code-reviewer | 코드 리뷰어 (보안 점검 포함) |
+| critic | 계획·설계 비평 |
+| verifier | 격리 evaluator 검증 |
+| debugger | 디버거 (근본 원인 추적, 진단 전용 모드) |
 | explorer | 코드베이스 탐색 |
-| git-master | Git 워크플로 |
+| researcher | 리서치 (웹·학술·공식 문서) |
+| analyst | 요구사항 분석 |
+| refactorer | 리팩토링·코드 단순화 |
 | perf-engineer | 성능 엔지니어 |
-| refactorer | 리팩토링 |
-| researcher | 리서치 |
-| security-reviewer | 보안 리뷰 |
-| tech-writer | 기술 문서 작성 |
-| doc-specialist | 외부 문서 전문가 |
-| tracer | 추적/디버깅 |
-| verifier | 검증 |
-| critic | 비평/리뷰 |
+| devops | DevOps (인프라, CI, 배포 설정) |
+| git-master | Git 워크플로 |
+| designer | UI/UX 디자이너 |
 
-### 리서치/조사 (5종)
+### 리서치·콘텐츠·마케팅 (6종)
 
 | 에이전트 | 역할 |
 |----------|------|
-| lead-researcher | 리서치 리더 (조사 계획, 팀 조율) |
-| web-searcher | 웹 검색 전문가 |
-| academic-analyst | 학술 자료 분석가 |
-| fact-checker | 팩트 체커 (교차 검증) |
-| report-writer | 보고서 작성자 |
-
-### 콘텐츠 제작 (5종)
-
-| 에이전트 | 역할 |
-|----------|------|
-| content-strategist | 콘텐츠 전략가 |
-| writer | 콘텐츠 작가 |
-| editor | 편집자 |
-| seo-specialist | SEO 전문가 |
-| content-reviewer | 콘텐츠 QA 리뷰어 |
-
-### 마케팅 (5종)
-
-| 에이전트 | 역할 |
-|----------|------|
+| writer | 작가 (콘텐츠, 보고서, 카피) |
+| editor | 편집자 (콘텐츠 QA) |
+| strategist | 전략가 (콘텐츠, 브랜드, 캠페인) |
 | market-researcher | 시장 조사 분석가 |
-| copywriter | 카피라이터 |
-| campaign-planner | 캠페인 기획자 |
-| data-analyst | 마케팅 데이터 분석가 |
-| brand-strategist | 브랜드 전략가 |
+| fact-checker | 팩트 체커 (교차 검증) |
+| seo-specialist | SEO 전문가 |
 
 ## CLI 명령어
 
@@ -347,7 +319,7 @@ Go 바이너리가 제공하는 유틸리티 명령입니다. 루트 에이전�
 ```bash
 pylon mem list --project <name>                        # 메모리 목록
 pylon mem search --project <name> --query "검색어"      # 토큰 매칭 검색
-pylon mem store --project <name> --key "키" --content "내용"  # 저장 (--category 지정 가능)
+pylon mem store --project <name> --key "키" --content "내용"  # 저장, 같은 key면 갱신 (--category 지정 가능)
 pylon mem delete --project <name> --key "키"            # 삭제 (--category, --dry-run 지원)
 ```
 
@@ -356,7 +328,7 @@ pylon mem delete --project <name> --key "키"            # 삭제 (--category, -
 | 명령어 | 설명 |
 |--------|------|
 | `pylon sync-agents` | 내장 리소스(`.pylon/builtin/`)와 `.claude/agents/` 심링크를 즉시 동기화 |
-| `pylon sync-memory` | 세션 학습 내용을 프로젝트 메모리에 동기화 |
+| `pylon mem inject` | 세션 시작 시 호출(Claude Code 훅; Codex는 수동 `pylon mem inject`) — 구버전 Stop 훅이 저장한 훅 JSON 항목과 만료 메모리(`retention_days`)를 정리한 뒤 프로젝트 메모리를 세션 컨텍스트에 주입 |
 
 ### 작업 이력
 
@@ -433,7 +405,7 @@ workspace/
 ├── .pylon/                    # 소스 오브 트루스 (git 추적)
 │   ├── config.yml             # 워크스페이스 설정
 │   ├── builtin/               # 내장 리소스 (git 무시, 버전이 바뀌면 통째로 재생성)
-│   │   ├── agents/            # 에이전트 정의 (38종)
+│   │   ├── agents/            # 에이전트 정의 (20종)
 │   │   ├── skills/            # 에이전트 스킬
 │   │   ├── commands/          # 파이프라인 슬래시 커맨드 (pl-pipeline.md, ...)
 │   │   ├── scripts/bash/      # 파이프라인 셸 스크립트 (common.sh, init-pipeline.sh, ...)
@@ -478,11 +450,9 @@ version: "0.2"
 runtime:
   provider: auto               # provider 이름 또는 auto
   execution_mode: session-native
-  max_concurrent: 5            # 동시 에이전트 수
-  max_turns: 50                # worker 최대 턴 수
-  max_attempts: 2              # 검증 재시도 횟수
-  task_timeout: 30m            # 태스크 타임아웃
   permission_mode: acceptEdits # default | acceptEdits | bypassPermissions
+  # effort: high               # 선택, 기본값 없음 — provider별 허용값 (claude: low|medium|high|xhigh|max, codex: model_reasoning_effort 값)
+  # model: opus                # 선택, 기본값 없음 — provider별 모델 이름
 
 providers:
   claude-code:
@@ -514,8 +484,8 @@ wiki:
     - pr_merged
 
 memory:
-  proactive_injection: true
-  proactive_max_tokens: 2000
+  proactive_injection: true    # 세션 시작 시 프로젝트 메모리 주입 on/off (Claude Code 훅; Codex는 수동 `pylon mem inject`)
+  proactive_max_tokens: 2000   # 주입 예산(토큰, 1토큰≈4바이트로 환산)
   retention_days:        # 카테고리별 보존 일수 — 미지정/0 이하 = 영구 보존, {} = 전체 영구 보존
     learning: 30
 
@@ -528,9 +498,9 @@ skills:
 기존 `runtime.backend`와 agent frontmatter의 `backend`는 마이그레이션 기간 동안 deprecated alias로
 읽지만 자동으로 파일을 다시 쓰지는 않습니다. `provider`가 함께 있으면 `provider`가 우선합니다.
 
-모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 전체 필드와 기본값을 보여주며,
+`runtime`의 `effort`/`model`/`env`(비어 있으면 provider 기본값)를 제외한 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 전체 필드와 기본값을 보여주며,
 명시하지 않은 필드는 로드 시 코드 기본값으로 자동 채워집니다. `pylon init`이 처음 생성하는 `config.yml`은
-최소 필드(`runtime`의 `provider`/`execution_mode`/`max_concurrent`/`max_turns`/`permission_mode`)만 포함하고, 이후
+최소 필드(`runtime`의 `provider`/`execution_mode`/`permission_mode`)만 포함하고, 이후
 `pylon doctor`가 누락된 필드를 감지해 기본값으로 동기화합니다.
 
 ## 개발

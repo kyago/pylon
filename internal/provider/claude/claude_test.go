@@ -55,8 +55,9 @@ func TestPrepareInteractiveBuildsProcessSpec(t *testing.T) {
 	}))
 
 	process, err := adapter.PrepareInteractive(context.Background(), provider.InteractiveSpec{
-		MaxTurns:       25,
 		PermissionMode: "acceptEdits",
+		Effort:         "xhigh",
+		Model:          "opus",
 		Environment:    []string{"PATH=/usr/bin", "LEVEL=old"},
 		EnvironmentOverride: map[string]string{
 			"LEVEL": "high",
@@ -69,13 +70,25 @@ func TestPrepareInteractiveBuildsProcessSpec(t *testing.T) {
 	if process.Executable != "/opt/bin/custom-claude" || process.DisplayName != "Claude Code" {
 		t.Fatalf("process = %+v", process)
 	}
-	wantArgs := []string{"custom-claude", "--max-turns", "25", "--permission-mode", "acceptEdits"}
+	wantArgs := []string{"custom-claude", "--model", "opus", "--effort", "xhigh", "--permission-mode", "acceptEdits"}
 	if !reflect.DeepEqual(process.Args, wantArgs) {
 		t.Fatalf("args = %v, want %v", process.Args, wantArgs)
 	}
 	wantEnvironment := []string{"LEVEL=high", "PATH=/usr/bin", "TOKEN=set"}
 	if !reflect.DeepEqual(process.Environment, wantEnvironment) {
 		t.Fatalf("environment = %v, want %v", process.Environment, wantEnvironment)
+	}
+}
+
+func TestPrepareInteractiveOmitsUnsetEffortAndModel(t *testing.T) {
+	adapter := New("claude", WithLookPath(func(string) (string, error) { return "/bin/claude", nil }))
+	process, err := adapter.PrepareInteractive(context.Background(), provider.InteractiveSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 미설정 effort/model은 claude 기본값에 맡기고, --max-turns는 print 모드 전용이라 넘기지 않는다.
+	if !reflect.DeepEqual(process.Args, []string{"claude"}) {
+		t.Fatalf("args = %v", process.Args)
 	}
 }
 

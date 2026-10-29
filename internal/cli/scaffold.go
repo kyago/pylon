@@ -23,6 +23,10 @@ func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error
 	if isBuiltinResource(subdir + "/" + name + ".md") {
 		return "", fmt.Errorf("%s '%s'는 내장 리소스 이름입니다 — 다른 이름을 사용하세요", kind, name)
 	}
+	// 은퇴한 내장 이름의 파일은 다음 sync가 .pylon-bak으로 비켜 놓는다 — syncBuiltinResources 참고.
+	if legacyShipped[subdir+"/"+name+".md"] != nil {
+		return "", fmt.Errorf("%s '%s'는 은퇴한 내장 리소스 이름입니다 — 다른 이름을 사용하세요", kind, name)
+	}
 
 	dir := layout.ResourceDir(root, subdir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -41,7 +45,7 @@ func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error
 	return path, nil
 }
 
-// isBuiltinResource reports whether rel (e.g. "agents/pm.md") names an embedded resource.
+// isBuiltinResource reports whether rel (e.g. "agents/architect.md") names an embedded resource.
 func isBuiltinResource(rel string) bool {
 	files, err := embeddedBuiltinFiles()
 	if err != nil {

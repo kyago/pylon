@@ -29,6 +29,7 @@ type Check struct {
 	Verify      func() (version string, err error)
 	InstallURL  string
 	BrewFormula string // Homebrew formula name; empty when brew install is not documented
+	Warn        bool   // Verify 실패를 경고로만 표시하고 doctor 실패로 세지 않는다
 }
 
 var baseChecks = []Check{
@@ -78,7 +79,9 @@ func runChecks(checks []Check) (allPassed bool, failures []Check) {
 		if check.Required {
 			reqLabel = " [required]"
 		}
-		if err != nil {
+		if err != nil && check.Warn {
+			fmt.Printf("\u26a0 %-10s %v\n", check.Name, err)
+		} else if err != nil {
 			allPassed = false
 			failures = append(failures, check)
 			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "missing", reqLabel)
@@ -389,7 +392,7 @@ func RunDoctorChecks() (bool, error) {
 func currentDoctorChecks() []Check {
 	checks := append([]Check(nil), baseChecks...)
 	cfg, err := doctorProviderConfig()
-	return append(checks, newProviderCheck(cfg, err))
+	return append(checks, newProviderCheck(cfg, err), newRuntimeEnvCheck(cfg))
 }
 
 func doctorProviderConfig() (*config.Config, error) {
@@ -438,6 +441,30 @@ func newProviderCheck(cfg *config.Config, configErr error) Check {
 	}
 }
 
+// newRuntimeEnvCheck warns when runtime.env pins env vars that override every
+// per-session and per-agent effort/compact control (Claude Code gives them top priority).
+func newRuntimeEnvCheck(cfg *config.Config) Check {
+	return Check{
+		Name: "runtime.env",
+		Warn: true,
+		Verify: func() (string, error) {
+			if cfg == nil {
+				return "ok", nil // 설정 로드 실패는 provider 체크가 보고한다
+			}
+			var keys []string
+			for _, key := range []string{"CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"} {
+				if _, ok := cfg.Runtime.Env[key]; ok {
+					keys = append(keys, key)
+				}
+			}
+			if len(keys) == 0 {
+				return "ok", nil
+			}
+			return "", fmt.Errorf("runtime.env의 %s는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. 이 키를 제거해야 runtime.effort가 적용됩니다", strings.Join(keys, ", "))
+		},
+	}
+}
+
 func verifyGit() (string, error) {
 	out, err := exec.Command("git", "--version").CombinedOutput()
 	if err != nil {
@@ -466,20 +493,33 @@ func verifyGH() (string, error) {
 	return lines[0], nil
 }
 
+// migrateConfigFile applies the config.yml migrations and reports what changed.
+// 모두 noop-safe라 여러 진입점에서 반복 호출해도 된다.
+func migrateConfigFile(cfgPath string) {
+	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
+		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
+	} else if migrated {
+		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
+	}
+	removed, err := config.MigrateRuntimeEnvDefaults(cfgPath)
+	if err != nil {
+		fmt.Printf("⚠ runtime.env 마이그레이션 실패: %v\n", err)
+	}
+	for _, key := range removed {
+		fmt.Printf("✓ runtime.env.%s 제거 (pylon 구버전 기본값 — effort는 runtime.effort로 설정)\n", key)
+	}
+}
+
 // ensurePrimaryProviderIfWorkspace resolves and pins the primary provider when
-// running inside a pylon workspace. backend 마이그레이션을 먼저 수행해 구식
-// 키가 provider 결정에 그대로 반영되도록 한다.
+// running inside a pylon workspace. config 마이그레이션을 먼저 수행해 구식
+// 키가 provider 결정과 이후 체크에 그대로 반영되도록 한다.
 func ensurePrimaryProviderIfWorkspace(interactive bool) {
 	root, err := resolveRoot()
 	if err != nil {
 		return
 	}
 	cfgPath := layout.ConfigPath(root)
-	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
-		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
-	} else if migrated {
-		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
-	}
+	migrateConfigFile(cfgPath)
 	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return // 설정 로드 실패는 이후 단계가 보고한다
@@ -495,13 +535,9 @@ func syncConfigIfWorkspace() {
 	}
 
 	cfgPath := layout.ConfigPath(root)
-	// backend 마이그레이션은 ensurePrimaryProviderIfWorkspace가 담당하지만,
+	// 마이그레이션은 ensurePrimaryProviderIfWorkspace가 담당하지만,
 	// init 등 doctor 본 흐름을 거치지 않는 호출을 위해 여기서도 보장한다 (noop-safe).
-	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
-		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
-	} else if migrated {
-		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
-	}
+	migrateConfigFile(cfgPath)
 	cfg, added, err := config.SyncConfigDefaults(cfgPath)
 	if err != nil {
 		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)
@@ -577,7 +613,7 @@ func reportBuiltinSync(wrote bool, removed []string, err error) {
 	// 대개 이전 릴리스가 .pylon/<kind>/에 복사해 둔 사본의 1회 정리지만, 내장 이름과 겹친 사용자
 	// 파일일 수도 있으므로 하나씩 밝힌다.
 	if len(removed) > 0 {
-		fmt.Printf("  ℹ 내장 이름과 겹치는 파일 %d개를 정리했습니다 (내장 리소스는 .pylon/builtin/에 있습니다):\n", len(removed))
+		fmt.Printf("  ℹ 내장(은퇴한 내장 포함) 이름과 겹치는 파일 %d개를 정리했습니다 (내장 리소스는 .pylon/builtin/에 있습니다):\n", len(removed))
 		for _, line := range removed {
 			fmt.Printf("    - %s\n", line)
 		}
@@ -639,11 +675,19 @@ func syncClaudeProviderResourcesIfWorkspace(in io.Reader, autoYes bool) {
 		fmt.Printf("⚠ .claude/agents/ 생성 실패: %v\n", genErr)
 	}
 
+	// launch 없이 `claude`를 직접 띄우는 사용자도 구버전 훅이 남지 않도록 여기서도 갱신한다.
+	// .claude/는 위 에이전트 동기화가 만든다.
+	if err := generateSettingsHooks(layout.ClaudeDir(root)); err != nil {
+		fmt.Printf("⚠ .claude/settings.json 훅 갱신 실패: %v\n", err)
+	} else {
+		fmt.Println("✓ .claude/settings.json 훅 갱신")
+	}
+
 	syncClaudeCommandsIfWorkspace(in, autoYes)
 }
 
 // builtinFile is one embedded resource, addressed by its slash path under
-// .pylon/builtin/ (e.g. "agents/pm.md").
+// .pylon/builtin/ (e.g. "agents/architect.md").
 type builtinFile struct {
 	rel     string
 	content []byte
@@ -692,8 +736,10 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 // damaged builtin heals on the next launch or doctor. Nothing is removed wholesale, so
 // concurrent runs converge instead of racing. A built-in name in the user-owned
 // .pylon/<kind>/ dirs (usually a copy left by releases that synced there directly) is
-// cleared so it can never shadow the builtin: an identical copy is deleted, anything
-// else is moved aside to <name>.pylon-bak. Every other user file is never touched.
+// cleared so it can never shadow the builtin: a copy identical to the embed or to any
+// previously shipped version (legacyShipped) is deleted, anything else is moved aside
+// to <name>.pylon-bak. Retired built-ins (retiredBuiltins) get the same treatment,
+// matched against their shipped versions. Every other user file is never touched.
 // Shared by launch, init, doctor, sync-agents and cancel so they can never drift.
 func syncBuiltinResources(root string) (bool, []string, error) {
 	files, err := embeddedBuiltinFiles()
@@ -703,29 +749,30 @@ func syncBuiltinResources(root string) (bool, []string, error) {
 
 	var legacy []string
 	for _, f := range files {
-		old := filepath.Join(layout.ResourceDir(root, path.Dir(f.rel)), path.Base(f.rel))
-		info, err := os.Lstat(old)
-		if os.IsNotExist(err) || (err == nil && info.IsDir()) {
-			continue
-		}
+		line, err := clearUserCopy(root, f.rel, "내장과 동일한 사본 삭제", func(b []byte) bool {
+			return bytes.Equal(b, f.content) || isLegacyShipped(f.rel, b)
+		})
 		if err != nil {
 			return false, legacy, err
 		}
-		if current, err := os.ReadFile(old); err == nil && bytes.Equal(current, f.content) {
-			if err := os.Remove(old); err != nil {
-				return false, legacy, fmt.Errorf(".pylon/%s 정리 실패: %w", f.rel, err)
-			}
-			legacy = append(legacy, ".pylon/"+f.rel+" (내장과 동일한 사본 삭제)")
-			continue
+		if line != "" {
+			legacy = append(legacy, line)
 		}
-		dest, err := nextBackupPath(old)
-		if err == nil {
-			err = os.Rename(old, dest)
-		}
+	}
+	retired, err := retiredBuiltins()
+	if err != nil {
+		return false, legacy, err
+	}
+	for _, rel := range retired {
+		line, err := clearUserCopy(root, rel, "은퇴한 내장의 출하본 삭제", func(b []byte) bool {
+			return isLegacyShipped(rel, b)
+		})
 		if err != nil {
-			return false, legacy, fmt.Errorf(".pylon/%s 백업 실패: %w", f.rel, err)
+			return false, legacy, err
 		}
-		legacy = append(legacy, fmt.Sprintf(".pylon/%s → %s", f.rel, filepath.Base(dest)))
+		if line != "" {
+			legacy = append(legacy, line)
+		}
 	}
 	// 내장 전용이던 디렉토리는 비었을 때만 걷어낸다 — 사용자 파일이 있으면 Remove가 실패해 남는다.
 	// 심링크는 대상이 비어 있지 않아도 unlink되므로 실제 디렉토리만 다룬다.
@@ -788,6 +835,34 @@ func syncBuiltinResources(root string) (bool, []string, error) {
 	return changed, legacy, nil
 }
 
+// clearUserCopy clears .pylon/<rel> out of the user-owned dirs: a file for which same
+// reports true is deleted, any other file is moved aside to <name>.pylon-bak[.N]. It
+// returns a report line, or "" when there was nothing to clear.
+func clearUserCopy(root, rel, deletedNote string, same func([]byte) bool) (string, error) {
+	old := filepath.Join(layout.ResourceDir(root, path.Dir(rel)), path.Base(rel))
+	info, err := os.Lstat(old)
+	if os.IsNotExist(err) || (err == nil && info.IsDir()) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if current, err := os.ReadFile(old); err == nil && same(current) {
+		if err := os.Remove(old); err != nil {
+			return "", fmt.Errorf(".pylon/%s 정리 실패: %w", rel, err)
+		}
+		return ".pylon/" + rel + " (" + deletedNote + ")", nil
+	}
+	dest, err := nextBackupPath(old)
+	if err == nil {
+		err = os.Rename(old, dest)
+	}
+	if err != nil {
+		return "", fmt.Errorf(".pylon/%s 백업 실패: %w", rel, err)
+	}
+	return fmt.Sprintf(".pylon/%s → %s", rel, filepath.Base(dest)), nil
+}
+
 // syncBuiltinForLaunch is the launch-path wrapper around syncBuiltinResources. The
 // notice goes to stderr, which the provider TUI hides right after — `pylon doctor`
 // is the reliable reporting channel.
@@ -797,7 +872,7 @@ func syncBuiltinForLaunch(root string) error {
 		return fmt.Errorf("내장 리소스 동기화 실패: %w", err)
 	}
 	if len(removed) > 0 {
-		fmt.Fprintf(os.Stderr, "ℹ 내장 이름과 겹치는 파일 %d개를 정리했습니다 (내장과 같은 사본은 삭제, 다른 내용은 *.pylon-bak으로 보관)\n", len(removed))
+		fmt.Fprintf(os.Stderr, "ℹ 내장(은퇴한 내장 포함) 이름과 겹치는 파일 %d개를 정리했습니다 (출하본과 같은 사본은 삭제, 다른 내용은 *.pylon-bak으로 보관)\n", len(removed))
 	}
 	return nil
 }

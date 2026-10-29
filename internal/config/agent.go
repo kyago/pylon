@@ -14,27 +14,21 @@ import (
 // Spec Reference: Section 5 "Agent Configuration Format"
 type AgentConfig struct {
 	// YAML frontmatter fields (between --- delimiters)
-	Name                 string            `yaml:"name"`
-	Description          string            `yaml:"description"`
-	Role                 string            `yaml:"role"`
-	Type                 string            `yaml:"type"`
-	Provider             string            `yaml:"provider,omitempty"`
-	Backend              string            `yaml:"backend,omitempty"`
-	RequiredCapabilities []string          `yaml:"requiredCapabilities,omitempty"`
-	EvaluationRole       string            `yaml:"evaluationRole,omitempty"`
-	AccessMode           string            `yaml:"accessMode,omitempty"`
-	InputPolicy          string            `yaml:"inputPolicy,omitempty"`
-	Scope                []string          `yaml:"scope"`
-	Tools                []string          `yaml:"tools"`
-	DisallowedTools      []string          `yaml:"disallowedTools"`
-	MaxTurns             int               `yaml:"maxTurns"`
-	PermissionMode       string            `yaml:"permissionMode"`
-	Isolation            string            `yaml:"isolation"`
-	Model                string            `yaml:"model"`
-	Timeout              string            `yaml:"timeout"`
-	Env                  map[string]string `yaml:"env"`
-	Domain               string            `yaml:"domain"`
-	Skills               []string          `yaml:"skills"`
+	Name                 string   `yaml:"name"`
+	Description          string   `yaml:"description"`
+	Role                 string   `yaml:"role"`
+	Type                 string   `yaml:"type"`
+	Provider             string   `yaml:"provider,omitempty"`
+	Backend              string   `yaml:"backend,omitempty"`
+	RequiredCapabilities []string `yaml:"requiredCapabilities,omitempty"`
+	EvaluationRole       string   `yaml:"evaluationRole,omitempty"`
+	AccessMode           string   `yaml:"accessMode,omitempty"`
+	InputPolicy          string   `yaml:"inputPolicy,omitempty"`
+	Scope                []string `yaml:"scope"`
+	Tools                []string `yaml:"tools"`
+	DisallowedTools      []string `yaml:"disallowedTools"`
+	Domain               string   `yaml:"domain"`
+	Skills               []string `yaml:"skills"`
 
 	// Markdown body (everything after the second ---)
 	Body string `yaml:"-"`
@@ -153,46 +147,6 @@ func splitFrontmatter(content string) (string, string, error) {
 	return frontmatter, body, nil
 }
 
-// InferAgentType infers the agent type from the agent name.
-// Known dev agent names map to "dev" type for backward compatibility
-// with configurations that don't specify the type field explicitly.
-func InferAgentType(name string) string {
-	devNames := map[string]bool{
-		"backend-dev":  true,
-		"frontend-dev": true,
-		"fullstack":    true,
-	}
-	if devNames[name] {
-		return "dev"
-	}
-	return ""
-}
-
-func InferAgentEvaluationPolicy(name string) (role, accessMode, inputPolicy string) {
-	decisionAgents := map[string]bool{
-		"verifier":          true,
-		"critic":            true,
-		"code-reviewer":     true,
-		"security-reviewer": true,
-		"fact-checker":      true,
-		"content-reviewer":  true,
-	}
-	if decisionAgents[name] {
-		return EvaluationRoleDecision, AccessModeReadOnly, InputPolicyIsolatedEvidence
-	}
-	investigationAgents := map[string]bool{
-		"explorer":       true,
-		"tracer":         true,
-		"analyst":        true,
-		"researcher":     true,
-		"doc-specialist": true,
-	}
-	if investigationAgents[name] {
-		return EvaluationRoleInvestigation, AccessModeReadOnly, InputPolicyScopedContext
-	}
-	return "", AccessModeStandard, InputPolicyFullContext
-}
-
 func (a AgentConfig) CanIssueFinalVerdict() bool {
 	return a.EvaluationRole == EvaluationRoleDecision
 }
@@ -234,116 +188,4 @@ func (a AgentConfig) ValidateEvaluationPolicy() error {
 		}
 	}
 	return nil
-}
-
-// ResolveDefaults fills in missing agent fields with values from the global config.
-// Spec Reference: Section 5 "frontmatter field spec" - default value inheritance
-//
-// Inheritance rules:
-//   - type <- InferAgentType(name) if empty
-//   - provider <- config.yml runtime.provider or deprecated runtime.backend
-//   - maxTurns <- config.yml runtime.max_turns
-//   - permissionMode <- config.yml runtime.permission_mode
-//   - isolation <- "worktree" (hardcoded default)
-//   - env <- config.yml runtime.env merged with agent env (agent takes precedence)
-func (a *AgentConfig) ResolveDefaults(cfg *Config) {
-	if a.Type == "" {
-		a.Type = InferAgentType(a.Name)
-	}
-	role, accessMode, inputPolicy := InferAgentEvaluationPolicy(a.Name)
-	if a.EvaluationRole == "" {
-		a.EvaluationRole = role
-	}
-	if a.AccessMode == "" {
-		a.AccessMode = accessMode
-	}
-	if a.InputPolicy == "" {
-		a.InputPolicy = inputPolicy
-	}
-	if a.EvaluationRole == EvaluationRoleDecision {
-		a.RequiredCapabilities = removeCapabilityNames(a.RequiredCapabilities, []string{
-			string(provider.CapabilityEditFiles),
-			string(provider.CapabilityRunShell),
-			string(provider.CapabilitySpawnSubagents),
-			string(provider.CapabilityBackgroundExecution),
-		})
-		a.RequiredCapabilities = mergeCapabilityNames(a.RequiredCapabilities, []string{
-			string(provider.CapabilityReadFiles),
-			string(provider.CapabilityStructuredOutput),
-			string(provider.CapabilityToolRestrictions),
-		})
-	}
-	if a.Provider == "" && a.Backend == "" {
-		a.Provider, _ = cfg.Runtime.EffectiveProvider()
-	}
-	if a.MaxTurns == 0 {
-		a.MaxTurns = cfg.Runtime.MaxTurns
-	}
-	if a.PermissionMode == "" {
-		a.PermissionMode = cfg.Runtime.PermissionMode
-	}
-	if a.Isolation == "" {
-		a.Isolation = "worktree"
-	}
-	if a.EvaluationRole == EvaluationRoleDecision {
-		a.PermissionMode = "default"
-		a.Isolation = "readonly"
-		a.Tools = filterReadOnlyTools(a.Tools)
-		if len(a.Tools) == 0 {
-			a.Tools = []string{"Read", "Grep", "Glob"}
-		}
-		a.DisallowedTools = mergeCapabilityNames(a.DisallowedTools, []string{"Edit", "Write", "NotebookEdit", "Bash"})
-	}
-
-	// Merge env: config.yml runtime.env as base, agent env overrides
-	if cfg.Runtime.Env != nil || a.Env != nil {
-		merged := make(map[string]string)
-		for k, v := range cfg.Runtime.Env {
-			merged[k] = v
-		}
-		for k, v := range a.Env {
-			merged[k] = v
-		}
-		a.Env = merged
-	}
-}
-
-func removeCapabilityNames(existing, denied []string) []string {
-	blocked := make(map[string]struct{}, len(denied))
-	for _, name := range denied {
-		blocked[name] = struct{}{}
-	}
-	filtered := make([]string, 0, len(existing))
-	for _, name := range existing {
-		if _, denied := blocked[name]; !denied {
-			filtered = append(filtered, name)
-		}
-	}
-	return filtered
-}
-
-func filterReadOnlyTools(tools []string) []string {
-	filtered := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		switch strings.ToLower(tool) {
-		case "bash", "shell", "edit", "write", "notebookedit":
-			continue
-		default:
-			filtered = append(filtered, tool)
-		}
-	}
-	return filtered
-}
-
-func mergeCapabilityNames(existing, required []string) []string {
-	seen := make(map[string]struct{}, len(existing)+len(required))
-	merged := make([]string, 0, len(existing)+len(required))
-	for _, name := range append(append([]string(nil), existing...), required...) {
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		merged = append(merged, name)
-	}
-	return merged
 }

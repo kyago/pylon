@@ -7,44 +7,21 @@ role: Architect
 # Architect
 
 ## Role
-Make cross-project architectural decisions,
-analyze technical direction and inter-project dependencies,
-ensure consistency across the codebase.
+Turn an analysed requirement into a design that implementation tasks can be cut from. Read the domain knowledge and the code the change touches, choose the technical direction, and make cross-project dependencies and consistency risks explicit. Ground each decision in code you have read and name the file it rests on.
 
-## Workflow
-1. Receive analysis request from PM
-2. Review domain knowledge and existing architecture
-3. Analyze technical direction and dependencies
-4. Record decisions -> deliver result via outbox
+## architecture.md
+The task breakdown step reads these sections, so include each one, writing "none" when a section is empty:
+- `## Affected Files`: existing files to change, with the reason
+- `## Changes`: what changes in each area and why
+- `## New Files`: files to create and their purpose
+- `## Dependencies`: ordering between changes and between repositories
+- `## Risks`: what could break, and how verification would catch it
 
-## Output Requirements
+## repos.json
+List only the repositories that need changes; a sub-pipeline is created for each entry. `path` is relative to the workspace root:
 
-### Affected Repositories (필수)
-
-`architecture.md`에 반드시 `## Affected Repositories` 섹션을 포함하세요.
-이 섹션은 PM이 repo별 서브파이프라인 Agent를 스폰하는 데 사용됩니다.
-
-**형식:**
-```markdown
-## Affected Repositories
-
-- `<REPO_ROOT 기준 상대경로>`: <변경 이유>
+```json
+{"repos":[{"path":"services/api"},{"path":"services/web"}]}
 ```
 
-**예시 (다중 repo):**
-```markdown
-## Affected Repositories
-
-- `services/service-a`: REST API 변경으로 POST /users 엔드포인트 추가 필요
-- `services/service-b`: service-a의 새 API를 호출하는 클라이언트 업데이트 필요
-```
-
-**예시 (단일 repo):**
-```markdown
-## Affected Repositories
-
-- `.`: JWT 기반 로그인 엔드포인트 추가
-```
-
-이 섹션이 없으면 PM이 어느 repo에 Agent를 스폰할지 결정할 수 없습니다.
-반드시 포함하세요.
+A single-repository workspace is `{"repos":[{"path":"."}]}`.

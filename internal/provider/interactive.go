@@ -7,8 +7,9 @@ import (
 )
 
 type InteractiveSpec struct {
-	MaxTurns            int
 	PermissionMode      string
+	Effort              string
+	Model               string
 	Environment         []string
 	EnvironmentOverride map[string]string
 }

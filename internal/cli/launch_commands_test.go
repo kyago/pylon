@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -29,6 +30,76 @@ func TestPipelineCommandUsesRepoOwnedBranches(t *testing.T) {
 	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("pipeline command is missing repo-owned lifecycle instruction %q", required)
+		}
+	}
+}
+
+// 커맨드의 subagent_type과 매뉴얼 서브 에이전트 표가 부르는 이름은 모두 내장 에이전트 파일로 존재하고
+// 그 name: 과 같아야 한다 — 에이전트를 통합·삭제하면서 남은 옛 이름이 호출되지 않도록.
+func TestAgentReferencesResolveToBuiltins(t *testing.T) {
+	refs := map[string]string{} // 이름 → 처음 발견한 위치
+	entries, err := embeddedCommands.ReadDir("commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subagent := regexp.MustCompile(`subagent_type="([^"]+)"`)
+	found := 0
+	for _, entry := range entries {
+		data, err := embeddedCommands.ReadFile("commands/" + entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range subagent.FindAllStringSubmatch(string(data), -1) {
+			refs[m[1]] = "commands/" + entry.Name()
+			found++
+		}
+	}
+	if found < 4 {
+		t.Fatalf("subagent_type references found = %d, parser likely broken", found)
+	}
+
+	manual, err := embeddedReference.ReadFile("reference/pylon-usage.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := string(manual)
+	start := strings.Index(section, "### 서브 에이전트 선택 기준")
+	if start < 0 {
+		t.Fatal("manual agent selection section missing")
+	}
+	section = section[start:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	backtick := regexp.MustCompile("`([^`]+)`")
+	found = 0
+	for _, line := range strings.Split(section, "\n") {
+		cells := strings.Split(line, "|")
+		if !strings.HasPrefix(line, "|") || len(cells) < 3 {
+			continue
+		}
+		for _, m := range backtick.FindAllStringSubmatch(cells[2], -1) {
+			refs[m[1]] = "reference/pylon-usage.md"
+			found++
+		}
+	}
+	if found < 6 {
+		t.Fatalf("manual table agent names found = %d, parser likely broken", found)
+	}
+
+	for name, where := range refs {
+		data, err := embeddedAgents.ReadFile("agents/" + name + ".md")
+		if err != nil {
+			t.Errorf("%s references agent %q with no agents/%s.md", where, name, name)
+			continue
+		}
+		agent, err := config.ParseAgentData(data)
+		if err != nil {
+			t.Errorf("parse agents/%s.md: %v", name, err)
+			continue
+		}
+		if agent.Name != name {
+			t.Errorf("agents/%s.md has name %q, referenced as %q in %s", name, agent.Name, name, where)
 		}
 	}
 }

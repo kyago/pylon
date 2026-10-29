@@ -80,7 +80,11 @@ func TestRunLaunchUsesSelectedInteractiveProvider(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".pylon", "config.yml"), []byte(`version: "0.2"
 runtime:
   provider: provider-b
-  max_turns: 17
+  effort: max
+  model: provider-b-large
+  env:
+    CLAUDE_CODE_EFFORT_LEVEL: high
+    MY_VAR: keep
   permission_mode: default
 `), 0644); err != nil {
 		t.Fatal(err)
@@ -144,8 +148,12 @@ runtime:
 	if gotWorkingDir != wantWorkingDir {
 		t.Fatalf("provider working directory = %q, want workspace root %q", gotWorkingDir, wantWorkingDir)
 	}
-	if adapter.lastSpec.MaxTurns != 17 || adapter.lastSpec.PermissionMode != "sandbox" {
+	if adapter.lastSpec.Effort != "max" || adapter.lastSpec.Model != "provider-b-large" || adapter.lastSpec.PermissionMode != "sandbox" {
 		t.Fatalf("interactive spec = %+v", adapter.lastSpec)
+	}
+	// 구버전 기본 env 고정값은 config.yml을 고치지 않고 launch에서 걸러낸다.
+	if !reflect.DeepEqual(adapter.lastSpec.EnvironmentOverride, map[string]string{"MY_VAR": "keep"}) {
+		t.Fatalf("environment override = %v", adapter.lastSpec.EnvironmentOverride)
 	}
 }
 

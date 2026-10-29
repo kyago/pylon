@@ -21,6 +21,7 @@ type Entry struct {
 	CreatedAt  time.Time `yaml:"created_at"`
 	Content    string    `yaml:"-"`
 	Path       string    `yaml:"-"` // 워크스페이스 루트 기준 상대 경로 (slash 구분)
+	Updated    bool      `yaml:"-"` // Insert가 같은 key의 기존 파일을 덮어썼으면 true
 }
 
 const frontmatterDelim = "---\n"

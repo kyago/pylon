@@ -102,6 +102,12 @@ func (adapter *Adapter) PrepareInteractive(_ context.Context, spec provider.Inte
 	}
 
 	args := []string{adapter.command}
+	if spec.Model != "" {
+		args = append(args, "-m", spec.Model)
+	}
+	if spec.Effort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+spec.Effort)
+	}
 	// codex의 실행 권한은 --sandbox로 제어한다. claude 전용 permission mode 등
 	// 알 수 없는 값은 codex 기본 동작(config.toml)에 맡기고 플래그를 생략한다.
 	if sandboxModes[spec.PermissionMode] {

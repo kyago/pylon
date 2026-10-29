@@ -79,10 +79,11 @@ func runLaunch() error {
 		return fmt.Errorf("provider %s does not support interactive launch", selection.Adapter.Name())
 	}
 	process, err := interactiveAdapter.PrepareInteractive(context.Background(), provider.InteractiveSpec{
-		MaxTurns:            cfg.Runtime.MaxTurns,
 		PermissionMode:      permissionMode,
+		Effort:              cfg.Runtime.Effort,
+		Model:               cfg.Runtime.Model,
 		Environment:         os.Environ(),
-		EnvironmentOverride: cfg.Runtime.Env,
+		EnvironmentOverride: config.StripLegacyRuntimeEnv(cfg.Runtime.Env),
 	})
 	if err != nil {
 		return fmt.Errorf("provider %s 실행 준비 실패: %w", selection.Adapter.Name(), err)

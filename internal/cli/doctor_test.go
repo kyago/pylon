@@ -2,6 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,6 +113,200 @@ func TestSyncBuiltinResources_ClearsLegacyCopiesKeepsUserFiles(t *testing.T) {
 	}
 }
 
+// 2026.9.2까지 .pylon/<kind>/에 직접 복사되던 내장 중 이제 은퇴한 리소스: 출하 내용 그대로면 삭제,
+// 편집됐으면 .pylon-bak으로 보관하고, 목록에 없는 사용자 에이전트는 남긴다. 남은 링크는 기존
+// prune으로 .claude/agents/에서 사라진다.
+func TestSyncBuiltinResources_ClearsRetiredBuiltins(t *testing.T) {
+	root := t.TempDir()
+	shipped := []byte("retired built-in as shipped")
+	for _, rel := range []string{"agents/retired-agent.md", "skills/retired-skill.md"} {
+		addLegacyShipped(t, rel, shipped)
+	}
+	agent := filepath.Join(layout.ResourceDir(root, "agents"), "retired-agent.md")
+	skill := filepath.Join(layout.ResourceDir(root, "skills"), "retired-skill.md")
+	userAgent := filepath.Join(layout.ResourceDir(root, "agents"), "my-agent.md")
+	for path, content := range map[string][]byte{agent: shipped, skill: []byte("edited by user"), userAgent: []byte("mine")} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claudeAgents := layout.ClaudeAgentsDir(root)
+	if err := os.MkdirAll(claudeAgents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(claudeAgents, "retired-agent.md")
+	if err := os.Symlink(layout.AgentLinkTarget("retired-agent.md"), link); err != nil {
+		t.Fatal(err)
+	}
+
+	_, cleared, err := syncBuiltinResources(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared) != 2 {
+		t.Errorf("cleared = %v, want 2 entries", cleared)
+	}
+	if _, err := os.Lstat(agent); !os.IsNotExist(err) {
+		t.Error("unchanged retired agent must be deleted")
+	}
+	if _, err := os.Lstat(agent + rootFileBackupSuffix); !os.IsNotExist(err) {
+		t.Error("unchanged retired agent must not be backed up")
+	}
+	if _, err := os.Lstat(skill); !os.IsNotExist(err) {
+		t.Error("edited retired skill must be moved aside")
+	}
+	if got, err := os.ReadFile(skill + rootFileBackupSuffix); err != nil || string(got) != "edited by user" {
+		t.Errorf("edited retired skill must be backed up: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(userAgent); err != nil || string(got) != "mine" {
+		t.Errorf("user agent touched: %q, %v", got, err)
+	}
+
+	cfg, err := config.ParseConfig([]byte("version: \"0.1\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := generateClaudeAgentsWithSkills(root, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Error(".claude/agents/ link to the retired agent must be pruned")
+	}
+	if _, err := os.Lstat(filepath.Join(claudeAgents, "my-agent.md")); err != nil {
+		t.Errorf("user agent link missing: %v", err)
+	}
+}
+
+// addLegacyShipped registers content as a previously shipped version of rel for one test.
+func addLegacyShipped(t *testing.T, rel string, content []byte) {
+	t.Helper()
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	if legacyShipped[rel] == nil {
+		legacyShipped[rel] = map[string]bool{}
+		t.Cleanup(func() { delete(legacyShipped, rel) })
+	} else {
+		t.Cleanup(func() { delete(legacyShipped[rel], hash) })
+	}
+	legacyShipped[rel][hash] = true
+}
+
+// 2026.9.2 이전 레이아웃은 git 추적 .pylon/<kind>/에 내장 사본을 두었다. 이번 릴리스가 내용을 바꾼
+// 내장이라도, 손대지 않은 과거 출하본이면 백업하지 않고 삭제해야 한다.
+func TestSyncBuiltinResources_DeletesLegacyShippedCopiesOfCurrentBuiltins(t *testing.T) {
+	root := t.TempDir()
+	oldAgent := []byte("architect as shipped by 2026.9.2")
+	oldCommand := []byte("pl-pipeline as shipped by 2026.9.2")
+	addLegacyShipped(t, "agents/architect.md", oldAgent)
+	addLegacyShipped(t, "commands/pl-pipeline.md", oldCommand)
+	files := map[string][]byte{
+		filepath.Join(layout.ResourceDir(root, "agents"), "architect.md"):     oldAgent,
+		filepath.Join(layout.ResourceDir(root, "commands"), "pl-pipeline.md"): oldCommand,
+		filepath.Join(layout.ResourceDir(root, "agents"), "critic.md"):        []byte("critic edited by user"),
+	}
+	for path, content := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, _, err := syncBuiltinResources(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"agents/architect.md", "commands/pl-pipeline.md"} {
+		path := filepath.Join(layout.ResourceDir(root, filepath.Dir(rel)), filepath.Base(rel))
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("%s: unedited legacy copy must be deleted", rel)
+		}
+		if _, err := os.Lstat(path + rootFileBackupSuffix); !os.IsNotExist(err) {
+			t.Errorf("%s: unedited legacy copy must not be backed up", rel)
+		}
+	}
+	critic := filepath.Join(layout.ResourceDir(root, "agents"), "critic.md")
+	if got, err := os.ReadFile(critic + rootFileBackupSuffix); err != nil || string(got) != "critic edited by user" {
+		t.Errorf("edited copy must be backed up: %q, %v", got, err)
+	}
+}
+
+// 은퇴 목록은 과거 출하 기록 중 현재 임베드에 없는 경로다 — 이번 릴리스가 지운 에이전트 20개와 스킬 2개.
+func TestRetiredBuiltins_AreLegacyPathsMissingFromEmbeds(t *testing.T) {
+	got, err := retiredBuiltins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"agents/academic-analyst.md", "agents/backend-dev.md", "agents/brand-strategist.md",
+		"agents/campaign-planner.md", "agents/code-simplifier.md", "agents/content-reviewer.md",
+		"agents/content-strategist.md", "agents/copywriter.md", "agents/data-analyst.md",
+		"agents/doc-specialist.md", "agents/frontend-dev.md", "agents/lead-researcher.md",
+		"agents/pm.md", "agents/po.md", "agents/report-writer.md", "agents/security-reviewer.md",
+		"agents/tech-writer.md", "agents/test-engineer.md", "agents/tracer.md", "agents/web-searcher.md",
+		"skills/content-writing-guide.md", "skills/marketing-framework.md",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("retiredBuiltins() =\n%v\nwant\n%v", got, want)
+	}
+	for rel, hashes := range legacyShipped {
+		if len(hashes) == 0 {
+			t.Errorf("%s: no shipped hash", rel)
+		}
+		for h := range hashes {
+			if len(h) != 64 {
+				t.Errorf("%s: malformed hash %q", rel, h)
+			}
+		}
+	}
+}
+
+// pylon doctor/update도 .claude/settings.json 훅을 현재 hooks.json으로 갱신한다 — 구버전 Stop 훅이
+// `claude`를 직접 띄운 세션에서 매 턴 실패하지 않도록. 사용자 훅은 남는다.
+func TestSyncClaudeProviderResources_RefreshesSettingsHooks(t *testing.T) {
+	root := setupTestWorkspace(t)
+	claudeDir := layout.ClaudeDir(root)
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"hooks":{
+  "Stop":[{"matcher":"*","hooks":[{"type":"command","command":"pylon sync-memory --from-session --agent claude"}]}],
+  "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-guard"}]}]
+}}`
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = oldWorkspace })
+
+	captureStdout(t, func() { syncClaudeProviderResourcesIfWorkspace(bytes.NewBuffer(nil), true) })
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks map[string][]settingsHookEntry `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := settings.Hooks["Stop"]; ok {
+		t.Errorf("legacy pylon Stop hook must be removed: %s", data)
+	}
+	if len(settings.Hooks["SessionStart"]) != 1 {
+		t.Errorf("SessionStart hook missing: %s", data)
+	}
+	if pre := settings.Hooks["PreToolUse"]; len(pre) != 1 || pre[0].Hooks[0].Command != "my-guard" {
+		t.Errorf("user hook must be kept: %s", data)
+	}
+}
+
 // builtin은 매번 파일 단위로 맞춘다: 지워지거나 고쳐진 파일은 복구하고, 내장에 없는 파일은
 // 지운다(바이너리에서 빠진 리소스). 이미 맞으면 아무것도 바꾸지 않는다.
 func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
@@ -118,12 +315,12 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 		t.Fatal(err)
 	}
 	common := filepath.Join(layout.ScriptsDir(root), "common.sh")
-	pm := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "pm.md")
+	builtinAgent := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "architect.md")
 	dropped := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dropped-in-new-release.md")
 	if err := os.Remove(common); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(pm, []byte("edited by a session"), 0o644); err != nil {
+	if err := os.WriteFile(builtinAgent, []byte("edited by a session"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dropped, []byte("x"), 0o644); err != nil {
@@ -140,8 +337,8 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 	if info, err := os.Stat(common); err != nil || info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("deleted script not restored as executable: %v", err)
 	}
-	want, _ := embeddedAgents.ReadFile("agents/pm.md")
-	if got, _ := os.ReadFile(pm); !bytes.Equal(got, want) {
+	want, _ := embeddedAgents.ReadFile("agents/architect.md")
+	if got, _ := os.ReadFile(builtinAgent); !bytes.Equal(got, want) {
 		t.Error("edited builtin file not restored")
 	}
 	if _, err := os.Stat(dropped); !os.IsNotExist(err) {
@@ -783,6 +980,88 @@ func TestInstallHint_NoBrewFormula(t *testing.T) {
 	c := Check{Name: "git", InstallURL: "https://git-scm.com/downloads"}
 	if got := installHint(c, true); got != c.InstallURL {
 		t.Errorf("installHint = %q, want %q", got, c.InstallURL)
+	}
+}
+
+func TestRuntimeEnvCheckWarnsOnOverridingKeys(t *testing.T) {
+	const suffix = "는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. 이 키를 제거해야 runtime.effort가 적용됩니다"
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"nil env", nil, ""},
+		{"unrelated key", map[string]string{"FOO": "1"}, ""},
+		{"effort key", map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "high"}, "runtime.env의 CLAUDE_CODE_EFFORT_LEVEL" + suffix},
+		{"both keys", map[string]string{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80", "CLAUDE_CODE_EFFORT_LEVEL": "high"},
+			"runtime.env의 CLAUDE_CODE_EFFORT_LEVEL, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" + suffix},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check := newRuntimeEnvCheck(&config.Config{Runtime: config.RuntimeConfig{Env: tt.env}})
+			_, err := check.Verify()
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tt.want {
+				t.Fatalf("Verify() error = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	// 설정 로드 실패(cfg nil)는 provider 체크가 보고하므로 여기서는 통과시킨다.
+	if _, err := newRuntimeEnvCheck(nil).Verify(); err != nil {
+		t.Fatalf("nil config must not warn: %v", err)
+	}
+}
+
+func TestSyncConfigRemovesLegacyRuntimeEnvDefaults(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(root, ".pylon", "config.yml")
+	if err := os.WriteFile(cfgPath, []byte(`version: "0.2"
+runtime:
+  provider: claude-code
+  env:
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
+    CLAUDE_CODE_EFFORT_LEVEL: high
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = oldWorkspace })
+
+	output := captureStdout(t, syncConfigIfWorkspace)
+	for _, key := range []string{"CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"} {
+		if !strings.Contains(output, "✓ runtime.env."+key+" 제거 (pylon 구버전 기본값") {
+			t.Fatalf("removal notice for %s missing:\n%s", key, output)
+		}
+	}
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runtime.Env != nil {
+		t.Fatalf("legacy env must be removed, got %v", cfg.Runtime.Env)
+	}
+}
+
+func TestRunChecksTreatsWarnCheckAsNonFailure(t *testing.T) {
+	var allPassed bool
+	var failures []Check
+	output := captureStdout(t, func() {
+		allPassed, failures = runChecks([]Check{
+			newRuntimeEnvCheck(&config.Config{Runtime: config.RuntimeConfig{Env: map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "high"}}}),
+		})
+	})
+	if !allPassed || len(failures) != 0 {
+		t.Fatalf("warn check must not fail doctor: allPassed=%v failures=%v", allPassed, failures)
+	}
+	if !strings.Contains(output, "⚠ runtime.env") || !strings.Contains(output, "CLAUDE_CODE_EFFORT_LEVEL는") {
+		t.Fatalf("warning not printed:\n%s", output)
 	}
 }
 
