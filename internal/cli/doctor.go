@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -613,7 +615,7 @@ func reportBuiltinSync(wrote bool, removed []string, err error) {
 	// 대개 이전 릴리스가 .pylon/<kind>/에 복사해 둔 사본의 1회 정리지만, 내장 이름과 겹친 사용자
 	// 파일일 수도 있으므로 하나씩 밝힌다.
 	if len(removed) > 0 {
-		fmt.Printf("  ℹ 내장 이름과 겹치는 파일 %d개를 정리했습니다 (내장 리소스는 .pylon/builtin/에 있습니다):\n", len(removed))
+		fmt.Printf("  ℹ 내장(은퇴한 내장 포함) 이름과 겹치는 파일 %d개를 정리했습니다 (내장 리소스는 .pylon/builtin/에 있습니다):\n", len(removed))
 		for _, line := range removed {
 			fmt.Printf("    - %s\n", line)
 		}
@@ -675,6 +677,14 @@ func syncClaudeProviderResourcesIfWorkspace(in io.Reader, autoYes bool) {
 		fmt.Printf("⚠ .claude/agents/ 생성 실패: %v\n", genErr)
 	}
 
+	// launch 없이 `claude`를 직접 띄우는 사용자도 구버전 훅이 남지 않도록 여기서도 갱신한다.
+	// .claude/는 위 에이전트 동기화가 만든다.
+	if err := generateSettingsHooks(layout.ClaudeDir(root)); err != nil {
+		fmt.Printf("⚠ .claude/settings.json 훅 갱신 실패: %v\n", err)
+	} else {
+		fmt.Println("✓ .claude/settings.json 훅 갱신")
+	}
+
 	syncClaudeCommandsIfWorkspace(in, autoYes)
 }
 
@@ -729,7 +739,9 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 // concurrent runs converge instead of racing. A built-in name in the user-owned
 // .pylon/<kind>/ dirs (usually a copy left by releases that synced there directly) is
 // cleared so it can never shadow the builtin: an identical copy is deleted, anything
-// else is moved aside to <name>.pylon-bak. Every other user file is never touched.
+// else is moved aside to <name>.pylon-bak. Retired built-ins (retiredBuiltins) get the
+// same treatment, matched against the sha256 of their last shipped content. Every
+// other user file is never touched.
 // Shared by launch, init, doctor, sync-agents and cancel so they can never drift.
 func syncBuiltinResources(root string) (bool, []string, error) {
 	files, err := embeddedBuiltinFiles()
@@ -739,29 +751,32 @@ func syncBuiltinResources(root string) (bool, []string, error) {
 
 	var legacy []string
 	for _, f := range files {
-		old := filepath.Join(layout.ResourceDir(root, path.Dir(f.rel)), path.Base(f.rel))
-		info, err := os.Lstat(old)
-		if os.IsNotExist(err) || (err == nil && info.IsDir()) {
-			continue
-		}
+		line, err := clearUserCopy(root, f.rel, "내장과 동일한 사본 삭제", func(b []byte) bool {
+			return bytes.Equal(b, f.content)
+		})
 		if err != nil {
 			return false, legacy, err
 		}
-		if current, err := os.ReadFile(old); err == nil && bytes.Equal(current, f.content) {
-			if err := os.Remove(old); err != nil {
-				return false, legacy, fmt.Errorf(".pylon/%s 정리 실패: %w", f.rel, err)
-			}
-			legacy = append(legacy, ".pylon/"+f.rel+" (내장과 동일한 사본 삭제)")
-			continue
+		if line != "" {
+			legacy = append(legacy, line)
 		}
-		dest, err := nextBackupPath(old)
-		if err == nil {
-			err = os.Rename(old, dest)
-		}
+	}
+	retired := make([]string, 0, len(retiredBuiltins))
+	for rel := range retiredBuiltins {
+		retired = append(retired, rel)
+	}
+	sort.Strings(retired)
+	for _, rel := range retired {
+		line, err := clearUserCopy(root, rel, "은퇴한 내장의 출하본 삭제", func(b []byte) bool {
+			sum := sha256.Sum256(b)
+			return hex.EncodeToString(sum[:]) == retiredBuiltins[rel]
+		})
 		if err != nil {
-			return false, legacy, fmt.Errorf(".pylon/%s 백업 실패: %w", f.rel, err)
+			return false, legacy, err
 		}
-		legacy = append(legacy, fmt.Sprintf(".pylon/%s → %s", f.rel, filepath.Base(dest)))
+		if line != "" {
+			legacy = append(legacy, line)
+		}
 	}
 	// 내장 전용이던 디렉토리는 비었을 때만 걷어낸다 — 사용자 파일이 있으면 Remove가 실패해 남는다.
 	// 심링크는 대상이 비어 있지 않아도 unlink되므로 실제 디렉토리만 다룬다.
@@ -824,6 +839,63 @@ func syncBuiltinResources(root string) (bool, []string, error) {
 	return changed, legacy, nil
 }
 
+// clearUserCopy clears .pylon/<rel> out of the user-owned dirs: a file for which same
+// reports true is deleted, any other file is moved aside to <name>.pylon-bak[.N]. It
+// returns a report line, or "" when there was nothing to clear.
+func clearUserCopy(root, rel, deletedNote string, same func([]byte) bool) (string, error) {
+	old := filepath.Join(layout.ResourceDir(root, path.Dir(rel)), path.Base(rel))
+	info, err := os.Lstat(old)
+	if os.IsNotExist(err) || (err == nil && info.IsDir()) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if current, err := os.ReadFile(old); err == nil && same(current) {
+		if err := os.Remove(old); err != nil {
+			return "", fmt.Errorf(".pylon/%s 정리 실패: %w", rel, err)
+		}
+		return ".pylon/" + rel + " (" + deletedNote + ")", nil
+	}
+	dest, err := nextBackupPath(old)
+	if err == nil {
+		err = os.Rename(old, dest)
+	}
+	if err != nil {
+		return "", fmt.Errorf(".pylon/%s 백업 실패: %w", rel, err)
+	}
+	return fmt.Sprintf(".pylon/%s → %s", rel, filepath.Base(dest)), nil
+}
+
+// retiredBuiltins maps built-ins dropped from the embeds to the sha256 of their last
+// shipped content. Releases up to 2026.9.2 copied built-ins straight into the
+// git-tracked .pylon/agents/ and .pylon/skills/, so without this list a retired
+// built-in would linger there as a user resource and keep its .claude/agents/ link.
+var retiredBuiltins = map[string]string{
+	"agents/backend-dev.md":           "933929e9511bd40fdc84927acd39a42e2dc0466f7ad29a567e65ad941a73ff04",
+	"agents/frontend-dev.md":          "9a5775fdd6f04a1dfdd75e4ce55817f3cab6e1e980f0c4ad71cf69a22a94624c",
+	"agents/test-engineer.md":         "c5695a10e032f74aa46babab7afd958ae10370a4dac3c23a38177957866bb1ba",
+	"agents/security-reviewer.md":     "1a86e2d34faec8c15b151bd1a0208575734b95044835cf8e43ea311d0b3b20fb",
+	"agents/tracer.md":                "7fe53d64aaad1e3ab610d36ab6f0b3175c632ee057deb9b42a78383cc598890a",
+	"agents/web-searcher.md":          "5e64bc022f4d0bcdca7682036c5e9df2576b7055d464ea7f85d160438d4c6f13",
+	"agents/academic-analyst.md":      "2f48ad99e7e1f584e5ecfa74c9d6bf3d999ac9ccc06d3df40e95bc38d11d9dfc",
+	"agents/doc-specialist.md":        "f619a484024d98158303abef40a47613cfedf8285a597d256df53ff60d331dcd",
+	"agents/code-simplifier.md":       "0cd9283621ec6ccdc0afee4ec25b42374a339ff0057605834b49468bbe7c9420",
+	"agents/copywriter.md":            "a63163f9b5ef5b6c9fc3110ecbf8e6dda9181fd6eaa3bc54c9e0bdbb449b0423",
+	"agents/report-writer.md":         "5fd8a92bff2786a5fc20f569ec6dfec2921f2bd229fd3228970ceee0668f3987",
+	"agents/content-reviewer.md":      "5763754fa6b2d36f8b9e5af621227b8e53ebe3eec8aed4eb025cf314cf986d59",
+	"agents/brand-strategist.md":      "c65bddeaa7cfe166943dea7e195a11dd0ae7bb7c1a3f994b9c7f0aad8dda57d4",
+	"agents/campaign-planner.md":      "da171a1678e77a187392dab9cf3929c648125b2586e2e808f28d517a701e291d",
+	"agents/content-strategist.md":    "46cbf6c047616c7a1d18cba8aa06ad876a4a15e6f63dbeef613099902000bbc7",
+	"agents/data-analyst.md":          "3a16850dcc9d9154784f8a598dd77be7fa0787091868967a33097485960ecaa5",
+	"agents/po.md":                    "cac709124ae3b091e2a9eaba5a45e4e4a4e0e05dc2359bee1093d2f798a777d1",
+	"agents/pm.md":                    "3e4db7f4d0b3520240ec98c84d0bf6fd919d8e970b8af516f445fdc701dbcc17",
+	"agents/tech-writer.md":           "50c8c7fb4834dcc02d27b538818a59709e447ff92699805b9d80038110f40bf9",
+	"agents/lead-researcher.md":       "718482a36cbbc56a3d83825f259026f64255f633805b4fa97661590559d03519",
+	"skills/content-writing-guide.md": "a653ab5365c5ff39ba5f6188befa458e67a1c8fc86d9ebf199d8af6cf477f345",
+	"skills/marketing-framework.md":   "af4747d11d9bcfe11b916c10f73717c370e64c95fdbff9952f55ca91eb124591",
+}
+
 // syncBuiltinForLaunch is the launch-path wrapper around syncBuiltinResources. The
 // notice goes to stderr, which the provider TUI hides right after — `pylon doctor`
 // is the reliable reporting channel.
@@ -833,7 +905,7 @@ func syncBuiltinForLaunch(root string) error {
 		return fmt.Errorf("내장 리소스 동기화 실패: %w", err)
 	}
 	if len(removed) > 0 {
-		fmt.Fprintf(os.Stderr, "ℹ 내장 이름과 겹치는 파일 %d개를 정리했습니다 (내장과 같은 사본은 삭제, 다른 내용은 *.pylon-bak으로 보관)\n", len(removed))
+		fmt.Fprintf(os.Stderr, "ℹ 내장(은퇴한 내장 포함) 이름과 겹치는 파일 %d개를 정리했습니다 (출하본과 같은 사본은 삭제, 다른 내용은 *.pylon-bak으로 보관)\n", len(removed))
 	}
 	return nil
 }

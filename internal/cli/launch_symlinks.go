@@ -212,7 +212,7 @@ func buildSkillInjection(skillNames []string, skillMap map[string]*config.SkillC
 }
 
 // syncClaudeAgentLinks ensures .claude/agents/ has symlinks for every workspace agent
-// (built-in and user-added).
+// (built-in and user-added) and prunes managed entries for agents that no longer exist.
 func syncClaudeAgentLinks(root string) error {
 	claudeAgentsDir := layout.ClaudeAgentsDir(root)
 	if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {
@@ -222,12 +222,14 @@ func syncClaudeAgentLinks(root string) error {
 	if err != nil {
 		return err
 	}
+	expected := make(map[string]bool, len(agents))
 	for name, agent := range agents {
+		expected[name] = true
 		if err := ensureSymlink(filepath.Join(claudeAgentsDir, name), agent.target); err != nil {
 			return err
 		}
 	}
-	return nil
+	return removeStaleAgentLinks(claudeAgentsDir, expected)
 }
 
 // ensureSymlink creates a managed symlink while preserving regular user files.

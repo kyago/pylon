@@ -399,6 +399,50 @@ role: Active Agent
 	}
 }
 
+// sync-agents/init/add-agent 경로(syncClaudeAgentLinks)도 launch와 같은 규칙으로 사라진 에이전트의
+// 링크와 주입 파일을 지우고, 마커 없는 사용자 파일은 남긴다.
+func TestSyncClaudeAgentLinks_PrunesStaleLinks(t *testing.T) {
+	root := t.TempDir()
+	agentsDir := layout.ResourceDir(root, "agents")
+	claudeAgentsDir := layout.ClaudeAgentsDir(root)
+	for _, dir := range []string{agentsDir, claudeAgentsDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "active-agent.md"), []byte("---\nname: active-agent\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staleLink := filepath.Join(claudeAgentsDir, "deleted-agent.md")
+	if err := os.Symlink(layout.AgentLinkTarget("deleted-agent.md"), staleLink); err != nil {
+		t.Fatal(err)
+	}
+	staleInjected := filepath.Join(claudeAgentsDir, "dropped-builtin.md")
+	if err := os.WriteFile(staleInjected, []byte("# x\n\n"+skillInjectionMarker+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	userOwned := filepath.Join(claudeAgentsDir, "hand-written.md")
+	if err := os.WriteFile(userOwned, []byte("# mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncClaudeAgentLinks(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(staleLink); !os.IsNotExist(err) {
+		t.Error("stale symlink should be removed")
+	}
+	if _, err := os.Lstat(staleInjected); !os.IsNotExist(err) {
+		t.Error("stale injected agent file should be removed")
+	}
+	if _, err := os.Lstat(userOwned); err != nil {
+		t.Error("hand-written agent file must be kept")
+	}
+	if _, err := os.Lstat(filepath.Join(claudeAgentsDir, "active-agent.md")); err != nil {
+		t.Error("active agent link should exist")
+	}
+}
+
 func TestGenerateClaudeAgentsWithSkills_PreloadDisabled(t *testing.T) {
 	root := t.TempDir()
 	pylonDir := filepath.Join(root, ".pylon")

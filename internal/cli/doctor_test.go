@@ -2,6 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,6 +110,118 @@ func TestSyncBuiltinResources_ClearsLegacyCopiesKeepsUserFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(layout.ResourceDir(root, "reference")); !os.IsNotExist(err) {
 		t.Error("emptied built-in-only dir .pylon/reference should be removed")
+	}
+}
+
+// 2026.9.2까지 .pylon/<kind>/에 직접 복사되던 내장 중 이제 은퇴한 리소스: 출하 내용 그대로면 삭제,
+// 편집됐으면 .pylon-bak으로 보관하고, 목록에 없는 사용자 에이전트는 남긴다. 남은 링크는 기존
+// prune으로 .claude/agents/에서 사라진다.
+func TestSyncBuiltinResources_ClearsRetiredBuiltins(t *testing.T) {
+	root := t.TempDir()
+	shipped := []byte("retired built-in as shipped")
+	sum := sha256.Sum256(shipped)
+	for _, rel := range []string{"agents/retired-agent.md", "skills/retired-skill.md"} {
+		retiredBuiltins[rel] = hex.EncodeToString(sum[:])
+		t.Cleanup(func() { delete(retiredBuiltins, rel) })
+	}
+	agent := filepath.Join(layout.ResourceDir(root, "agents"), "retired-agent.md")
+	skill := filepath.Join(layout.ResourceDir(root, "skills"), "retired-skill.md")
+	userAgent := filepath.Join(layout.ResourceDir(root, "agents"), "my-agent.md")
+	for path, content := range map[string][]byte{agent: shipped, skill: []byte("edited by user"), userAgent: []byte("mine")} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claudeAgents := layout.ClaudeAgentsDir(root)
+	if err := os.MkdirAll(claudeAgents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(claudeAgents, "retired-agent.md")
+	if err := os.Symlink(layout.AgentLinkTarget("retired-agent.md"), link); err != nil {
+		t.Fatal(err)
+	}
+
+	_, cleared, err := syncBuiltinResources(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared) != 2 {
+		t.Errorf("cleared = %v, want 2 entries", cleared)
+	}
+	if _, err := os.Lstat(agent); !os.IsNotExist(err) {
+		t.Error("unchanged retired agent must be deleted")
+	}
+	if _, err := os.Lstat(agent + rootFileBackupSuffix); !os.IsNotExist(err) {
+		t.Error("unchanged retired agent must not be backed up")
+	}
+	if _, err := os.Lstat(skill); !os.IsNotExist(err) {
+		t.Error("edited retired skill must be moved aside")
+	}
+	if got, err := os.ReadFile(skill + rootFileBackupSuffix); err != nil || string(got) != "edited by user" {
+		t.Errorf("edited retired skill must be backed up: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(userAgent); err != nil || string(got) != "mine" {
+		t.Errorf("user agent touched: %q, %v", got, err)
+	}
+
+	cfg, err := config.ParseConfig([]byte("version: \"0.1\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := generateClaudeAgentsWithSkills(root, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Error(".claude/agents/ link to the retired agent must be pruned")
+	}
+	if _, err := os.Lstat(filepath.Join(claudeAgents, "my-agent.md")); err != nil {
+		t.Errorf("user agent link missing: %v", err)
+	}
+}
+
+// pylon doctor/update도 .claude/settings.json 훅을 현재 hooks.json으로 갱신한다 — 구버전 Stop 훅이
+// `claude`를 직접 띄운 세션에서 매 턴 실패하지 않도록. 사용자 훅은 남는다.
+func TestSyncClaudeProviderResources_RefreshesSettingsHooks(t *testing.T) {
+	root := setupTestWorkspace(t)
+	claudeDir := layout.ClaudeDir(root)
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"hooks":{
+  "Stop":[{"matcher":"*","hooks":[{"type":"command","command":"pylon sync-memory --from-session --agent claude"}]}],
+  "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-guard"}]}]
+}}`
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = oldWorkspace })
+
+	captureStdout(t, func() { syncClaudeProviderResourcesIfWorkspace(bytes.NewBuffer(nil), true) })
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks map[string][]settingsHookEntry `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := settings.Hooks["Stop"]; ok {
+		t.Errorf("legacy pylon Stop hook must be removed: %s", data)
+	}
+	if len(settings.Hooks["SessionStart"]) != 1 {
+		t.Errorf("SessionStart hook missing: %s", data)
+	}
+	if pre := settings.Hooks["PreToolUse"]; len(pre) != 1 || pre[0].Hooks[0].Command != "my-guard" {
+		t.Errorf("user hook must be kept: %s", data)
 	}
 }
 

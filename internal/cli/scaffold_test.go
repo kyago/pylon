@@ -83,6 +83,10 @@ func TestScaffoldMarkdownResourceRefusesBuiltinName(t *testing.T) {
 	if _, err := scaffoldMarkdownResource("스킬", "skills", "research-methodology", "x"); err == nil {
 		t.Fatal("built-in skill name must be refused")
 	}
+	// 은퇴한 내장 이름은 다음 sync가 .pylon-bak으로 비켜 놓으므로 처음부터 거부한다.
+	if _, err := scaffoldMarkdownResource("에이전트", "agents", "backend-dev", "x"); err == nil {
+		t.Fatal("retired built-in agent name must be refused")
+	}
 	if _, err := os.Stat(filepath.Join(dir, ".pylon", "agents", "architect.md")); !os.IsNotExist(err) {
 		t.Fatal("refused resource must not be written")
 	}
