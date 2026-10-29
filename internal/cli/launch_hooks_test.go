@@ -51,8 +51,8 @@ func TestGenerateSettingsHooks(t *testing.T) {
 	if !ok {
 		t.Fatal("SessionStart hook group should be a map")
 	}
-	if m, _ := startGroup["matcher"].(string); m != "startup|resume|compact" {
-		t.Errorf("SessionStart matcher = %q, want \"startup|resume|compact\"", m)
+	if m, _ := startGroup["matcher"].(string); m != "startup|resume|clear|compact" {
+		t.Errorf("SessionStart matcher = %q, want \"startup|resume|clear|compact\"", m)
 	}
 	inner, ok := startGroup["hooks"].([]any)
 	if !ok || len(inner) != 1 {

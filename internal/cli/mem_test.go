@@ -5,13 +5,14 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/memory"
 )
 
 const memInjectHeader = "## pylon 프로젝트 메모리\n"
-const memInjectFooter = "전문은 .pylon/memory/<project>/<category>/<key>.md 를 읽고, 같은 key로 pylon mem store 하면 갱신됩니다.\n"
+const memInjectFooter = "각 줄 끝의 경로(`.pylon/memory/` 기준)가 전문 파일입니다. 같은 key로 `pylon mem store` 하면 갱신됩니다.\n"
 
 // runMemInjectIn runs `pylon mem inject` against root and returns its stdout.
 func runMemInjectIn(t *testing.T, root string) string {
@@ -108,5 +109,56 @@ func TestMemInject_NoMemory(t *testing.T) {
 	root := setupTestWorkspace(t)
 	if out := runMemInjectIn(t, root); out != "" {
 		t.Errorf("메모리가 없으면 출력이 없어야 한다: %q", out)
+	}
+}
+
+// 세션 시작 주입 전에 retention_days(기본 learning 30일)를 넘긴 항목을 정리한다.
+func TestMemInject_PrunesExpired(t *testing.T) {
+	root := setupTestWorkspace(t)
+	store := memory.NewStore(root)
+	old := &memory.Entry{ProjectID: "alpha", Category: "learning", Key: "오래된 학습",
+		Content: "31일이 지나 만료 정리 대상인 오래된 학습", Confidence: 0.8,
+		CreatedAt: time.Now().UTC().Add(-31 * 24 * time.Hour)}
+	if err := store.Insert(old); err != nil {
+		t.Fatal(err)
+	}
+	insertMem(t, root, "alpha", "새 결정", "아직 유효한 새 결정 요약")
+
+	out := runMemInjectIn(t, root)
+	if _, err := os.Stat(root + "/" + old.Path); !os.IsNotExist(err) {
+		t.Errorf("만료 항목 파일이 삭제되어야 한다: %v", err)
+	}
+	if strings.Contains(out, "오래된 학습") || !strings.Contains(out, "새 결정") {
+		t.Errorf("만료 항목은 빠지고 새 항목만 주입되어야 한다:\n%s", out)
+	}
+}
+
+// 같은 key 재저장은 "갱신됨"과 JSON "updated": true로 알린다.
+func TestMemStore_ReportsUpdate(t *testing.T) {
+	root := setupTestWorkspace(t)
+	prev := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = prev })
+
+	store := func(content string) string {
+		var err error
+		out := captureStdout(t, func() { err = runMemStore("app", "같은 키", content, "decision", "agent", 0.8) })
+		if err != nil {
+			t.Fatalf("runMemStore 실패: %v", err)
+		}
+		return out
+	}
+	if out := store("처음 내용"); !strings.Contains(out, "저장됨") {
+		t.Errorf("신규는 저장됨이어야 한다: %q", out)
+	}
+	if out := store("바뀐 내용"); !strings.Contains(out, "갱신됨") {
+		t.Errorf("같은 key 재저장은 갱신됨이어야 한다: %q", out)
+	}
+
+	prevJSON := flagJSON
+	flagJSON = true
+	t.Cleanup(func() { flagJSON = prevJSON })
+	if out := store("또 바뀐 내용"); !strings.Contains(out, `"updated":true`) {
+		t.Errorf("JSON에 updated:true가 있어야 한다: %q", out)
 	}
 }

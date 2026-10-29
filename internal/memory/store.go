@@ -91,20 +91,25 @@ func (s *Store) Insert(e *Entry) error {
 	if err != nil {
 		return err
 	}
-	// 같은 key의 기존 항목이 있으면 그 파일을 덮어쓴다(upsert). 최신순이라
-	// 첫 일치가 가장 최근 항목이다.
+	// 같은 key의 기존 항목이 있으면 가장 최근 파일을 덮어쓰고(upsert), upsert
+	// 이전에 같은 key로 쌓인 나머지 사본은 지운다. existing은 최신순이다.
 	target := ""
+	var stale []string
 	for _, prev := range existing {
-		if prev.Key == e.Key {
+		if prev.Key != e.Key {
+			continue
+		}
+		if target == "" {
 			target = prev.Path
-			break
+		} else {
+			stale = append(stale, prev.Path)
 		}
 	}
 	// 같은 교훈의 재진술을 거르기 위해 동일·근사 중복 내용은 저장하지 않는다
-	// (D4). 표현만 바뀐 재진술은 bigram Dice 유사도로 걸러낸다. 덮어쓸 자기
-	// 자신은 제외해 소폭 수정이 거부되지 않게 한다.
+	// (D4). 표현만 바뀐 재진술은 bigram Dice 유사도로 걸러낸다. 같은 key의
+	// 항목은 덮어쓸 자기 자신이므로 제외해 소폭 수정이 거부되지 않게 한다.
 	for _, prev := range existing {
-		if prev.Path != target && isNearDuplicate(prev.Content, e.Content) {
+		if prev.Key != e.Key && isNearDuplicate(prev.Content, e.Content) {
 			e.Path = prev.Path
 			return fmt.Errorf("%w: %s", ErrDuplicate, prev.Path)
 		}
@@ -125,6 +130,11 @@ func (s *Store) Insert(e *Entry) error {
 	}
 	if err := fsutil.WriteFileAtomic(path, data, 0644); err != nil {
 		return err
+	}
+	for _, p := range stale {
+		if err := os.Remove(filepath.Join(s.Root, filepath.FromSlash(p))); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	rel, err := filepath.Rel(s.Root, path)
 	if err != nil {
@@ -225,7 +235,7 @@ func (s *Store) ListByCategory(project, category string) ([]Entry, error) {
 }
 
 // ListProjects returns the names of projects that have a memory directory,
-// sorted by name.
+// sorted by name. 점으로 시작하는 디렉토리는 제외한다.
 func (s *Store) ListProjects() ([]string, error) {
 	dirs, err := os.ReadDir(s.baseDir())
 	if os.IsNotExist(err) {
@@ -236,7 +246,7 @@ func (s *Store) ListProjects() ([]string, error) {
 	}
 	var projects []string
 	for _, d := range dirs {
-		if d.IsDir() {
+		if d.IsDir() && !strings.HasPrefix(d.Name(), ".") { // .lock 등 내부 디렉토리 제외
 			projects = append(projects, d.Name())
 		}
 	}
@@ -318,6 +328,16 @@ func (s *Store) PruneExpired(project string, retentionDays map[string]int) (int6
 	if len(retentionDays) == 0 {
 		return 0, nil
 	}
+	if err := os.MkdirAll(s.baseDir(), 0755); err != nil {
+		return 0, err
+	}
+	// 목록 조회부터 잠금 안에서 해야 동시 Insert(upsert)가 갱신한 항목을
+	// 오래된 스냅샷으로 판단해 지우지 않는다.
+	unlock, err := fsutil.AcquireLock(s.lockPath(), lockTimeout)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
 	entries, err := s.List(project)
 	if err != nil {
 		return 0, err
@@ -339,11 +359,6 @@ func (s *Store) PruneExpired(project string, retentionDays map[string]int) (int6
 	if len(targets) == 0 {
 		return 0, nil
 	}
-	unlock, err := fsutil.AcquireLock(s.lockPath(), lockTimeout)
-	if err != nil {
-		return 0, err
-	}
-	defer unlock()
 	for _, e := range targets {
 		if err := os.Remove(filepath.Join(s.Root, filepath.FromSlash(e.Path))); err != nil && !os.IsNotExist(err) {
 			return 0, err

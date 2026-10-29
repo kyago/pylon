@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -178,7 +179,8 @@ func newMemInjectCmd() *cobra.Command {
 		Long: `프로젝트 메모리 요약을 stdout으로 출력합니다.
 
 Claude Code SessionStart hook이 호출하며, 출력이 그대로 세션 컨텍스트에 들어갑니다.
-memory.proactive_injection이 false이거나 메모리가 없으면 아무것도 출력하지 않습니다.`,
+memory.proactive_injection이 false이거나 메모리가 없으면 아무것도 출력하지 않습니다.
+출력 전에 memory.retention_days를 넘긴 항목을 정리합니다.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMemInject()
@@ -194,13 +196,20 @@ func runMemInject() error {
 	if err != nil {
 		return err
 	}
-	if !cfg.Memory.ProactiveInjection {
-		return nil
-	}
 	memStore := memory.NewStore(root)
 	projects, err := memStore.ListProjects()
 	if err != nil {
 		return err
+	}
+	// 세션 시작이 만료 메모리 정리 시점이다. 실패해도 주입은 계속하고, stdout은
+	// 세션 컨텍스트이므로 경고는 stderr로만 쓴다.
+	for _, project := range projects {
+		if _, err := memStore.PruneExpired(project, cfg.Memory.RetentionDays); err != nil {
+			fmt.Fprintf(os.Stderr, "경고: %s 만료 메모리 정리 실패: %v\n", project, err)
+		}
+	}
+	if !cfg.Memory.ProactiveInjection {
+		return nil
 	}
 	// shortcut: 토큰→바이트 4배 근사, 계측이 생기면 실측으로 교체
 	remaining := cfg.Memory.ProactiveMaxTokens * 4
@@ -220,7 +229,7 @@ func runMemInject() error {
 		return nil
 	}
 	fmt.Print("## pylon 프로젝트 메모리\n" + b.String() +
-		"전문은 .pylon/memory/<project>/<category>/<key>.md 를 읽고, 같은 key로 pylon mem store 하면 갱신됩니다.\n")
+		"각 줄 끝의 경로(`.pylon/memory/` 기준)가 전문 파일입니다. 같은 key로 `pylon mem store` 하면 갱신됩니다.\n")
 	return nil
 }
 

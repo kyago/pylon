@@ -488,10 +488,10 @@ func TestInjectionMarkdownGhostProject(t *testing.T) {
 
 // 인덱스 요약은 본문의 첫 비어 있지 않은 줄이다.
 func TestIndexLineUsesFirstNonEmptyLine(t *testing.T) {
-	e := Entry{Category: "decision", Key: "k", Confidence: 0.8,
+	e := Entry{Category: "decision", Key: "k", Confidence: 0.8, Path: ".pylon/memory/app/decision/k-2.md",
 		Content: "\n  첫 줄 요약  \n\n둘째 줄 상세 설명", CreatedAt: time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)}
 	got := indexLine(e)
-	if !strings.Contains(got, "— 첫 줄 요약 (0.8, 2026-07-23)") {
+	if got != "- [decision] `k` — 첫 줄 요약 (0.8, 2026-07-23) → app/decision/k-2.md\n" {
 		t.Errorf("첫 줄이 요약이어야 한다: %q", got)
 	}
 	if strings.Contains(got, "둘째 줄") {
@@ -509,5 +509,67 @@ func TestIndexLineTruncatesAt200Runes(t *testing.T) {
 	short := strings.Repeat("나", 200)
 	if got := indexLine(Entry{Category: "learning", Key: "k", Content: short}); strings.Contains(got, "…") {
 		t.Errorf("200룬 이하는 자르지 않는다: %q", got)
+	}
+}
+
+// 첫 줄이 마크다운 제목이면 앞의 #과 공백을 떼어 요약으로 쓴다.
+func TestIndexLineStripsHeadingMarks(t *testing.T) {
+	got := indexLine(Entry{Category: "learning", Key: "k", Content: "\n## 빌드 규칙 요약\n본문"})
+	if !strings.Contains(got, "— 빌드 규칙 요약 (") {
+		t.Errorf("제목 표시 #이 제거되어야 한다: %q", got)
+	}
+	// #만 있는 줄은 비어 있는 줄로 보고 다음 줄을 쓴다
+	if got := indexLine(Entry{Category: "learning", Key: "k", Content: "###\n다음 줄"}); !strings.Contains(got, "— 다음 줄 (") {
+		t.Errorf("#만 있는 줄은 건너뛰어야 한다: %q", got)
+	}
+}
+
+// upsert 이전 시대에 같은 key로 쌓인 사본(k.md, k-2.md)이 있어도 소폭 수정이
+// 거부되지 않고, 최신 사본 하나만 갱신되어 남는다.
+func TestInsertUpsertCollapsesLegacySameKeyCopies(t *testing.T) {
+	s := newTestStore(t)
+	dir := filepath.Join(s.Root, ".pylon", "memory", "app", "learning")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, e := range map[string]*Entry{
+		"k.md":   {Category: "learning", Key: "k", Content: "테스트는 race 플래그를 켜고 실행해야 한다", Confidence: 0.8, CreatedAt: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)},
+		"k-2.md": {Category: "learning", Key: "k", Content: "전혀 다른 최신 사본의 본문 내용입니다", Confidence: 0.8, CreatedAt: time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)},
+	} {
+		data, err := marshalEntry(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 오래된 사본(k.md)의 소폭 수정 — 같은 key의 사본은 근사 중복 비교에서 빠져야 한다
+	e := &Entry{ProjectID: "app", Category: "learning", Key: "k",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다는 것", Confidence: 0.8}
+	if err := s.Insert(e); err != nil {
+		t.Fatalf("같은 key 사본 때문에 거부되면 안 된다: %v", err)
+	}
+	entries, err := s.List("app")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("같은 key는 파일 1개로 정리되어야 한다: %d, err=%v", len(entries), err)
+	}
+	if entries[0].Content != e.Content || !strings.HasSuffix(entries[0].Path, "/k-2.md") {
+		t.Errorf("최신 사본 경로(k-2.md)가 갱신되어 남아야 한다: %+v", entries[0])
+	}
+}
+
+// .lock 같은 점 디렉토리는 프로젝트가 아니다.
+func TestListProjectsSkipsDotDirs(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "beta", Category: "learning", Key: "k", Content: "c", Confidence: 0.8})
+	mustInsert(t, s, &Entry{ProjectID: "alpha", Category: "learning", Key: "k", Content: "c", Confidence: 0.8})
+	if err := os.Mkdir(filepath.Join(s.Root, ".pylon", "memory", ".lock"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListProjects()
+	if err != nil || strings.Join(got, ",") != "alpha,beta" {
+		t.Fatalf("ListProjects = %v, err=%v; want [alpha beta]", got, err)
 	}
 }
