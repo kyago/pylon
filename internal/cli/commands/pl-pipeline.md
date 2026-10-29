@@ -20,6 +20,10 @@ description: "Pylon 파이프라인 실행 — 요구사항 → 분석 → 설�
 root pipeline은 요구사항과 repo 목록을 묶는 논리 run이며 `branch`가 없습니다(전역 branch를 만들거나
 `.branch`를 읽지 않습니다).
 
+요구사항은 보통 대화에서 이미 정해진 뒤 시작됩니다. 인자가 비었거나 "작업 착수해" 같은 지시뿐이면, 대화에서
+확정된 내용 — 이슈 번호·링크와 본문, 사용자가 답한 결정, 범위 밖으로 정한 것 — 을 정리한 텍스트를
+`$ARGUMENTS` 자리에 넣습니다. `requirement.md`가 그 내용이 됩니다.
+
 ```bash
 INIT_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$ARGUMENTS")
 PIPELINE_ID=$(echo "$INIT_RESULT" | jq -r '.pipeline_id')
@@ -31,7 +35,9 @@ PIPELINE_DIR="$ROOT_PIPELINE_DIR"
 
 루트 세션이 직접 PO 역할을 수행합니다.
 
-1. `$PIPELINE_DIR/requirement.md`를 읽습니다
+1. `$PIPELINE_DIR/requirement.md`를 읽고, 세션 컨텍스트의 "pylon 프로젝트 메모리" 목록과
+   `pylon mem search --project <프로젝트> --query "<요구사항 키워드>"`로 관련 결정·학습을 확인합니다. 찾은 내용은
+   분석과 에이전트 프롬프트에 반영합니다
 2. 도메인을 판단해 `$PIPELINE_DIR/routing-decision.json`을 작성합니다:
    ```json
    {"detected_domain": "software|research|content|marketing",
@@ -292,28 +298,22 @@ if [[ "$AUTO_PR" == "true" ]]; then
 fi
 ```
 
-### Step 9: 완료 보고
+### Step 9: 완료 보고와 인계
 
-`status.json`을 최종 상태로 갱신한 뒤 완료 체크포인트를 생성합니다:
+여기서 run을 정리하지 않습니다. PR 생성·리뷰 반영·머지는 이 run의 브랜치와 워크트리에서 이어지므로, 머지 뒤
+`/pl:cleanup`이 검증 근거 정리 → 메모리·도메인 지식 갱신 → 완료 체크포인트와 runtime·워크트리 정리 → 머지된 브랜치
+정리를 한 번에 합니다. 메모리 저장도 그때 합니다.
 
-```bash
-pylon history checkpoint --pipeline "$PIPELINE_ID" --phase completed
-```
-
-체크포인트가 성공하면 repo sub-pipeline, root runtime 순으로 정리합니다. 실패하면 어떤 cleanup도 실행하지
-않습니다:
+root `status.json`을 인계 상태로 바꿉니다:
 
 ```bash
-jq -c '.sub_pipelines[]' "$ROOT_PIPELINE_DIR/status.json" | while IFS= read -r SUB; do
-  REPO_PIPELINE_DIR=$(echo "$SUB" | jq -r '.pipeline_dir')
-  .pylon/builtin/scripts/bash/cleanup-pipeline.sh "$REPO_PIPELINE_DIR" --terminal-phase completed
-done
-.pylon/builtin/scripts/bash/cleanup-pipeline.sh "$ROOT_PIPELINE_DIR" --terminal-phase completed
+STATUS_TMP=$(mktemp "$ROOT_PIPELINE_DIR/.status.XXXXXX")
+jq '.stage = "verified" | .status = "awaiting_cleanup"' "$ROOT_PIPELINE_DIR/status.json" > "$STATUS_TMP"
+mv "$STATUS_TMP" "$ROOT_PIPELINE_DIR/status.json"
 ```
 
-학습은 `pylon mem store --project <p> --category learning --key <슬러그> --content ...`로 저장합니다(프런트매터 없는 파일은 인덱스에 잡히지 않는다).
-
-실행 결과(생성/변경 파일, 테스트 결과, PR URL, 소요 시간)를 요약합니다.
+실행 결과(생성/변경 파일, 검증 결과, PR URL, 소요 시간)를 요약하고, 남은 일(PR 생성·머지)과 마감 방법(머지 후
+`/pl:cleanup`)을 알립니다.
 
 ---
 
@@ -359,16 +359,10 @@ Step N5로 진행합니다. 상한에 도달했다면 남은 must-fix·`contradi
 
 요구사항에 SEO가 있으면 `seo-specialist`에 최종본을 한 번 넘겨 제안을 `$PIPELINE_DIR/seo.md`에 저장하게
 합니다. 완료 보고에는 산출물 목록, 미해결 must-fix·`contradicted` 요약, 남은 `unverified` 주장을 넣습니다.
+root `status.json`은 Step 9와 같이 `awaiting_cleanup`으로 바꾸고, 마감(체크포인트·정리·메모리)은 `/pl:cleanup`에
+맡깁니다.
 
 ---
-
-## 메모리 활용
-
-파이프라인 시작 시 관련 도메인 지식을 검색해 에이전트 프롬프트에 넣습니다:
-
-```bash
-pylon mem search --project <project-name> --query "<요구사항 키워드>"
-```
 
 ## 에러 처리
 

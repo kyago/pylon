@@ -18,5 +18,6 @@ description: "파이프라인 상태 조회"
    - `execution-log.json` → 에이전트 실행 완료
    - `verification.json` → 검증 완료
    - `pr.json` → PR 생성 완료
+   - `status.json`의 `status`가 `awaiting_cleanup` → 파이프라인 완료, 머지 후 `/pl:cleanup` 대기
 
 4. 각 파이프라인의 상태를 요약하여 출력합니다
