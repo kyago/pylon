@@ -12,19 +12,19 @@ description: "에이전트 병렬 실행"
 ## 실행
 
 1. `tasks.json`을 읽습니다
-2. `.pylon/builtin/agents/`(내장)와 `.pylon/agents/`(사용자 추가)의 에이전트 정의를 읽습니다
-3. 의존성 그래프를 분석하여 wave 단위로 실행합니다:
+2. 의존성 그래프를 분석하여 wave 단위로 실행합니다:
    - Wave 1: 의존성 없는 태스크 (병렬 Agent 호출)
    - Wave 2: Wave 1에 의존하는 태스크
    - ...
 
+   Wave 내 태스크는 백그라운드로 동시에 띄우고, 완료 알림이 오는 순서대로 검증 출력을 확인한다.
+
 서브 에이전트는 이 대화도 파이프라인 산출물도 보지 못합니다. 프롬프트에 **설계 근거·수용 기준·대상
-파일·검증 명령·범위 밖**을 모두 내용째로 넣습니다(경로만 넘기지 않습니다):
+파일·검증 명령·범위 밖**을 모두 내용째로 넣습니다(경로만 넘기지 않습니다). `subagent_type`은 태스크의
+`agent` 값입니다(Claude Code 외 provider는 `.pylon/builtin/agents/<name>.md` 본문을 프롬프트 앞에 붙입니다):
 
 ```
-Agent(prompt="[에이전트 정의]
-
-## 설계 근거
+Agent(subagent_type="dev", prompt="## 설계 근거
 [architecture.md 중 해당 섹션 전문]
 
 ## 수용 기준
@@ -45,7 +45,7 @@ repo / base 브랜치 / 수정 대상 파일 절대 경로
 
 `isolation="worktree"`는 의존성 설치가 필요 없고 파일이 겹치지 않는 태스크에만 사용합니다.
 
-4. 각 에이전트 완료 후 검증 출력을 확인한 뒤 `execution-log.json`에 기록합니다.
+3. 각 에이전트 완료 후 검증 출력을 확인한 뒤 `execution-log.json`에 기록합니다.
    검증 출력이 첨부되지 않은 "완료" 보고는 완료로 처리하지 않습니다. 또한 provider의 자연어 응답을
    정본으로 사용하지 않고, task별 구조화 보고서를 Pylon으로 검증해 기록합니다:
 
@@ -81,7 +81,7 @@ pipeline이 `execution-log.json`의 task 항목에 `verified: true|false`로 기
 
 `task-report.json`은 create-once이며 digest가 포함됩니다. 재시도는 `attempt`를 올려 새 파일
 (`task-report-<attempt>.json`)로 기록하고 기존 파일을 덮어쓰지 않습니다.
-5. 에이전트 브랜치를 **같은 repo의** task 브랜치로 머지합니다. `$ARGUMENTS`가 root pipeline이면
+4. 에이전트 브랜치를 **같은 repo의** task 브랜치로 머지합니다. `$ARGUMENTS`가 root pipeline이면
    `status.json.sub_pipelines`에서 태스크의 `repo`와 일치하는 branch를 조회합니다:
 
 ```bash

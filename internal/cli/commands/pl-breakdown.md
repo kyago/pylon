@@ -1,5 +1,5 @@
 ---
-description: "PM 태스크 분해 단독 실행"
+description: "태스크 분해 단독 실행"
 ---
 
 # Task Breakdown
