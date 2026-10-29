@@ -328,7 +328,7 @@ pylon mem delete --project <name> --key "키"            # 삭제 (--category, -
 | 명령어 | 설명 |
 |--------|------|
 | `pylon sync-agents` | 내장 리소스(`.pylon/builtin/`)와 `.claude/agents/` 심링크를 즉시 동기화 |
-| `pylon mem inject` | 세션 시작 시 호출(Claude Code 훅; Codex는 수동 `pylon mem inject`) — 만료 메모리(`retention_days`)를 정리한 뒤 프로젝트 메모리를 세션 컨텍스트에 주입 |
+| `pylon mem inject` | 세션 시작 시 호출(Claude Code 훅; Codex는 수동 `pylon mem inject`) — 구버전 Stop 훅이 저장한 훅 JSON 항목과 만료 메모리(`retention_days`)를 정리한 뒤 프로젝트 메모리를 세션 컨텍스트에 주입 |
 
 ### 작업 이력
 

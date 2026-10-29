@@ -5,11 +5,13 @@
 package memory
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -91,18 +93,14 @@ func (s *Store) Insert(e *Entry) error {
 	if err != nil {
 		return err
 	}
-	// 같은 key의 기존 항목이 있으면 가장 최근 파일을 덮어쓰고(upsert), upsert
-	// 이전에 같은 key로 쌓인 나머지 사본은 지운다. existing은 최신순이다.
+	// 같은 key의 기존 항목이 있으면 가장 최근 파일을 덮어쓴다(upsert). existing은
+	// 최신순이다. upsert 이전 릴리스가 같은 key로 따로 저장한 형제 파일(k-2.md 등)은
+	// 내용이 서로 다른 별개의 항목이므로 그대로 둔다.
 	target := ""
-	var stale []string
 	for _, prev := range existing {
-		if prev.Key != e.Key {
-			continue
-		}
-		if target == "" {
+		if prev.Key == e.Key {
 			target = prev.Path
-		} else {
-			stale = append(stale, prev.Path)
+			break
 		}
 	}
 	// 같은 교훈의 재진술을 거르기 위해 동일·근사 중복 내용은 저장하지 않는다
@@ -130,11 +128,6 @@ func (s *Store) Insert(e *Entry) error {
 	}
 	if err := fsutil.WriteFileAtomic(path, data, 0644); err != nil {
 		return err
-	}
-	for _, p := range stale {
-		if err := os.Remove(filepath.Join(s.Root, filepath.FromSlash(p))); err != nil && !os.IsNotExist(err) {
-			return err
-		}
 	}
 	rel, err := filepath.Rel(s.Root, path)
 	if err != nil {
@@ -366,6 +359,61 @@ func (s *Store) PruneExpired(project string, retentionDays map[string]int) (int6
 	}
 	removeEmptyCategoryDirs(s.projectDir(project))
 	return int64(len(targets)), s.rebuildIndexLocked(project)
+}
+
+// legacyHookKey matches the keys the removed Stop-hook sync wrote: session-<timestamp>/<prefix>.
+var legacyHookKey = regexp.MustCompile(`^session-\d{8}-\d{6}/`)
+
+// isLegacyHookEntry reports whether e is a raw Claude Code hook payload that releases up to
+// 2026.9.2 stored as a learning (`pylon sync-memory --from-session --agent claude` found no
+// learnings field and kept the JSON line itself). All four conditions must hold.
+func isLegacyHookEntry(e Entry) bool {
+	if e.Category != "learning" || e.Author != "claude" || !legacyHookKey.MatchString(e.Key) {
+		return false
+	}
+	var payload map[string]any
+	if json.Unmarshal([]byte(e.Content), &payload) != nil {
+		return false
+	}
+	for _, field := range []string{"hook_event_name", "session_id", "transcript_path"} {
+		if _, ok := payload[field]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// PruneLegacyHookEntries deletes the raw hook payloads the removed Stop-hook sync stored
+// (isLegacyHookEntry) and returns how many it removed. It runs regardless of
+// memory.retention_days, because opted-out workspaces would otherwise keep them forever.
+func (s *Store) PruneLegacyHookEntries(project string) (int64, error) {
+	if err := os.MkdirAll(s.baseDir(), 0755); err != nil {
+		return 0, err
+	}
+	unlock, err := fsutil.AcquireLock(s.lockPath(), lockTimeout)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	entries, err := s.ListByCategory(project, "learning")
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, e := range entries {
+		if !isLegacyHookEntry(e) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(s.Root, filepath.FromSlash(e.Path))); err != nil && !os.IsNotExist(err) {
+			return n, err
+		}
+		n++
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	removeEmptyCategoryDirs(s.projectDir(project))
+	return n, s.rebuildIndexLocked(project)
 }
 
 // removeEmptyCategoryDirs prunes category directories emptied by deletion.

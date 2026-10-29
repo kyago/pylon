@@ -201,9 +201,14 @@ func runMemInject() error {
 	if err != nil {
 		return err
 	}
-	// 세션 시작이 만료 메모리 정리 시점이다. 실패해도 주입은 계속하고, stdout은
-	// 세션 컨텍스트이므로 경고는 stderr로만 쓴다.
+	// 세션 시작이 메모리 정리 시점이다. 실패해도 주입은 계속하고, stdout은
+	// 세션 컨텍스트이므로 알림·경고는 stderr로만 쓴다.
 	for _, project := range projects {
+		if n, err := memStore.PruneLegacyHookEntries(project); err != nil {
+			fmt.Fprintf(os.Stderr, "경고: %s 구버전 훅 항목 정리 실패: %v\n", project, err)
+		} else if n > 0 {
+			fmt.Fprintf(os.Stderr, "%s: 구버전 Stop 훅이 저장한 항목 %d건 삭제\n", project, n)
+		}
 		if _, err := memStore.PruneExpired(project, cfg.Memory.RetentionDays); err != nil {
 			fmt.Fprintf(os.Stderr, "경고: %s 만료 메모리 정리 실패: %v\n", project, err)
 		}

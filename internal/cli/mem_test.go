@@ -162,3 +162,24 @@ func TestMemStore_ReportsUpdate(t *testing.T) {
 		t.Errorf("JSON에 updated:true가 있어야 한다: %q", out)
 	}
 }
+
+// 구버전 Stop 훅이 저장한 훅 JSON 원문은 보존 정책을 꺼 둔 워크스페이스에서도 주입 전에 지운다.
+func TestMemInject_RemovesLegacyHookEntries(t *testing.T) {
+	root := setupTestWorkspace(t)
+	writeMemConfig(t, root, "  retention_days: {}\n")
+	junk := &memory.Entry{ProjectID: "alpha", Category: "learning", Author: "claude", Confidence: 0.8,
+		Key:     `session-20261029-172146/{"session_id"-"8c1d2e3f`,
+		Content: `{"session_id":"8c1d2e3f-0a9b-4c8d-b7e6-f5a4b3c2d1e0","transcript_path":"/x.jsonl","hook_event_name":"Stop","stop_hook_active":false}`}
+	if err := memory.NewStore(root).Insert(junk); err != nil {
+		t.Fatal(err)
+	}
+	insertMem(t, root, "alpha", "새 결정", "아직 유효한 새 결정 요약")
+
+	out := runMemInjectIn(t, root)
+	if _, err := os.Stat(root + "/" + junk.Path); !os.IsNotExist(err) {
+		t.Errorf("구버전 훅 항목 파일이 삭제되어야 한다: %v", err)
+	}
+	if strings.Contains(out, "hook_event_name") || !strings.Contains(out, "새 결정") {
+		t.Errorf("훅 JSON은 빠지고 실제 항목만 주입되어야 한다:\n%s", out)
+	}
+}

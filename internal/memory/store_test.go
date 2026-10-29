@@ -526,7 +526,9 @@ func TestIndexLineStripsHeadingMarks(t *testing.T) {
 
 // upsert 이전 시대에 같은 key로 쌓인 사본(k.md, k-2.md)이 있어도 소폭 수정이
 // 거부되지 않고, 최신 사본 하나만 갱신되어 남는다.
-func TestInsertUpsertCollapsesLegacySameKeyCopies(t *testing.T) {
+// upsert 이전 릴리스는 같은 key·다른 내용을 k.md, k-2.md로 따로 저장했다. 각각 별개의 지식이므로
+// upsert는 최신 파일만 덮어쓰고 나머지 형제는 지우지 않는다.
+func TestInsertUpsertKeepsLegacySameKeySiblings(t *testing.T) {
 	s := newTestStore(t)
 	dir := filepath.Join(s.Root, ".pylon", "memory", "app", "learning")
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -551,12 +553,22 @@ func TestInsertUpsertCollapsesLegacySameKeyCopies(t *testing.T) {
 	if err := s.Insert(e); err != nil {
 		t.Fatalf("같은 key 사본 때문에 거부되면 안 된다: %v", err)
 	}
-	entries, err := s.List("app")
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("같은 key는 파일 1개로 정리되어야 한다: %d, err=%v", len(entries), err)
+	if !e.Updated || !strings.HasSuffix(e.Path, "/k-2.md") {
+		t.Errorf("최신 파일(k-2.md)을 갱신해야 한다: updated=%v path=%s", e.Updated, e.Path)
 	}
-	if entries[0].Content != e.Content || !strings.HasSuffix(entries[0].Path, "/k-2.md") {
-		t.Errorf("최신 사본 경로(k-2.md)가 갱신되어 남아야 한다: %+v", entries[0])
+	entries, err := s.List("app")
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("형제 파일은 남아야 한다: %d, err=%v", len(entries), err)
+	}
+	byPath := map[string]string{}
+	for _, entry := range entries {
+		byPath[filepath.Base(entry.Path)] = entry.Content
+	}
+	if byPath["k-2.md"] != e.Content {
+		t.Errorf("k-2.md = %q, want updated content", byPath["k-2.md"])
+	}
+	if byPath["k.md"] != "테스트는 race 플래그를 켜고 실행해야 한다" {
+		t.Errorf("k.md must be left as is: %q", byPath["k.md"])
 	}
 }
 
@@ -571,5 +583,54 @@ func TestListProjectsSkipsDotDirs(t *testing.T) {
 	got, err := s.ListProjects()
 	if err != nil || strings.Join(got, ",") != "alpha,beta" {
 		t.Fatalf("ListProjects = %v, err=%v; want [alpha beta]", got, err)
+	}
+}
+
+// 2026.9.2 이하의 Stop 훅(`pylon sync-memory --from-session --agent claude`)은 훅 JSON 원문을
+// learning으로 저장했다. 그 항목만 정확히 지우고, 비슷해 보이는 사용자 항목은 남긴다.
+func TestPruneLegacyHookEntries(t *testing.T) {
+	s := newTestStore(t)
+	payload := `{"session_id":"3f2a9c1e-7b44-4d21-9a0e-5c8d1f6e2b90","transcript_path":"/x/3f2a9c1e.jsonl","cwd":"/tmp/ws","permission_mode":"acceptEdits","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"Done.\nAll tests pass."}`
+	write := func(category, name string, e *Entry) string {
+		t.Helper()
+		dir := filepath.Join(s.Root, ".pylon", "memory", "app", category)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		e.Category = category
+		data, err := marshalEntry(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	sessionKey := `session-20261029-172146/{"session_id"-"3f2a9c1e-7b44-4d21-9a0e-5c8d1f6e2b9`
+	junk := write("learning", "junk.md", &Entry{Key: sessionKey, Content: payload, Author: "claude", Confidence: 0.8})
+	kept := []string{
+		write("learning", "prose.md", &Entry{Key: "session-20261029-172146/빌드 규칙", Content: "빌드는 make build로 한다", Author: "claude", Confidence: 0.8}),
+		write("learning", "other-author.md", &Entry{Key: sessionKey, Content: payload, Author: "architect", Confidence: 0.8}),
+		write("learning", "user.md", &Entry{Key: "race 플래그", Content: "테스트는 race로 돌린다", Author: "agent", Confidence: 0.8}),
+		write("decision", "decision.md", &Entry{Key: sessionKey, Content: payload, Author: "claude", Confidence: 0.8}),
+		write("learning", "plain-json.md", &Entry{Key: "session-20261029-172146/config", Content: `{"name":"pylon"}`, Author: "claude", Confidence: 0.8}),
+	}
+
+	n, err := s.PruneLegacyHookEntries("app")
+	if err != nil || n != 1 {
+		t.Fatalf("PruneLegacyHookEntries = %d, %v; want 1", n, err)
+	}
+	if _, err := os.Stat(junk); !os.IsNotExist(err) {
+		t.Error("legacy hook entry must be deleted")
+	}
+	for _, path := range kept {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s must be kept: %v", filepath.Base(path), err)
+		}
+	}
+	if n, err := s.PruneLegacyHookEntries("app"); err != nil || n != 0 {
+		t.Errorf("second run = %d, %v; want 0", n, err)
 	}
 }
