@@ -70,7 +70,7 @@ func generateSettingsHooks(claudeDir string) error {
 }
 
 // isPylonHookCommand checks if a command string is a pylon-managed hook.
-// "pylon sync-memory"는 구버전 Stop hook으로, 병합 시 제거되도록 계속 인식한다.
+// 구버전 Stop hook 명령도 병합 시 제거되도록 계속 인식한다.
 func isPylonHookCommand(command string) bool {
 	return strings.Contains(command, "pylon sync-memory") || strings.Contains(command, "pylon mem inject")
 }
