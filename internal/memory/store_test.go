@@ -634,3 +634,21 @@ func TestPruneLegacyHookEntries(t *testing.T) {
 		t.Errorf("second run = %d, %v; want 0", n, err)
 	}
 }
+
+// 정리할 훅 항목이 없으면 잠금을 잡지 않는다 — 세션 시작마다 호출되므로, 남은 .lock이 있어도
+// 매번 lockTimeout만큼 기다리지 않게 한다.
+func TestPruneLegacyHookEntries_SkipsLockWhenNothingToDelete(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "race 플래그", Content: "테스트는 race로 돌린다", Author: "claude", Confidence: 0.8})
+	if err := os.Mkdir(s.lockPath(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	n, err := s.PruneLegacyHookEntries("app")
+	if err != nil || n != 0 {
+		t.Fatalf("PruneLegacyHookEntries = %d, %v; want 0, nil", n, err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("waited %v on the lock with nothing to delete", elapsed)
+	}
+}

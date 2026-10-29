@@ -386,8 +386,18 @@ func isLegacyHookEntry(e Entry) bool {
 // PruneLegacyHookEntries deletes the raw hook payloads the removed Stop-hook sync stored
 // (isLegacyHookEntry) and returns how many it removed. It runs regardless of
 // memory.retention_days, because opted-out workspaces would otherwise keep them forever.
+// 세션 시작마다 호출되므로 먼저 잠금 없이 훑고, 지울 항목이 있을 때만 잠근 뒤 다시 조회한다.
 func (s *Store) PruneLegacyHookEntries(project string) (int64, error) {
-	if err := os.MkdirAll(s.baseDir(), 0755); err != nil {
+	hasLegacy := func(entries []Entry) bool {
+		for _, e := range entries {
+			if isLegacyHookEntry(e) {
+				return true
+			}
+		}
+		return false
+	}
+	entries, err := s.ListByCategory(project, "learning")
+	if err != nil || !hasLegacy(entries) {
 		return 0, err
 	}
 	unlock, err := fsutil.AcquireLock(s.lockPath(), lockTimeout)
@@ -395,8 +405,7 @@ func (s *Store) PruneLegacyHookEntries(project string) (int64, error) {
 		return 0, err
 	}
 	defer unlock()
-	entries, err := s.ListByCategory(project, "learning")
-	if err != nil {
+	if entries, err = s.ListByCategory(project, "learning"); err != nil {
 		return 0, err
 	}
 	var n int64
