@@ -1,36 +1,12 @@
 ---
 name: research-methodology
-description: Multi-source research methodology for systematic investigation and cross-validation
+description: "Evidence standards for research claims: corroboration, contradictions, confidence labels, quoting, and synthesis by theme"
 ---
 
-# Research Methodology
+# Research evidence standards
 
-## Investigation Framework
-
-### 1. Define Research Question
-- Clarify scope and objectives
-- Identify key terms and concepts
-- Set success criteria for the research
-
-### 2. Multi-Source Search
-- **Web sources**: News, blogs, industry publications
-- **Academic sources**: Papers, journals, technical reports
-- **Community sources**: Forums, social media, expert opinions
-
-### 3. Source Credibility Assessment
-| Tier | Score | Examples |
-|------|-------|---------|
-| Tier 1 | 0.9-1.0 | Academic journals, official docs |
-| Tier 2 | 0.7-0.9 | Established media, industry reports |
-| Tier 3 | 0.5-0.7 | Community resources, Wikipedia |
-| Tier 4 | 0.3-0.5 | User forums, unverified social media |
-
-### 4. Cross-Validation
-- Every key claim must be supported by 2+ independent sources
-- Flag contradictions with evidence from both sides
-- Assign confidence levels to each finding
-
-### 5. Synthesis
-- Organize findings by theme, not by source
-- Lead with conclusions, support with evidence
-- Acknowledge limitations and knowledge gaps
+- Corroboration: a key claim rests on two independent sources, so a single source's error or bias cannot carry it. Sources that repeat each other or share one origin count as one.
+- Contradictions: when sources disagree, show both positions with their evidence instead of picking one silently.
+- Confidence: label each finding high, medium, or low by the evidence behind it (source quality, independence, recency), not as a numeric score. Say what would change the label.
+- Quoting: wording taken from a source appears in quotation marks with its citation, so the reader can tell the source's words from your paraphrase.
+- Synthesis: organise conclusions by theme, not by source. Lead with the conclusion, then the evidence, and name the gaps the evidence leaves open.

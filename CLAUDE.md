@@ -63,7 +63,7 @@ go test ./internal/memory/... -race
 The agents, skills, pipeline commands, and bash scripts that end up in a user's `.pylon/` are **Go-embedded
 from `internal/cli/`** (`//go:embed` directives in `init_cmd.go`, `launch_commands.go`, `launch_hooks.go`):
 
-- `internal/cli/agents/*.md`   → 38 agent definitions
+- `internal/cli/agents/*.md`   → 20 agent definitions
 - `internal/cli/commands/*.md`  → `/pl:*` slash commands
 - `internal/cli/scripts/bash/*.sh` → atomic pipeline steps
 - `internal/cli/skills/*.md`    → agent skills
