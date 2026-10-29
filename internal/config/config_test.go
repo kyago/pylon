@@ -776,6 +776,93 @@ func TestMigrateRuntimeBackend_NoopWhenConfigMissing(t *testing.T) {
 	}
 }
 
+func TestMigrateRuntimeEnvDefaults(t *testing.T) {
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.yml")
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	t.Run("removes old defaults and drops empty env", func(t *testing.T) {
+		path := write(t, `version: "0.2"
+# runtime settings
+runtime:
+  provider: claude-code # my provider
+  env:
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
+    CLAUDE_CODE_EFFORT_LEVEL: high
+`)
+		removed, err := MigrateRuntimeEnvDefaults(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"}; strings.Join(removed, ",") != strings.Join(want, ",") {
+			t.Fatalf("removed = %v, want %v", removed, want)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if strings.Contains(text, "env") {
+			t.Fatalf("empty env key must be dropped:\n%s", text)
+		}
+		if !strings.Contains(text, "# runtime settings") || !strings.Contains(text, "# my provider") {
+			t.Fatalf("comments must be preserved:\n%s", text)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Runtime.Env != nil || cfg.Runtime.Provider != "claude-code" {
+			t.Fatalf("runtime = %+v", cfg.Runtime)
+		}
+	})
+
+	t.Run("keeps custom values", func(t *testing.T) {
+		path := write(t, `version: "0.2"
+runtime:
+  env:
+    CLAUDE_CODE_EFFORT_LEVEL: max
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
+    MY_VAR: keep
+`)
+		removed, err := MigrateRuntimeEnvDefaults(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(removed) != 1 || removed[0] != "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" {
+			t.Fatalf("removed = %v, want only CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", removed)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "max", "MY_VAR": "keep"}
+		if len(cfg.Runtime.Env) != len(want) || cfg.Runtime.Env["CLAUDE_CODE_EFFORT_LEVEL"] != "max" || cfg.Runtime.Env["MY_VAR"] != "keep" {
+			t.Fatalf("env = %v, want %v", cfg.Runtime.Env, want)
+		}
+	})
+
+	t.Run("noop without legacy entries", func(t *testing.T) {
+		content := "version: \"0.2\"\nruntime:\n  env:\n    MY_VAR: keep\n"
+		path := write(t, content)
+		removed, err := MigrateRuntimeEnvDefaults(path)
+		if err != nil || len(removed) != 0 {
+			t.Fatalf("removed=%v err=%v", removed, err)
+		}
+		if data, _ := os.ReadFile(path); string(data) != content {
+			t.Fatalf("file must be untouched:\n%s", data)
+		}
+		if removed, err := MigrateRuntimeEnvDefaults(filepath.Join(t.TempDir(), "missing.yml")); err != nil || len(removed) != 0 {
+			t.Fatalf("missing config must be a silent noop: removed=%v err=%v", removed, err)
+		}
+	})
+}
+
 func TestSetRuntimeProvider(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yml")

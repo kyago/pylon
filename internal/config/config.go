@@ -230,6 +230,87 @@ func MigrateRuntimeBackend(path string) (bool, error) {
 	return true, nil
 }
 
+// legacyRuntimeEnvDefaults are the runtime.env values older pylon releases synced
+// into config.yml. Claude Code gives these env vars top priority, so they pin every
+// session and agent regardless of runtime.effort or agent effort frontmatter.
+var legacyRuntimeEnvDefaults = []struct{ key, value string }{
+	{"CLAUDE_CODE_EFFORT_LEVEL", "high"},
+	{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "80"},
+}
+
+// MigrateRuntimeEnvDefaults removes runtime.env entries whose value still equals
+// the old pylon-written default; 사용자가 바꾼 값은 남긴다. env가 비면 키째 지운다.
+// MigrateRuntimeBackend와 같은 방식(yaml.Node 편집)으로 주석과 순서를 보존한다.
+// Returns the removed keys.
+func MigrateRuntimeEnvDefaults(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // config 부재는 뒤의 동기화 단계가 이미 보고한다
+		}
+		return nil, err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	var doc yaml.Node
+	if err := decoder.Decode(&doc); err != nil {
+		return nil, err
+	}
+	// 멀티 문서 파일은 첫 문서만 재인코딩하면 나머지가 유실되므로 건드리지 않는다.
+	if err := decoder.Decode(&yaml.Node{}); !errors.Is(err, io.EOF) {
+		return nil, nil
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	find := func(mapping *yaml.Node, key string) int {
+		for i := 0; i+1 < len(mapping.Content); i += 2 {
+			if mapping.Content[i].Value == key {
+				return i
+			}
+		}
+		return -1
+	}
+	root := doc.Content[0]
+	runtimeIdx := find(root, "runtime")
+	if runtimeIdx < 0 || root.Content[runtimeIdx+1].Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	runtime := root.Content[runtimeIdx+1]
+	envIdx := find(runtime, "env")
+	if envIdx < 0 || runtime.Content[envIdx+1].Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	env := runtime.Content[envIdx+1]
+	var removed []string
+	for _, legacy := range legacyRuntimeEnvDefaults {
+		i := find(env, legacy.key)
+		if i < 0 || env.Content[i+1].Kind != yaml.ScalarNode || env.Content[i+1].Value != legacy.value {
+			continue
+		}
+		env.Content = append(env.Content[:i], env.Content[i+2:]...)
+		removed = append(removed, legacy.key)
+	}
+	if len(removed) == 0 {
+		return nil, nil
+	}
+	if len(env.Content) == 0 {
+		runtime.Content = append(runtime.Content[:envIdx], runtime.Content[envIdx+2:]...)
+	}
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	if err := fsutil.WriteFileAtomic(path, buf.Bytes(), 0644); err != nil {
+		return nil, err
+	}
+	return removed, nil
+}
+
 // SetRuntimeProvider pins runtime.provider to the given name in config.yml,
 // preserving comments and document order via yaml.Node surgery (같은 이유로
 // MigrateRuntimeBackend와 동일한 방식). runtime 섹션이나 provider 키가 없으면

@@ -526,7 +526,7 @@ skills:
 기존 `runtime.backend`와 agent frontmatter의 `backend`는 마이그레이션 기간 동안 deprecated alias로
 읽지만 자동으로 파일을 다시 쓰지는 않습니다. `provider`가 함께 있으면 `provider`가 우선합니다.
 
-모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 전체 필드와 기본값을 보여주며,
+`runtime`의 `effort`/`model`/`env`(비어 있으면 provider 기본값)를 제외한 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 전체 필드와 기본값을 보여주며,
 명시하지 않은 필드는 로드 시 코드 기본값으로 자동 채워집니다. `pylon init`이 처음 생성하는 `config.yml`은
 최소 필드(`runtime`의 `provider`/`execution_mode`/`permission_mode`)만 포함하고, 이후
 `pylon doctor`가 누락된 필드를 감지해 기본값으로 동기화합니다.

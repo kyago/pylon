@@ -460,7 +460,7 @@ func newRuntimeEnvCheck(cfg *config.Config) Check {
 			if len(keys) == 0 {
 				return "ok", nil
 			}
-			return "", fmt.Errorf("runtime.env의 %s는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. runtime.effort 또는 제거를 권장", strings.Join(keys, ", "))
+			return "", fmt.Errorf("runtime.env의 %s는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. 이 키를 제거해야 runtime.effort가 적용됩니다", strings.Join(keys, ", "))
 		},
 	}
 }
@@ -493,20 +493,33 @@ func verifyGH() (string, error) {
 	return lines[0], nil
 }
 
+// migrateConfigFile applies the config.yml migrations and reports what changed.
+// 모두 noop-safe라 여러 진입점에서 반복 호출해도 된다.
+func migrateConfigFile(cfgPath string) {
+	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
+		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
+	} else if migrated {
+		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
+	}
+	removed, err := config.MigrateRuntimeEnvDefaults(cfgPath)
+	if err != nil {
+		fmt.Printf("⚠ runtime.env 마이그레이션 실패: %v\n", err)
+	}
+	for _, key := range removed {
+		fmt.Printf("✓ runtime.env.%s 제거 (pylon 구버전 기본값 — effort는 runtime.effort로 설정)\n", key)
+	}
+}
+
 // ensurePrimaryProviderIfWorkspace resolves and pins the primary provider when
-// running inside a pylon workspace. backend 마이그레이션을 먼저 수행해 구식
-// 키가 provider 결정에 그대로 반영되도록 한다.
+// running inside a pylon workspace. config 마이그레이션을 먼저 수행해 구식
+// 키가 provider 결정과 이후 체크에 그대로 반영되도록 한다.
 func ensurePrimaryProviderIfWorkspace(interactive bool) {
 	root, err := resolveRoot()
 	if err != nil {
 		return
 	}
 	cfgPath := layout.ConfigPath(root)
-	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
-		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
-	} else if migrated {
-		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
-	}
+	migrateConfigFile(cfgPath)
 	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		return // 설정 로드 실패는 이후 단계가 보고한다
@@ -522,13 +535,9 @@ func syncConfigIfWorkspace() {
 	}
 
 	cfgPath := layout.ConfigPath(root)
-	// backend 마이그레이션은 ensurePrimaryProviderIfWorkspace가 담당하지만,
+	// 마이그레이션은 ensurePrimaryProviderIfWorkspace가 담당하지만,
 	// init 등 doctor 본 흐름을 거치지 않는 호출을 위해 여기서도 보장한다 (noop-safe).
-	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
-		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
-	} else if migrated {
-		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
-	}
+	migrateConfigFile(cfgPath)
 	cfg, added, err := config.SyncConfigDefaults(cfgPath)
 	if err != nil {
 		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)

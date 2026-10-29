@@ -787,7 +787,7 @@ func TestInstallHint_NoBrewFormula(t *testing.T) {
 }
 
 func TestRuntimeEnvCheckWarnsOnOverridingKeys(t *testing.T) {
-	const suffix = "는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. runtime.effort 또는 제거를 권장"
+	const suffix = "는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. 이 키를 제거해야 runtime.effort가 적용됩니다"
 	tests := []struct {
 		name string
 		env  map[string]string
@@ -815,6 +815,40 @@ func TestRuntimeEnvCheckWarnsOnOverridingKeys(t *testing.T) {
 	// 설정 로드 실패(cfg nil)는 provider 체크가 보고하므로 여기서는 통과시킨다.
 	if _, err := newRuntimeEnvCheck(nil).Verify(); err != nil {
 		t.Fatalf("nil config must not warn: %v", err)
+	}
+}
+
+func TestSyncConfigRemovesLegacyRuntimeEnvDefaults(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(root, ".pylon", "config.yml")
+	if err := os.WriteFile(cfgPath, []byte(`version: "0.2"
+runtime:
+  provider: claude-code
+  env:
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
+    CLAUDE_CODE_EFFORT_LEVEL: high
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = oldWorkspace })
+
+	output := captureStdout(t, syncConfigIfWorkspace)
+	for _, key := range []string{"CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"} {
+		if !strings.Contains(output, "✓ runtime.env."+key+" 제거 (pylon 구버전 기본값") {
+			t.Fatalf("removal notice for %s missing:\n%s", key, output)
+		}
+	}
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runtime.Env != nil {
+		t.Fatalf("legacy env must be removed, got %v", cfg.Runtime.Env)
 	}
 }
 

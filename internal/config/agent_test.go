@@ -48,11 +48,6 @@ func TestParseAgentFile_FullAgent(t *testing.T) {
 		}
 	}
 
-	// Check env
-	if v, ok := agent.Env["CLAUDE_CODE_EFFORT_LEVEL"]; !ok || v != "high" {
-		t.Errorf("expected env CLAUDE_CODE_EFFORT_LEVEL=high, got %v", agent.Env)
-	}
-
 	// Check body contains expected content
 	if agent.Body == "" {
 		t.Error("expected non-empty body")
@@ -268,30 +263,6 @@ role: Broken Agent
 	_, err := ParseAgentData(data)
 	if err == nil {
 		t.Fatal("expected error for missing closing delimiter, got nil")
-	}
-}
-
-func TestInferAgentType(t *testing.T) {
-	tests := []struct {
-		name     string
-		expected string
-	}{
-		{"backend-dev", "dev"},
-		{"frontend-dev", "dev"},
-		{"fullstack", "dev"},
-		{"architect", ""},
-		{"pm", ""},
-		{"po", ""},
-		{"my-custom-agent", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := InferAgentType(tt.name)
-			if got != tt.expected {
-				t.Errorf("InferAgentType(%q) = %q, want %q", tt.name, got, tt.expected)
-			}
-		})
 	}
 }
 

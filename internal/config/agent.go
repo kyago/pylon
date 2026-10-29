@@ -14,22 +14,21 @@ import (
 // Spec Reference: Section 5 "Agent Configuration Format"
 type AgentConfig struct {
 	// YAML frontmatter fields (between --- delimiters)
-	Name                 string            `yaml:"name"`
-	Description          string            `yaml:"description"`
-	Role                 string            `yaml:"role"`
-	Type                 string            `yaml:"type"`
-	Provider             string            `yaml:"provider,omitempty"`
-	Backend              string            `yaml:"backend,omitempty"`
-	RequiredCapabilities []string          `yaml:"requiredCapabilities,omitempty"`
-	EvaluationRole       string            `yaml:"evaluationRole,omitempty"`
-	AccessMode           string            `yaml:"accessMode,omitempty"`
-	InputPolicy          string            `yaml:"inputPolicy,omitempty"`
-	Scope                []string          `yaml:"scope"`
-	Tools                []string          `yaml:"tools"`
-	DisallowedTools      []string          `yaml:"disallowedTools"`
-	Env                  map[string]string `yaml:"env"`
-	Domain               string            `yaml:"domain"`
-	Skills               []string          `yaml:"skills"`
+	Name                 string   `yaml:"name"`
+	Description          string   `yaml:"description"`
+	Role                 string   `yaml:"role"`
+	Type                 string   `yaml:"type"`
+	Provider             string   `yaml:"provider,omitempty"`
+	Backend              string   `yaml:"backend,omitempty"`
+	RequiredCapabilities []string `yaml:"requiredCapabilities,omitempty"`
+	EvaluationRole       string   `yaml:"evaluationRole,omitempty"`
+	AccessMode           string   `yaml:"accessMode,omitempty"`
+	InputPolicy          string   `yaml:"inputPolicy,omitempty"`
+	Scope                []string `yaml:"scope"`
+	Tools                []string `yaml:"tools"`
+	DisallowedTools      []string `yaml:"disallowedTools"`
+	Domain               string   `yaml:"domain"`
+	Skills               []string `yaml:"skills"`
 
 	// Markdown body (everything after the second ---)
 	Body string `yaml:"-"`
@@ -146,46 +145,6 @@ func splitFrontmatter(content string) (string, string, error) {
 	body = strings.TrimRight(remaining, "\n")
 
 	return frontmatter, body, nil
-}
-
-// InferAgentType infers the agent type from the agent name.
-// Known dev agent names map to "dev" type for backward compatibility
-// with configurations that don't specify the type field explicitly.
-func InferAgentType(name string) string {
-	devNames := map[string]bool{
-		"backend-dev":  true,
-		"frontend-dev": true,
-		"fullstack":    true,
-	}
-	if devNames[name] {
-		return "dev"
-	}
-	return ""
-}
-
-func InferAgentEvaluationPolicy(name string) (role, accessMode, inputPolicy string) {
-	decisionAgents := map[string]bool{
-		"verifier":          true,
-		"critic":            true,
-		"code-reviewer":     true,
-		"security-reviewer": true,
-		"fact-checker":      true,
-		"content-reviewer":  true,
-	}
-	if decisionAgents[name] {
-		return EvaluationRoleDecision, AccessModeReadOnly, InputPolicyIsolatedEvidence
-	}
-	investigationAgents := map[string]bool{
-		"explorer":       true,
-		"tracer":         true,
-		"analyst":        true,
-		"researcher":     true,
-		"doc-specialist": true,
-	}
-	if investigationAgents[name] {
-		return EvaluationRoleInvestigation, AccessModeReadOnly, InputPolicyScopedContext
-	}
-	return "", AccessModeStandard, InputPolicyFullContext
 }
 
 func (a AgentConfig) CanIssueFinalVerdict() bool {
