@@ -55,7 +55,8 @@ func validateComponent(name, value string) error {
 	return nil
 }
 
-// Insert writes a new entry as a markdown file and refreshes the project index.
+// Insert writes an entry as a markdown file and refreshes the project index.
+// 같은 project/category/key의 항목이 있으면 그 파일을 덮어쓴다(e.Updated=true).
 func (s *Store) Insert(e *Entry) error {
 	if err := validateComponent("project", e.ProjectID); err != nil {
 		return err
@@ -86,29 +87,42 @@ func (s *Store) Insert(e *Entry) error {
 	}
 	defer unlock()
 
-	// Stop hook이 매 턴 같은 학습을 보내므로 동일·근사 중복 내용은 저장하지
-	// 않는다 (D4). 표현만 바뀐 재진술은 bigram Dice 유사도로 걸러낸다.
 	existing, err := s.ListByCategory(e.ProjectID, e.Category)
 	if err != nil {
 		return err
 	}
+	// 같은 key의 기존 항목이 있으면 그 파일을 덮어쓴다(upsert). 최신순이라
+	// 첫 일치가 가장 최근 항목이다.
+	target := ""
 	for _, prev := range existing {
-		if isNearDuplicate(prev.Content, e.Content) {
+		if prev.Key == e.Key {
+			target = prev.Path
+			break
+		}
+	}
+	// 같은 교훈의 재진술을 거르기 위해 동일·근사 중복 내용은 저장하지 않는다
+	// (D4). 표현만 바뀐 재진술은 bigram Dice 유사도로 걸러낸다. 덮어쓸 자기
+	// 자신은 제외해 소폭 수정이 거부되지 않게 한다.
+	for _, prev := range existing {
+		if prev.Path != target && isNearDuplicate(prev.Content, e.Content) {
 			e.Path = prev.Path
 			return fmt.Errorf("%w: %s", ErrDuplicate, prev.Path)
 		}
 	}
 
-	dir := filepath.Join(s.projectDir(e.ProjectID), e.Category)
-	name, err := availableFileName(dir, e.Key)
-	if err != nil {
-		return err
+	path := filepath.Join(s.Root, filepath.FromSlash(target))
+	if target == "" {
+		dir := filepath.Join(s.projectDir(e.ProjectID), e.Category)
+		name, err := availableFileName(dir, e.Key)
+		if err != nil {
+			return err
+		}
+		path = filepath.Join(dir, name)
 	}
 	data, err := marshalEntry(e)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, name)
 	if err := fsutil.WriteFileAtomic(path, data, 0644); err != nil {
 		return err
 	}
@@ -117,6 +131,7 @@ func (s *Store) Insert(e *Entry) error {
 		return err
 	}
 	e.Path = filepath.ToSlash(rel)
+	e.Updated = target != ""
 	return s.rebuildIndexLocked(e.ProjectID)
 }
 
@@ -209,6 +224,25 @@ func (s *Store) ListByCategory(project, category string) ([]Entry, error) {
 	return entries, nil
 }
 
+// ListProjects returns the names of projects that have a memory directory,
+// sorted by name.
+func (s *Store) ListProjects() ([]string, error) {
+	dirs, err := os.ReadDir(s.baseDir())
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var projects []string
+	for _, d := range dirs {
+		if d.IsDir() {
+			projects = append(projects, d.Name())
+		}
+	}
+	return projects, nil
+}
+
 // Delete removes entries matching the filters. project가 빈 문자열이면 전체
 // 프로젝트를 대상으로 한다. dryRun이면 건수만 반환한다.
 func (s *Store) Delete(project, category, key string, dryRun bool) (int64, error) {
@@ -217,18 +251,9 @@ func (s *Store) Delete(project, category, key string, dryRun bool) (int64, error
 	}
 	projects := []string{project}
 	if project == "" {
-		dirs, err := os.ReadDir(s.baseDir())
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		if err != nil {
+		var err error
+		if projects, err = s.ListProjects(); err != nil {
 			return 0, err
-		}
-		projects = projects[:0]
-		for _, d := range dirs {
-			if d.IsDir() {
-				projects = append(projects, d.Name())
-			}
 		}
 	}
 	var total int64
@@ -286,32 +311,6 @@ func (s *Store) DeleteProject(project string) (int64, error) {
 	return int64(len(entries)), nil
 }
 
-// StoreLearnings saves session learnings (Stop hook 경로).
-func (s *Store) StoreLearnings(project, taskID, agent string, learnings []string) error {
-	for _, learning := range learnings {
-		// 바이트가 아닌 룬 단위로 잘라 멀티바이트 문자가 깨지지 않게 한다.
-		keyRunes := []rune(learning)
-		if len(keyRunes) > 50 {
-			keyRunes = keyRunes[:50]
-		}
-		e := &Entry{
-			ProjectID:  project,
-			Category:   "learning",
-			Key:        fmt.Sprintf("%s/%s", taskID, sanitizeKey(string(keyRunes))),
-			Content:    learning,
-			Author:     agent,
-			Confidence: 0.8,
-		}
-		if err := s.Insert(e); err != nil {
-			if errors.Is(err, ErrDuplicate) {
-				continue // 매 턴 반복되는 동일 학습은 조용히 건너뛴다 (D4)
-			}
-			return fmt.Errorf("학습 내용 저장 실패: %w", err)
-		}
-	}
-	return nil
-}
-
 // PruneExpired deletes entries older than their category's retention window.
 // retentionDays: 카테고리 → 보존 일수. 미지정 카테고리·0 이하 값은 영구 보존.
 // 삭제 건수를 반환하며, 삭제가 있었으면 INDEX.md를 갱신한다.
@@ -352,10 +351,6 @@ func (s *Store) PruneExpired(project string, retentionDays map[string]int) (int6
 	}
 	removeEmptyCategoryDirs(s.projectDir(project))
 	return int64(len(targets)), s.rebuildIndexLocked(project)
-}
-
-func sanitizeKey(v string) string {
-	return strings.NewReplacer(" ", "-", "/", "-", ":", "-").Replace(v)
 }
 
 // removeEmptyCategoryDirs prunes category directories emptied by deletion.

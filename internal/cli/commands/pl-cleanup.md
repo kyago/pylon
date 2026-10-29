@@ -69,7 +69,7 @@ pylon internal verify --workdir <git-root> --config <git-root>/.pylon/verify.yml
 
 - `git status`에 커밋되지 않은 변경이 있으면 커밋을 안내합니다(자동 커밋하지 않습니다).
 - 만료 메모리 정리(prune)는 이 명령의 책임이 아닙니다 — 별도로 호출하지 않습니다.
-  (prune은 학습이 있을 때 `sync-memory`가 저장과 함께 수행하는 부수 작업일 뿐, 여기서 보장하지 않습니다.)
+  prune은 `pylon mem prune`으로 별도 실행합니다.
 
 ## Step 5: 완료 보고
 

@@ -42,11 +42,17 @@ func (s *Store) rebuildIndexLocked(project string) error {
 }
 
 // indexLine renders one entry as an index/injection line.
-// INDEX.md와 주입 출력이 같은 포맷을 공유한다.
+// INDEX.md와 주입 출력이 같은 포맷을 공유한다. 요약은 본문의 첫 비어 있지
+// 않은 줄이다 — 첫 줄 = 한 줄 요약 관례.
 func indexLine(e Entry) string {
-	summary := strings.Join(strings.Fields(e.Content), " ")
-	if runes := []rune(summary); len(runes) > 100 {
-		summary = string(runes[:100]) + "…"
+	var summary string
+	for _, line := range strings.Split(e.Content, "\n") {
+		if summary = strings.Join(strings.Fields(line), " "); summary != "" {
+			break
+		}
+	}
+	if runes := []rune(summary); len(runes) > 200 {
+		summary = string(runes[:200]) + "…"
 	}
 	return fmt.Sprintf("- [%s] `%s` — %s (%.1f, %s)\n",
 		e.Category, e.Key, summary, e.Confidence, e.CreatedAt.Format("2006-01-02"))

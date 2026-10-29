@@ -70,18 +70,72 @@ func TestInsertRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+// 같은 key로 다시 저장하면 기존 파일을 덮어쓴다(경로 유지, CreatedAt 갱신).
+func TestInsertUpsertsSameKey(t *testing.T) {
+	s := newTestStore(t)
+	first := &Entry{ProjectID: "app", Category: "learning", Key: "같은 키", Content: "처음 저장한 내용", Confidence: 0.8}
+	mustInsert(t, s, first)
+	if first.Updated {
+		t.Error("신규 저장은 Updated=false여야 한다")
+	}
+
+	later := time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return later }
+	second := &Entry{ProjectID: "app", Category: "learning", Key: "같은 키", Content: "완전히 바뀐 새 내용", Confidence: 0.9}
+	mustInsert(t, s, second)
+	if !second.Updated {
+		t.Error("같은 key 재저장은 Updated=true여야 한다")
+	}
+	if second.Path != first.Path {
+		t.Errorf("경로가 유지되어야 한다: %q != %q", second.Path, first.Path)
+	}
+	entries, err := s.List("app")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("1건만 남아야 한다: %d, err=%v", len(entries), err)
+	}
+	if entries[0].Content != "완전히 바뀐 새 내용" || entries[0].Confidence != 0.9 {
+		t.Errorf("내용이 갱신되어야 한다: %+v", entries[0])
+	}
+	if !entries[0].CreatedAt.Equal(later) {
+		t.Errorf("CreatedAt은 갱신 시각이어야 한다: %v", entries[0].CreatedAt)
+	}
+}
+
+// 자기 자신의 소폭 수정은 근사 중복으로 거부되지 않는다.
+func TestInsertUpsertAllowsSmallSelfEdit(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "race 플래그",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다", Confidence: 0.8})
+	e := &Entry{ProjectID: "app", Category: "learning", Key: "race 플래그",
+		Content: "테스트는 race 플래그를 켜고 실행해야 한다는 것", Confidence: 0.8}
+	if err := s.Insert(e); err != nil {
+		t.Fatalf("자기 수정은 거부되면 안 된다: %v", err)
+	}
+	entries, _ := s.List("app")
+	if len(entries) != 1 || entries[0].Content != e.Content {
+		t.Fatalf("1건이 수정된 내용으로 남아야 한다: %+v", entries)
+	}
+}
+
+// key는 다르지만 슬러그가 같으면 -2, -3 접미로 따로 저장되고, 접미 파일의
+// key로 다시 저장하면 그 파일이 갱신된다.
 func TestInsertResolvesFileNameCollision(t *testing.T) {
 	s := newTestStore(t)
-	// 같은 키, 다른 내용 → 파일명 -2, -3 suffix로 3건 모두 저장되어야 한다
-	for _, content := range []string{"내용 하나", "내용 둘", "내용 셋"} {
-		e := &Entry{ProjectID: "app", Category: "learning", Key: "같은 키", Content: content, Confidence: 0.8}
-		if err := s.Insert(e); err != nil {
-			t.Fatalf("Insert(%q) 실패: %v", content, err)
-		}
+	keys := []string{"Same Key", "same key", "same-key"}
+	for i, content := range []string{"내용 하나", "내용 둘", "내용 셋"} {
+		mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: keys[i], Content: content, Confidence: 0.8})
 	}
 	entries, err := s.List("app")
 	if err != nil || len(entries) != 3 {
 		t.Fatalf("3건이 저장되어야 한다: %d, err=%v", len(entries), err)
+	}
+	e := &Entry{ProjectID: "app", Category: "learning", Key: "same key", Content: "내용 둘 수정", Confidence: 0.8}
+	mustInsert(t, s, e)
+	if !strings.HasSuffix(e.Path, "/same-key-2.md") || !e.Updated {
+		t.Errorf("same-key-2.md가 갱신되어야 한다: %q updated=%v", e.Path, e.Updated)
+	}
+	if entries, _ := s.List("app"); len(entries) != 3 {
+		t.Fatalf("갱신 후에도 3건이어야 한다: %d", len(entries))
 	}
 }
 
@@ -111,11 +165,11 @@ func TestInsertSkipsDuplicateContent(t *testing.T) {
 
 // 후행 개행이 붙은 content도 중복으로 인식되어야 한다 (D4).
 // marshal(TrimRight) / parse(TrimSpace) / 비교(원본) 정규화가 어긋나면
-// 같은 내용이 자기 자신과도 매칭되지 않아 매 턴 새 파일이 쌓인다.
+// 같은 내용이 자기 자신과도 매칭되지 않아 새 파일이 쌓인다.
 func TestInsertSkipsDuplicateWithTrailingWhitespace(t *testing.T) {
 	s := newTestStore(t)
-	for i := 0; i < 3; i++ {
-		e := &Entry{ProjectID: "app", Category: "learning", Key: "k", Content: "반복 내용\n", Confidence: 0.8}
+	for i, key := range []string{"k1", "k2", "k3"} {
+		e := &Entry{ProjectID: "app", Category: "learning", Key: key, Content: "반복 내용\n", Confidence: 0.8}
 		err := s.Insert(e)
 		if i == 0 && err != nil {
 			t.Fatalf("첫 저장 실패: %v", err)
@@ -169,20 +223,6 @@ func TestListSkipsCorruptFiles(t *testing.T) {
 	}
 	// 손상 파일이 있어도 저장은 계속 가능해야 한다(자가 복구 가능).
 	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "추가", Content: "추가 내용", Confidence: 0.8})
-}
-
-func TestStoreLearningsSilentlySkipsDuplicates(t *testing.T) {
-	s := newTestStore(t)
-	// Stop hook이 매 턴 같은 학습 내용을 보내는 상황 재현 — 에러 없이 1건만 남아야 한다
-	for i := 0; i < 3; i++ {
-		if err := s.StoreLearnings("app", "task-1", "claude", []string{"반복되는 학습 내용"}); err != nil {
-			t.Fatalf("StoreLearnings %d 실패: %v", i, err)
-		}
-	}
-	entries, _ := s.ListByCategory("app", "learning")
-	if len(entries) != 1 {
-		t.Fatalf("중복 학습은 1건만 저장되어야 한다: %d", len(entries))
-	}
 }
 
 func TestSearchKoreanSubstring(t *testing.T) {
@@ -257,26 +297,8 @@ func TestDeleteAcrossAllProjects(t *testing.T) {
 	}
 }
 
-func TestStoreLearningsTruncatesKeyByRunes(t *testing.T) {
-	s := newTestStore(t)
-	long := strings.Repeat("가", 60)
-	if err := s.StoreLearnings("app", "task-1", "architect", []string{long}); err != nil {
-		t.Fatalf("StoreLearnings 실패: %v", err)
-	}
-	entries, _ := s.ListByCategory("app", "learning")
-	if len(entries) != 1 {
-		t.Fatalf("1건 저장: %d", len(entries))
-	}
-	if entries[0].Content != long {
-		t.Error("Content는 잘리면 안 된다")
-	}
-	if !strings.HasPrefix(entries[0].Key, "task-1/") {
-		t.Errorf("Key는 taskID 접두사를 가져야 한다: %q", entries[0].Key)
-	}
-}
-
-// Stop hook이 매 턴 표현만 바뀐 학습을 다시 보내므로, 바이트 동일이 아니어도
-// 근사 중복이면 스킵되어야 한다 (D4 확장).
+// 같은 교훈의 재진술을 거르기 위해, 바이트 동일이 아니어도 근사 중복이면
+// 스킵되어야 한다 (D4 확장).
 func TestInsertSkipsNearDuplicate(t *testing.T) {
 	s := newTestStore(t)
 	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "race 플래그",
@@ -461,5 +483,31 @@ func TestInjectionMarkdownGhostProject(t *testing.T) {
 	s := newTestStore(t)
 	if out, err := s.InjectionMarkdown("ghost", 100); err != nil || out != "" {
 		t.Fatalf("빈 프로젝트: %q, err=%v", out, err)
+	}
+}
+
+// 인덱스 요약은 본문의 첫 비어 있지 않은 줄이다.
+func TestIndexLineUsesFirstNonEmptyLine(t *testing.T) {
+	e := Entry{Category: "decision", Key: "k", Confidence: 0.8,
+		Content: "\n  첫 줄 요약  \n\n둘째 줄 상세 설명", CreatedAt: time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)}
+	got := indexLine(e)
+	if !strings.Contains(got, "— 첫 줄 요약 (0.8, 2026-07-23)") {
+		t.Errorf("첫 줄이 요약이어야 한다: %q", got)
+	}
+	if strings.Contains(got, "둘째 줄") {
+		t.Errorf("둘째 줄 이후는 요약에 들어가면 안 된다: %q", got)
+	}
+}
+
+// 첫 줄이 200룬을 넘으면 200룬에서 자르고 …를 붙인다.
+func TestIndexLineTruncatesAt200Runes(t *testing.T) {
+	long := strings.Repeat("가", 250)
+	got := indexLine(Entry{Category: "learning", Key: "k", Content: long})
+	if !strings.Contains(got, strings.Repeat("가", 200)+"…") || strings.Contains(got, strings.Repeat("가", 201)) {
+		t.Errorf("200룬 절단 + … 이어야 한다: %q", got)
+	}
+	short := strings.Repeat("나", 200)
+	if got := indexLine(Entry{Category: "learning", Key: "k", Content: short}); strings.Contains(got, "…") {
+		t.Errorf("200룬 이하는 자르지 않는다: %q", got)
 	}
 }

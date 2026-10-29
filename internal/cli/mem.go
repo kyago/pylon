@@ -23,7 +23,8 @@ func newMemCmd() *cobra.Command {
   store   메모리 저장
   list    메모리 목록
   delete  메모리 삭제 (키/카테고리 단위)
-  prune   오염 메모리 정리 (카테고리 일괄 삭제)`,
+  prune   오염 메모리 정리 (카테고리 일괄 삭제)
+  inject  프로젝트 메모리를 세션 컨텍스트로 출력 (SessionStart hook 전용)`,
 	}
 
 	cmd.AddCommand(newMemSearchCmd())
@@ -31,6 +32,7 @@ func newMemCmd() *cobra.Command {
 	cmd.AddCommand(newMemListCmd())
 	cmd.AddCommand(newMemDeleteCmd())
 	cmd.AddCommand(newMemPruneCmd())
+	cmd.AddCommand(newMemInjectCmd())
 
 	return cmd
 }
@@ -167,6 +169,59 @@ func newMemPruneCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 
 	return cmd
+}
+
+func newMemInjectCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "inject",
+		Short: "Print project memory for session context (SessionStart hook)",
+		Long: `프로젝트 메모리 요약을 stdout으로 출력합니다.
+
+Claude Code SessionStart hook이 호출하며, 출력이 그대로 세션 컨텍스트에 들어갑니다.
+memory.proactive_injection이 false이거나 메모리가 없으면 아무것도 출력하지 않습니다.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runMemInject()
+		},
+	}
+}
+
+// runMemInject prints every project's memory within the injection budget.
+// SessionStart hook의 stdout이 그대로 컨텍스트가 되므로 --json은 무시하고
+// stdout에는 주입 본문만 쓴다.
+func runMemInject() error {
+	root, cfg, err := openWorkspace()
+	if err != nil {
+		return err
+	}
+	if !cfg.Memory.ProactiveInjection {
+		return nil
+	}
+	memStore := memory.NewStore(root)
+	projects, err := memStore.ListProjects()
+	if err != nil {
+		return err
+	}
+	// shortcut: 토큰→바이트 4배 근사, 계측이 생기면 실측으로 교체
+	remaining := cfg.Memory.ProactiveMaxTokens * 4
+	var b strings.Builder
+	for _, project := range projects {
+		if remaining <= 0 {
+			break // InjectionMarkdown은 0 이하를 무제한으로 취급한다
+		}
+		md, err := memStore.InjectionMarkdown(project, remaining)
+		if err != nil {
+			return err
+		}
+		b.WriteString(md)
+		remaining -= len(md)
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	fmt.Print("## pylon 프로젝트 메모리\n" + b.String() +
+		"전문은 .pylon/memory/<project>/<category>/<key>.md 를 읽고, 같은 key로 pylon mem store 하면 갱신됩니다.\n")
+	return nil
 }
 
 // confirmDeletion asks the user to confirm a destructive operation.
@@ -338,14 +393,17 @@ func runMemStore(project, key, content, category, author string, confidence floa
 	}
 
 	if flagJSON {
-		return printJSON(map[string]string{
+		return printJSON(map[string]any{
 			"path":    entry.Path,
 			"project": project,
 			"key":     key,
 			"status":  "ok",
+			"updated": entry.Updated,
 		})
+	} else if entry.Updated {
+		fmt.Printf("✓ 메모리 갱신됨: %s\n", entry.Path)
 	} else {
-		fmt.Printf("✓ 메모리 저장: %s\n", entry.Path)
+		fmt.Printf("✓ 메모리 저장됨: %s\n", entry.Path)
 	}
 
 	return nil

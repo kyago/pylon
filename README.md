@@ -347,7 +347,7 @@ Go 바이너리가 제공하는 유틸리티 명령입니다. 루트 에이전�
 ```bash
 pylon mem list --project <name>                        # 메모리 목록
 pylon mem search --project <name> --query "검색어"      # 토큰 매칭 검색
-pylon mem store --project <name> --key "키" --content "내용"  # 저장 (--category 지정 가능)
+pylon mem store --project <name> --key "키" --content "내용"  # 저장, 같은 key면 갱신 (--category 지정 가능)
 pylon mem delete --project <name> --key "키"            # 삭제 (--category, --dry-run 지원)
 ```
 
@@ -356,7 +356,7 @@ pylon mem delete --project <name> --key "키"            # 삭제 (--category, -
 | 명령어 | 설명 |
 |--------|------|
 | `pylon sync-agents` | 내장 리소스(`.pylon/builtin/`)와 `.claude/agents/` 심링크를 즉시 동기화 |
-| `pylon sync-memory` | 세션 학습 내용을 프로젝트 메모리에 동기화 |
+| `pylon mem inject` | SessionStart 훅이 호출 — 프로젝트 메모리를 세션 컨텍스트에 주입 |
 
 ### 작업 이력
 
@@ -512,8 +512,8 @@ wiki:
     - pr_merged
 
 memory:
-  proactive_injection: true
-  proactive_max_tokens: 2000
+  proactive_injection: true    # 세션 시작(SessionStart 훅) 시 프로젝트 메모리 주입 on/off
+  proactive_max_tokens: 2000   # 주입 예산(토큰, 1토큰≈4바이트로 환산)
   retention_days:        # 카테고리별 보존 일수 — 미지정/0 이하 = 영구 보존, {} = 전체 영구 보존
     learning: 30
 

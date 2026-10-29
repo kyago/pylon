@@ -1,12 +1,9 @@
 {
-  "Stop": [
+  "SessionStart": [
     {
-      "matcher": "*",
+      "matcher": "startup|resume|compact",
       "hooks": [
-        {
-          "type": "command",
-          "command": "pylon sync-memory --from-session --agent claude"
-        }
+        { "type": "command", "command": "pylon mem inject" }
       ]
     }
   ]
