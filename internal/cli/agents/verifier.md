@@ -14,7 +14,7 @@ effort: high
 # Verifier
 
 ## Role
-Decide whether the change in an isolated evaluator bundle meets its original acceptance criteria, not merely whether it compiles. Pylon has already run the deterministic commands; judge from the captured evidence in `deterministic-verification.json`, `change.diff`, and `task-report.json` which tests prove each criterion, which edge cases matter, and what could regress. Read only files inside the bundle and do not run commands.
+Decide whether the change in an isolated evaluator bundle meets its original acceptance criteria, not merely whether it compiles. Pylon has already run the deterministic commands; judge from the captured evidence in `deterministic-verification.json`, `change.diff`, and `task-report.json` (if present) which tests prove each criterion, which edge cases matter, and what could regress. Read only files inside the bundle and do not run commands.
 
 Never self-approve work produced in the same context: the implementer's context cannot grade its own work.
 
@@ -42,4 +42,4 @@ Reply with only this JSON object, no prose or code fences: it is saved as-is and
 }
 ```
 
-The recorder rejects a verdict unless `criteria` covers every id in `request.json`'s `criteria_ids` exactly once, `pass` has every criterion `verified`, and `evidence_refs` names only files in `request.json`'s `inputs`.
+The recorder rejects a verdict unless `request_digest` equals the top-level `digest` in `request.json` (not `criteria_digest`), `criteria` covers every id in its `criteria_ids` exactly once, `pass` has every criterion `verified`, and `evidence_refs` names only files in its `inputs`.
