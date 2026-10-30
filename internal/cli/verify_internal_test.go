@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -199,42 +200,16 @@ func TestInternalVerify_PassesWhenStepsSucceed(t *testing.T) {
 // 검증은 커밋 전 작업 트리에서 돈다. 기록한 tree가 그 변경을 그대로 커밋한 결과와 같아야 cleanup·PR이
 // "검증한 코드 == 머지된 코드"를 대조할 수 있다.
 func TestInternalVerify_RecordsWorkingTreeMatchingLaterCommit(t *testing.T) {
-	dir := t.TempDir()
-	git := func(args ...string) string {
-		t.Helper()
-		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v (%s)", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	git("init", "-q")
-	git("commit", "-q", "--allow-empty", "-m", "init")
+	dir, git := newTreeTestRepo(t)
+	// 워크스페이스 루트 repo는 .pylon/을 추적한다. 추적 중인 항목은 index 상태 그대로 tree에 남아야 한다.
+	writeTreeTestFile(t, dir, ".pylon/config.yml", "version: 1\n")
+	git("add", ".pylon/config.yml")
+	git("commit", "-q", "-m", "init")
 	// Agent(isolation="worktree")가 저장소 안에 만든 워크트리는 프로젝트 변경이 아니다.
 	git("worktree", "add", "-q", filepath.Join(dir, ".claude", "worktrees", "agent"), "-b", "agent")
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, ".pylon"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join(dir, ".pylon", "verify.yml")
-	if err := os.WriteFile(configPath, []byte("build:\n  command: \"true\"\n  timeout: 30s\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeTreeTestFile(t, dir, "main.go", "package main\n")
 
-	cmd := newInternalVerifyCmd()
-	var out strings.Builder
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--workdir", dir, "--config", configPath})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("verify failed: %v (%s)", err, out.String())
-	}
-	var result verificationResult
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result); err != nil {
-		t.Fatalf("출력 파싱 실패: %v (%s)", err, out.String())
-	}
+	result := runTreeTestVerify(t, dir, "true")
 	if status := git("status", "--porcelain"); !strings.Contains(status, "?? main.go") {
 		t.Fatalf("검증이 실제 index를 바꾸면 안 된다: %q", status)
 	}
@@ -248,6 +223,121 @@ func TestInternalVerify_RecordsWorkingTreeMatchingLaterCommit(t *testing.T) {
 	if tree := workingTree(t.TempDir()); tree != "" {
 		t.Fatalf("git 저장소가 아니면 tree는 비어야 한다: %q", tree)
 	}
+}
+
+func TestInternalVerify_OmitsTreeWhenStepEditsFiles(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	writeTreeTestFile(t, dir, "main.go", "package main\n")
+	git("add", "main.go")
+	git("commit", "-q", "-m", "init")
+
+	if result := runTreeTestVerify(t, dir, "echo // formatted >> main.go"); result.Tree != "" {
+		t.Fatalf("검증 단계가 파일을 고치면 검사한 tree가 하나로 정해지지 않으므로 비워야 한다: %q", result.Tree)
+	}
+}
+
+// 기록한 tree가 검증한 내용과 다른 커밋에 일치하면 안 된다(false match).
+func TestWorkingTree_NoFalseMatch(t *testing.T) {
+	t.Run("같은 크기 수정이 index와 같은 초에 일어나도 새 내용을 해시한다", func(t *testing.T) {
+		dir, git := newTreeTestRepo(t)
+		git("config", "core.checkStat", "minimal")
+		git("config", "core.trustCtime", "false")
+		past := time.Now().Add(-time.Hour).Truncate(time.Second)
+		file := writeTreeTestFile(t, dir, "limit.go", "a\n")
+		if err := os.Chtimes(file, past, past); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "limit.go")
+		git("commit", "-q", "-m", "init")
+		oldTree := git("rev-parse", "HEAD^{tree}")
+		writeTreeTestFile(t, dir, "limit.go", "b\n")
+		for _, path := range []string{file, filepath.Join(dir, ".git", "index")} {
+			if err := os.Chtimes(path, past, past); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		tree := workingTree(dir)
+		git("add", "limit.go")
+		git("commit", "-q", "-m", "fix")
+		if tree == oldTree || tree != git("rev-parse", "HEAD^{tree}") {
+			t.Fatalf("racy 수정을 놓쳤다: tree=%q old=%q", tree, oldTree)
+		}
+	})
+
+	t.Run("assume-unchanged로 숨긴 수정이 있으면 비운다", func(t *testing.T) {
+		dir, git := newTreeTestRepo(t)
+		writeTreeTestFile(t, dir, "conf.go", "old\n")
+		git("add", "conf.go")
+		git("commit", "-q", "-m", "init")
+		git("update-index", "--assume-unchanged", "conf.go")
+		writeTreeTestFile(t, dir, "conf.go", "new\n")
+
+		if tree := workingTree(dir); tree != "" {
+			t.Fatalf("tree에 실을 수 없는 수정이 있으면 비워야 한다: %q", tree)
+		}
+	})
+
+	t.Run("내장 저장소 안의 수정이 있으면 비운다", func(t *testing.T) {
+		dir, git := newTreeTestRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "init")
+		inner := filepath.Join(dir, "lib")
+		git("init", "-q", inner)
+		writeTreeTestFile(t, dir, "lib/lib.go", "package lib\n")
+		git("-C", inner, "add", "lib.go")
+		git("-C", inner, "commit", "-q", "-m", "lib")
+		writeTreeTestFile(t, dir, "lib/lib.go", "package lib // edited\n")
+
+		if tree := workingTree(dir); tree != "" {
+			t.Fatalf("gitlink는 내장 저장소의 미커밋 수정을 담지 못하므로 비워야 한다: %q", tree)
+		}
+	})
+}
+
+func newTreeTestRepo(t *testing.T) (string, func(args ...string) string) {
+	t.Helper()
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	return dir, git
+}
+
+func writeTreeTestFile(t *testing.T, dir, rel, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// runTreeTestVerify runs `pylon internal verify` with one build step; .pylon/verify.yml stays untracked.
+func runTreeTestVerify(t *testing.T, dir, command string) verificationResult {
+	t.Helper()
+	configPath := writeTreeTestFile(t, dir, ".pylon/verify.yml", fmt.Sprintf("build:\n  command: %q\n  timeout: 30s\n", command))
+	cmd := newInternalVerifyCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--workdir", dir, "--config", configPath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("verify failed: %v (%s)", err, out.String())
+	}
+	var result verificationResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result); err != nil {
+		t.Fatalf("출력 파싱 실패: %v (%s)", err, out.String())
+	}
+	return result
 }
 
 func TestInternalVerify_UsesFrozenSnapshotAndRejectsLiveConfigChange(t *testing.T) {

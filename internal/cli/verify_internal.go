@@ -269,7 +269,8 @@ func workingTree(workDir string) string {
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 	index := filepath.Join(tmpDir, "index")
 	git := func(args ...string) (string, error) {
-		command := exec.Command("git", append([]string{"-C", workDir}, args...)...)
+		// A split temp index would leave orphan sharedindex files in the real .git.
+		command := exec.Command("git", append([]string{"-C", workDir, "-c", "core.splitIndex=false"}, args...)...)
 		command.Env = append(os.Environ(), "GIT_INDEX_FILE="+index)
 		out, err := command.Output()
 		return strings.TrimSpace(string(out)), err
@@ -279,13 +280,37 @@ func workingTree(workDir string) string {
 		return ""
 	}
 	// The copied stat cache keeps unchanged files from being rehashed; a missing index just starts empty.
-	if data, err := os.ReadFile(strings.TrimSpace(string(realIndex))); err == nil {
+	// The copy keeps the original mtime because git rechecks content only for entries not older than the
+	// index file (racy git); a fresh mtime would let a same-size edit in that window pass as unchanged.
+	realIndexPath := strings.TrimSpace(string(realIndex))
+	if info, err := os.Stat(realIndexPath); err == nil {
+		data, err := os.ReadFile(realIndexPath)
+		if err != nil {
+			return ""
+		}
 		if err := os.WriteFile(index, data, 0o600); err != nil {
 			return ""
 		}
+		if err := os.Chtimes(index, info.ModTime(), info.ModTime()); err != nil {
+			return ""
+		}
 	}
-	if _, err := git("add", "-A", "--", ":(top)", ":(top,glob,exclude)**/.pylon/**", ":(top,exclude).claude/worktrees"); err != nil {
+	pathspec := []string{"--", ":(top)", ":(top,glob,exclude)**/.pylon/**", ":(top,exclude).claude/worktrees"}
+	if _, err := git(append([]string{"add", "-A"}, pathspec...)...); err != nil {
 		return ""
+	}
+	// A tree cannot carry edits inside submodules or nested repositories, nor files hidden by assume-unchanged.
+	if _, err := git(append([]string{"diff-files", "--quiet", "--ignore-submodules=none"}, pathspec...)...); err != nil {
+		return ""
+	}
+	entries, err := git(append([]string{"ls-files", "-v"}, pathspec...)...)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(entries, "\n") {
+		if line != "" && line[0] >= 'a' && line[0] <= 'z' {
+			return ""
+		}
 	}
 	tree, err := git("write-tree")
 	if err != nil {

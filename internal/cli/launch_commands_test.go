@@ -163,6 +163,10 @@ func TestPipelineRecordsVerifiedFlagAfterEvaluator(t *testing.T) {
 	if record < 0 || verified < record {
 		t.Fatalf("task verification must follow evaluator recording: evaluator=%d verified=%d", record, verified)
 	}
+	// verificationResult의 통과 필드는 ok다. 없는 필드를 읽으면 verified가 영원히 false가 된다.
+	if !strings.Contains(command, `jq -r '.ok == true' "$REPO_PIPELINE_DIR/verification.json"`) {
+		t.Fatal("pipeline must read the deterministic gate from verification.json's ok field")
+	}
 	for _, removed := range []string{"pylon internal state", "pylon internal corpus", "pylon internal curator"} {
 		if strings.Contains(command, removed) {
 			t.Fatalf("pipeline command still references removed command %q", removed)
