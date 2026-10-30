@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,7 @@ type verificationResult struct {
 	CriteriaDigest string              `json:"criteria_digest,omitempty"`
 	IntegrityOK    bool                `json:"integrity_ok,omitempty"`
 	SourceChanged  bool                `json:"source_changed,omitempty"`
+	Tree           string              `json:"tree,omitempty"`
 	Timestamp      string              `json:"timestamp"`
 }
 
@@ -131,9 +133,14 @@ func newInternalVerifyCmd() *cobra.Command {
 				}
 			}
 
+			treeBefore := workingTree(workDir)
 			executed, err := executeVerification(workDir, steps, time.Now)
 			if err != nil {
 				return err
+			}
+			// A step that rewrites files (formatter, codegen) leaves no single tree the checks ran against.
+			if treeAfter := workingTree(workDir); treeAfter == treeBefore {
+				executed.Tree = treeAfter
 			}
 			executed.Skipped = skipped
 			executed.CriteriaDigest = result.CriteriaDigest
@@ -248,6 +255,68 @@ func executeVerification(workDir string, steps []config.NamedVerifyStep, now fun
 		result.Checks = append(result.Checks, check)
 	}
 	return result, nil
+}
+
+// workingTree returns the git tree hash of workDir's working tree, untracked files included, so a verdict
+// on uncommitted changes matches the commit that later lands them. It hashes into a copy of the index to
+// leave the real one untouched, and skips .pylon/ and agent worktrees under .claude/worktrees/, which are
+// local to pylon and Claude Code and never part of a project change. Returns "" outside a git repository.
+func workingTree(workDir string) string {
+	tmpDir, err := os.MkdirTemp("", "pylon-tree-")
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+	index := filepath.Join(tmpDir, "index")
+	git := func(args ...string) (string, error) {
+		// A split temp index would leave orphan sharedindex files in the real .git.
+		command := exec.Command("git", append([]string{"-C", workDir, "-c", "core.splitIndex=false"}, args...)...)
+		command.Env = append(os.Environ(), "GIT_INDEX_FILE="+index)
+		out, err := command.Output()
+		return strings.TrimSpace(string(out)), err
+	}
+	realIndex, err := exec.Command("git", "-C", workDir, "rev-parse", "--path-format=absolute", "--git-path", "index").Output()
+	if err != nil {
+		return ""
+	}
+	// The copied stat cache keeps unchanged files from being rehashed; a missing index just starts empty.
+	// The copy keeps the original mtime because git rechecks content only for entries not older than the
+	// index file (racy git); a fresh mtime would let a same-size edit in that window pass as unchanged.
+	realIndexPath := strings.TrimSpace(string(realIndex))
+	if info, err := os.Stat(realIndexPath); err == nil {
+		data, err := os.ReadFile(realIndexPath)
+		if err != nil {
+			return ""
+		}
+		if err := os.WriteFile(index, data, 0o600); err != nil {
+			return ""
+		}
+		if err := os.Chtimes(index, info.ModTime(), info.ModTime()); err != nil {
+			return ""
+		}
+	}
+	pathspec := []string{"--", ":(top)", ":(top,glob,exclude)**/.pylon/**", ":(top,exclude).claude/worktrees"}
+	if _, err := git(append([]string{"add", "-A"}, pathspec...)...); err != nil {
+		return ""
+	}
+	// A tree cannot carry edits inside submodules or nested repositories, nor files hidden by assume-unchanged.
+	if _, err := git(append([]string{"diff-files", "--quiet", "--ignore-submodules=none"}, pathspec...)...); err != nil {
+		return ""
+	}
+	entries, err := git(append([]string{"ls-files", "-v"}, pathspec...)...)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(entries, "\n") {
+		if line != "" && line[0] >= 'a' && line[0] <= 'z' {
+			return ""
+		}
+	}
+	tree, err := git("write-tree")
+	if err != nil {
+		return ""
+	}
+	return tree
 }
 
 func failVerification(cmd *cobra.Command, outputPath, manifestPath string, result verificationResult, eventType string, cause error) error {

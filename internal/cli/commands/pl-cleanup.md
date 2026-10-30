@@ -50,7 +50,13 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
   - 이 대화에서 돌린 검증 출력. 검증을 돌린 커밋이 머지된 PR의 head(`gh pr view <번호> --json headRefOid`)와 같을
     때만 근거가 됩니다.
   - PR의 체크 결과(`gh pr checks <번호>`). "no checks reported"는 실패가 아니라 "PR 체크 없음"으로 보고합니다.
-  - 파이프라인 run의 `verification.json`·`evaluator-result.json`. 그 뒤에 바뀐 코드는 위 두 근거로 확인합니다.
+  - 파이프라인 run의 `verification.json`·`evaluator-result.json`. 검증은 커밋 전 작업 트리에서도 돌기 때문에
+    커밋이 아니라 tree로 대조합니다 — `verification.json`의 `tree`가 머지된 PR head의 tree
+    (`git -C <repo> rev-parse "<headRefOid>^{tree}"`)와 같을 때만 근거가 됩니다. `tree`가 없거나(이전 버전 run,
+    검증 중 파일을 고친 단계), 명령이 실패하거나(head 커밋이 로컬에 없음), 값이 다르면 검증 뒤 코드가 바뀐 것이므로
+    위 두 근거로 확인합니다. `evaluator-result.json`은 판정에 쓴 사본
+    `evaluator-input/deterministic-verification.json`의 `tree`로 따로 대조합니다 — `/pl:pr`이 다시 검증하면
+    `verification.json`만 새로 바뀝니다.
 
 세션의 결과물마다 확인한 것과 확인하지 않은 것을 나눕니다. 배포 결과, 마이그레이션 적용, 운영 데이터 반영처럼
 코드 밖의 결과는 읽기 전용으로 확인할 수단(배포 run 로그, 조회 쿼리, 상태 API)이 있으면 실제로 조회해 확인하고,
@@ -81,6 +87,11 @@ pylon mem store --project <프로젝트> --category decision --key <슬러그> -
 ```
 
 저장할 것이 없으면 건너뜁니다.
+
+교훈이 테스트나 lint로 강제될 수 있으면(이 함수 대신 저 함수를 써야 한다, 이 입력에서 깨진다) 메모리 글만으로 두지
+않고 Step 8 보고에 검사 추가 제안을 함께 적습니다 — 어느 repo에 어떤 테스트·lint를 넣으면 같은 실수가 실패로
+드러나는지. 글은 건너뛰어도 아무것도 실패하지 않지만 검사는 다음 에이전트를 멈춥니다. 여기서는 코드를 고치지 않고
+제안만 합니다. `verify.yml`은 프로젝트 repo에 커밋되지 않으므로 제안 대상이 아닙니다.
 
 ## Step 4: 도메인 지식 갱신
 
@@ -189,6 +200,7 @@ Codex는 수동 `pylon mem inject`) — 여기서 호출하지 않습니다.
 
 - 결과 확인: 확인한 것(근거)과 미확인 항목
 - 저장·갱신한 메모리(프로젝트 · 카테고리 · key, 신규/갱신)
+- 검사 추가 제안(교훈 · repo · 추가할 테스트나 lint), 없으면 생략
 - 고친 도메인 문서와 바뀐 사실, 또는 머지 후로 미룬 것
 - 파이프라인 run: 마감한 것(id · phase), 남긴 것(이유), 다른 run 목록과 마감 가능 여부
 - 브랜치·워크트리: 지운 것, 남긴 것(이유)
