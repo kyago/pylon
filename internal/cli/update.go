@@ -4,7 +4,9 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +24,9 @@ import (
 
 // httpClient is the HTTP client used for GitHub API and download requests.
 var httpClient = &http.Client{Timeout: 5 * time.Minute}
+
+// ghTokenTimeout bounds `gh auth token`, which can block on a locked keyring.
+var ghTokenTimeout = 5 * time.Second
 
 // maxBinarySize is the maximum allowed download size (200 MB).
 const maxBinarySize = 200 * 1024 * 1024
@@ -196,7 +202,8 @@ func fetchRelease(target string) (*githubRelease, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if token := githubToken(); token != "" {
+	token, source := githubToken()
+	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
@@ -207,13 +214,22 @@ func fetchRelease(target string) (*githubRelease, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("GitHub 토큰 인증 실패: GITHUB_TOKEN 또는 'gh auth token' 값을 확인하세요")
+		hint := "'gh auth login'으로 다시 로그인하세요"
+		if source == "GITHUB_TOKEN" {
+			hint = "GITHUB_TOKEN을 갱신하거나 unset 후 다시 시도하세요"
+		}
+		return nil, fmt.Errorf("GitHub 토큰 인증 실패(%s): %s", source, hint)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("버전 %q을(를) 찾을 수 없습니다", target)
 	}
-	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
-		return nil, fmt.Errorf("GitHub API rate limit 초과. 잠시 후 다시 시도하세요. (리셋: %s)", resp.Header.Get("X-RateLimit-Reset"))
+	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) &&
+		resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		msg := fmt.Sprintf("GitHub API rate limit 초과. 잠시 후 다시 시도하세요. (리셋: %s)", resp.Header.Get("X-RateLimit-Reset"))
+		if token == "" {
+			msg += " GITHUB_TOKEN 설정 또는 'gh auth login' 후 재시도하면 한도가 늘어납니다"
+		}
+		return nil, errors.New(msg)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API 응답 오류: %s", resp.Status)
@@ -228,17 +244,23 @@ func fetchRelease(target string) (*githubRelease, error) {
 	return &release, nil
 }
 
-// githubToken returns GITHUB_TOKEN or `gh auth token` output; "" falls back to
-// the unauthenticated API, which GitHub rate-limits per public IP (60 req/h).
-func githubToken() string {
+// githubToken returns a token and its source (GITHUB_TOKEN, else `gh auth token`);
+// "" falls back to the unauthenticated API, which GitHub rate-limits per public IP (60 req/h).
+func githubToken() (token, source string) {
 	if t := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); t != "" {
-		return t
+		return t, "GITHUB_TOKEN"
 	}
-	out, err := exec.Command("gh", "auth", "token", "--hostname", "github.com").Output()
-	if err != nil {
-		return ""
+	ctx, cancel := context.WithTimeout(context.Background(), ghTokenTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", "github.com")
+	// gh echoes a set GITHUB_TOKEN back even when blank, hiding the stored login.
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "GITHUB_TOKEN=") })
+	cmd.WaitDelay = time.Second // don't wait on children still holding stdout after a kill
+	out, err := cmd.Output()
+	if t := strings.TrimSpace(string(out)); err == nil && t != "" {
+		return t, "gh auth token"
 	}
-	return strings.TrimSpace(string(out))
+	return "", ""
 }
 
 // buildAssetName returns the expected archive filename for the current platform.
