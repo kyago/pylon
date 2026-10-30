@@ -196,6 +196,60 @@ func TestInternalVerify_PassesWhenStepsSucceed(t *testing.T) {
 	}
 }
 
+// 검증은 커밋 전 작업 트리에서 돈다. 기록한 tree가 그 변경을 그대로 커밋한 결과와 같아야 cleanup·PR이
+// "검증한 코드 == 머지된 코드"를 대조할 수 있다.
+func TestInternalVerify_RecordsWorkingTreeMatchingLaterCommit(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "init")
+	// Agent(isolation="worktree")가 저장소 안에 만든 워크트리는 프로젝트 변경이 아니다.
+	git("worktree", "add", "-q", filepath.Join(dir, ".claude", "worktrees", "agent"), "-b", "agent")
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".pylon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, ".pylon", "verify.yml")
+	if err := os.WriteFile(configPath, []byte("build:\n  command: \"true\"\n  timeout: 30s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newInternalVerifyCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--workdir", dir, "--config", configPath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("verify failed: %v (%s)", err, out.String())
+	}
+	var result verificationResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result); err != nil {
+		t.Fatalf("출력 파싱 실패: %v (%s)", err, out.String())
+	}
+	if status := git("status", "--porcelain"); !strings.Contains(status, "?? main.go") {
+		t.Fatalf("검증이 실제 index를 바꾸면 안 된다: %q", status)
+	}
+
+	git("add", "main.go")
+	git("commit", "-q", "-m", "fix")
+	if want := git("rev-parse", "HEAD^{tree}"); result.Tree != want {
+		t.Fatalf("tree = %q, 커밋한 tree %q와 같아야 한다(.pylon 제외)", result.Tree, want)
+	}
+
+	if tree := workingTree(t.TempDir()); tree != "" {
+		t.Fatalf("git 저장소가 아니면 tree는 비어야 한다: %q", tree)
+	}
+}
+
 func TestInternalVerify_UsesFrozenSnapshotAndRejectsLiveConfigChange(t *testing.T) {
 	workDir, runDir, configPath, snapshotPath, manifestPath := createCriteriaFixture(t)
 	markerPath := filepath.Join(workDir, "marker.txt")

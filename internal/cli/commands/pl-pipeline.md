@@ -58,6 +58,8 @@ REQUIREMENT_EOF
    {"criteria": [{"id": "AC-1", "description": "검사 가능한 완료 조건"}]}
    ```
    ID와 설명이 비어 있거나 ID가 중복되면 다음 단계로 진행하지 않습니다.
+   `selected_workflow`가 `bugfix`·`hotfix`면 첫 기준을 결함 재현으로 둡니다 — 재현 명령이나 절차, 지금 나오는
+   잘못된 결과, 수정 후 기대 결과. 수정은 이 재현이 기대 결과를 낼 때만 완료입니다.
 5. `detected_domain`에 따라 실행 절차를 따릅니다:
    - `software` → **소프트웨어 파이프라인** (Steps 3-9)
    - `research`, `content`, `marketing` → **비소프트웨어 파이프라인** (Steps N1-N5)
@@ -123,6 +125,14 @@ acceptance criteria만 담습니다. held-out 명령(`evaluator-only/held-out.js
 
 각 태스크에 ID, 제목, 설명, 담당 에이전트(`subagent_type` 이름), 의존성, `repo_id`, `repo`를 부여해
 `$PIPELINE_DIR/tasks.json`에 씁니다. 의존성이 없는 태스크는 병렬로 실행됩니다.
+
+`bugfix`·`hotfix`는 재현 테스트를 첫 태스크로 두고 수정 태스크가 그것에 의존하게 합니다 — 함께 병렬로 돌면
+"수정 전에 실패했다"는 증거가 남지 않습니다. 재현 태스크는 테스트만 추가하고 제품 코드는 고치지 않습니다(Step 6
+프롬프트의 범위 밖에 적습니다). 그 태스크의 기대 결과는 새 테스트가 결함의 지금 잘못된 결과로 실패하는 것이므로,
+루트 세션은 그 실패 출력이 첨부되면 성공으로 기록하고 재시도하지 않습니다. 로컬 테스트로 재현하기 비싸면(통합 환경·운영 데이터 필요) 그 이유를 `requirement-analysis.md`에 적고
+재현 태스크를 두지 않습니다. 그때는 수정 뒤 루트 세션이 Step 2의 재현 절차를 직접 실행해 출력을
+`execution-log.json`에 남깁니다.
+
 `agent`는 `.pylon/builtin/agents/`의 내장 20개 이름 또는 `.pylon/agents/`의 사용자 에이전트 이름이어야 하며, tasks.json에 옛 이름이 남아 있으면 Step 6에서 `/pl:execute`(`.pylon/builtin/commands/pl-execute.md`)의 옛 에이전트 이름 매핑대로 바꿔 호출합니다:
 
 ```json

@@ -54,7 +54,7 @@ func TestCleanupClosesPipelineRunAfterCheckpoint(t *testing.T) {
 	if checkpoint < 0 || teardown < checkpoint {
 		t.Fatalf("cleanup must checkpoint before teardown: checkpoint=%d teardown=%d", checkpoint, teardown)
 	}
-	for _, required := range []string{"awaiting_cleanup", "git merge-base --is-ancestor", "headRefOid", "git worktree remove <path>"} {
+	for _, required := range []string{"awaiting_cleanup", "git merge-base --is-ancestor", "headRefOid", "^{tree}", "git worktree remove <path>"} {
 		if !strings.Contains(cleanup, required) {
 			t.Errorf("cleanup command is missing %q", required)
 		}
