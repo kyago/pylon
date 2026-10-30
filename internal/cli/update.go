@@ -196,6 +196,9 @@ func fetchRelease(target string) (*githubRelease, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if token := githubToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -203,6 +206,9 @@ func fetchRelease(target string) (*githubRelease, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("GitHub 토큰 인증 실패: GITHUB_TOKEN 또는 'gh auth token' 값을 확인하세요")
+	}
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("버전 %q을(를) 찾을 수 없습니다", target)
 	}
@@ -220,6 +226,19 @@ func fetchRelease(target string) (*githubRelease, error) {
 	}
 
 	return &release, nil
+}
+
+// githubToken returns GITHUB_TOKEN or `gh auth token` output; "" falls back to
+// the unauthenticated API, which GitHub rate-limits per public IP (60 req/h).
+func githubToken() string {
+	if t := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); t != "" {
+		return t
+	}
+	out, err := exec.Command("gh", "auth", "token", "--hostname", "github.com").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // buildAssetName returns the expected archive filename for the current platform.

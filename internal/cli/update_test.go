@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -209,4 +211,51 @@ func TestReplaceBinary(t *testing.T) {
 			t.Error("original binary content should be preserved on failure")
 		}
 	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestFetchReleaseAuthHeader(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake gh is a shell script")
+	}
+	ghDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ghDir, "gh"), []byte("#!/bin/sh\necho gh-token\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	noGhDir := t.TempDir()
+
+	orig := httpClient
+	t.Cleanup(func() { httpClient = orig })
+
+	tests := []struct {
+		name, env, path, want string
+	}{
+		{"GITHUB_TOKEN 우선", "env-token", ghDir, "Bearer env-token"},
+		{"gh auth token 대체", "", ghDir, "Bearer gh-token"},
+		{"토큰 없음", "", noGhDir, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITHUB_TOKEN", tt.env)
+			t.Setenv("PATH", tt.path)
+			var got string
+			httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				got = r.Header.Get("Authorization")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{},
+					Body:       io.NopCloser(strings.NewReader(`{"tag_name":"2026.1.1"}`)),
+				}, nil
+			})}
+			if _, err := fetchRelease("latest"); err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("Authorization = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
