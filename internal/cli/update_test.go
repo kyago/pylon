@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateVersion(t *testing.T) {
@@ -209,4 +212,129 @@ func TestReplaceBinary(t *testing.T) {
 			t.Error("original binary content should be preserved on failure")
 		}
 	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// ghOK mimics gh: a GITHUB_TOKEN in its env wins even when blank, and only the
+// pinned host returns the stored token.
+const ghOK = `if [ -n "${GITHUB_TOKEN+x}" ]; then echo "$GITHUB_TOKEN"; exit 0; fi
+[ "$*" = "auth token --hostname github.com" ] || exit 1
+echo gh-token
+`
+
+// useFakeGH replaces PATH with a dir holding only a gh script (none when body is "").
+func useFakeGH(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	if body != "" {
+		if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+}
+
+// stubGitHubAPI answers every request with status/header and records the Authorization header.
+func stubGitHubAPI(t *testing.T, status int, header http.Header) *string {
+	t.Helper()
+	orig := httpClient
+	t.Cleanup(func() { httpClient = orig })
+	auth := new(string)
+	httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		*auth = r.Header.Get("Authorization")
+		h := http.Header{}
+		for k, v := range header {
+			h[k] = v
+		}
+		return &http.Response{
+			StatusCode: status,
+			Status:     http.StatusText(status),
+			Header:     h,
+			Body:       io.NopCloser(strings.NewReader(`{"tag_name":"2026.1.1"}`)),
+		}, nil
+	})}
+	return auth
+}
+
+func TestFetchReleaseAuthHeader(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake gh is a shell script")
+	}
+	origTimeout := ghTokenTimeout
+	ghTokenTimeout = time.Second
+	t.Cleanup(func() { ghTokenTimeout = origTimeout })
+
+	tests := []struct {
+		name, env, gh, want string
+	}{
+		{"GITHUB_TOKEN 우선", "env-token", ghOK, "Bearer env-token"},
+		{"gh auth token 대체", "", ghOK, "Bearer gh-token"},
+		{"공백 GITHUB_TOKEN은 gh로 대체", "  ", ghOK, "Bearer gh-token"},
+		{"gh 없음", "", "", ""},
+		{"gh 미로그인", "", "echo 'no oauth token found' >&2\nexit 1\n", ""},
+		{"gh 응답 지연", "", "/bin/sleep 30\necho late-token\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITHUB_TOKEN", tt.env)
+			useFakeGH(t, tt.gh)
+			auth := stubGitHubAPI(t, http.StatusOK, nil)
+			start := time.Now()
+			if _, err := fetchRelease("latest"); err != nil {
+				t.Fatal(err)
+			}
+			if *auth != tt.want {
+				t.Errorf("Authorization = %q, want %q", *auth, tt.want)
+			}
+			if d := time.Since(start); d > 10*time.Second {
+				t.Errorf("fetchRelease took %v; gh timeout not applied", d)
+			}
+		})
+	}
+}
+
+func TestFetchReleaseErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake gh is a shell script")
+	}
+	limited := http.Header{"X-Ratelimit-Remaining": {"0"}}
+	tests := []struct {
+		name, env, gh string
+		status        int
+		header        http.Header
+		want, notWant []string
+	}{
+		{"401 GITHUB_TOKEN", "secret-env", "", http.StatusUnauthorized, nil,
+			[]string{"(GITHUB_TOKEN)", "unset"}, []string{"secret-env"}},
+		{"401 gh", "", ghOK, http.StatusUnauthorized, nil,
+			[]string{"(gh auth token)", "gh auth login"}, []string{"gh-token"}},
+		{"403 rate limit 토큰 없음", "", "", http.StatusForbidden, limited,
+			[]string{"rate limit", "한도가 늘어납니다"}, nil},
+		{"429 rate limit 토큰 있음", "env-token", "", http.StatusTooManyRequests, limited,
+			[]string{"rate limit"}, []string{"한도가 늘어납니다"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITHUB_TOKEN", tt.env)
+			useFakeGH(t, tt.gh)
+			stubGitHubAPI(t, tt.status, tt.header)
+			_, err := fetchRelease("latest")
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, s := range tt.want {
+				if !strings.Contains(err.Error(), s) {
+					t.Errorf("error %q missing %q", err, s)
+				}
+			}
+			for _, s := range tt.notWant {
+				if strings.Contains(err.Error(), s) {
+					t.Errorf("error %q must not contain %q", err, s)
+				}
+			}
+		})
+	}
 }
