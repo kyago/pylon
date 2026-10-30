@@ -12,16 +12,6 @@ BRANCH_ARG=""
 GIT_ROOT_ARG=""
 TERMINAL_PHASE=""
 
-# Keep the old positional branch/true form readable, but no longer trust the
-# boolean alone: a matching history manifest must exist before deletion.
-if [[ $# -gt 0 && "$1" != --* ]]; then
-  BRANCH_ARG="$1"
-  shift
-fi
-if [[ $# -gt 0 && "$1" == "true" ]]; then
-  TERMINAL_PHASE="completed"
-  shift
-fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch) BRANCH_ARG="${2:-}"; shift 2 ;;
@@ -74,18 +64,26 @@ pylon history validate "$ROOT_PIPELINE_ID/$TERMINAL_PHASE" >/dev/null \
   || die "terminal checkpoint integrity validation failed: $ROOT_PIPELINE_ID/$TERMINAL_PHASE"
 
 CLEANED=()
+KEPT=()
 
 # Remove worktrees associated with the branch (exact branch match via porcelain output)
 if [[ "$SCOPE" == "repo" ]]; then
   [[ -n "$REPO" ]] || die "repo pipeline status is missing repo"
+  [[ -n "$BRANCH" ]] || die "repo pipeline status is missing branch"
   resolve_git_root "${GIT_ROOT_ARG:-$REPO}"
   git -C "$GIT_ROOT" rev-parse --git-dir &>/dev/null || die "repo is not a git repository: $REPO"
 
+  # detached 워크트리는 branch 줄이 없으므로 grep 실패를 허용한다. 미커밋·추적 안 된 파일이 있는
+  # 워크트리는 git이 제거를 거부하므로(--force 없음) 남기고 kept로 보고한다.
   while IFS= read -r wt; do
     [[ -z "$wt" ]] && continue
-    wt_branch=$(git -C "$GIT_ROOT" worktree list --porcelain | grep -A2 "^worktree ${wt}$" | grep "^branch " | sed 's|^branch refs/heads/||')
+    wt_branch=$(git -C "$GIT_ROOT" worktree list --porcelain | grep -A2 "^worktree ${wt}$" | grep "^branch " | sed 's|^branch refs/heads/||' || true)
     if [[ "$wt_branch" == "$BRANCH" || "$wt_branch" == "$BRANCH/"* || "$wt_branch" == "$BRANCH--"* ]]; then
-      git -C "$GIT_ROOT" worktree remove "$wt" --force 2>/dev/null && CLEANED+=("worktree:$wt")
+      if git -C "$GIT_ROOT" worktree remove "$wt" 2>/dev/null; then
+        CLEANED+=("worktree:$wt")
+      else
+        KEPT+=("worktree:$wt")
+      fi
     fi
   done < <(git -C "$GIT_ROOT" worktree list --porcelain | grep "^worktree " | sed 's/^worktree //')
 
@@ -108,4 +106,5 @@ if [[ -n "$PIPELINE_DIR" && -d "$PIPELINE_DIR" ]]; then
 fi
 
 CLEANED_JSON=$(array_to_json ${CLEANED[@]+"${CLEANED[@]}"})
-jq -cn --argjson cleaned "$CLEANED_JSON" '{ok: true, cleaned: $cleaned}'
+KEPT_JSON=$(array_to_json ${KEPT[@]+"${KEPT[@]}"})
+jq -cn --argjson cleaned "$CLEANED_JSON" --argjson kept "$KEPT_JSON" '{ok: true, cleaned: $cleaned, kept: $kept}'

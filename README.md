@@ -157,13 +157,13 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
               │
               ├── 슬래시 커맨드 (.pylon/builtin/commands/)
               │   ├── /pl:pipeline ─ 전체 파이프라인
+              │   ├── /pl:cleanup ── 세션 마무리 (run 마감·메모리·브랜치 정리)
               │   ├── /pl:architect ─ 아키텍처 분석
               │   ├── /pl:breakdown ─ 태스크 분해
               │   ├── /pl:execute ─── 에이전트 병렬 실행
               │   ├── /pl:verify ─── 빌드/테스트/린트 검증
               │   ├── /pl:pr ─────── PR 생성
               │   ├── /pl:status ─── 파이프라인 상태 조회
-              │   ├── /pl:cancel ─── 취소 및 정리
               │   ├── /pl:index ─── 코드베이스 인덱싱
               │   ├── /pl:project-list ─ 프로젝트 목록 조회
               │   ├── /pl:add-project ─ 프로젝트 추가
@@ -202,9 +202,9 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
     ├─ [5] 루트 세션 태스크 분해 ─ tasks.json (repo 소유권 포함)
     ├─ [6] Agent 병렬 실행 ─────── execution-log.json
     ├─ [7] repo별 검증/PR ──────── verification.json + pr.json
-    ├─ [8] terminal checkpoint
-    ├─ [9] checkpoint 확인 cleanup
-    └─ 완료 보고
+    ├─ [8] PR (auto_pr 또는 대화로)
+    ├─ [9] 완료 보고 + 인계 ──── status: awaiting_cleanup
+    └─ 머지 후 /pl:cleanup ──── 메모리·도메인 지식 → terminal checkpoint → runtime·worktree·브랜치 정리
 ```
 
 ### Durable task runtime
@@ -244,14 +244,14 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
 
 | 커맨드 | 설명 |
 |--------|------|
-| `/pl:pipeline` | 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → PR) |
+| `/pl:pipeline` | 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → 검증). 끝나면 run을 `/pl:cleanup`에 넘김 |
+| `/pl:cleanup` | 세션 마무리 (파이프라인 사용 여부와 무관): 검증 근거, 메모리·도메인 지식 갱신, 머지된 파이프라인 run 마감, 머지된 브랜치·워크트리 정리 |
 | `/pl:architect` | 아키텍처 분석 단독 실행 |
 | `/pl:breakdown` | 태스크 분해 |
 | `/pl:execute` | 에이전트 병렬 실행 |
 | `/pl:verify` | 빌드/테스트/린트 교차 검증 |
 | `/pl:pr` | PR 생성 |
 | `/pl:status` | 파이프라인 상태 조회 (파일 기반) |
-| `/pl:cancel` | 파이프라인 취소 및 정리 |
 | `/pl:index` | 프로젝트 코드베이스 인덱싱 |
 | `/pl:project-list` | 프로젝트 목록 및 인덱싱 상태 조회 |
 | `/pl:add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
@@ -309,7 +309,6 @@ Go 바이너리가 제공하는 유틸리티 명령입니다. 루트 에이전�
 | `pylon add-agent <name>` | 커스텀 에이전트 추가 (`--domain`, `--role`) |
 | `pylon add-skill <name>` | 커스텀 스킬 추가 |
 | `pylon status` | 파이프라인 및 에이전트 상태 조회 |
-| `pylon cancel [pipeline-id]` | 진행 중인 파이프라인 취소 |
 | `pylon uninstall` | 워크스페이스 완전 제거 |
 
 ### 프로젝트 메모리

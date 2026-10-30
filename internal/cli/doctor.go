@@ -740,7 +740,7 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 // previously shipped version (legacyShipped) is deleted, anything else is moved aside
 // to <name>.pylon-bak. Retired built-ins (retiredBuiltins) get the same treatment,
 // matched against their shipped versions. Every other user file is never touched.
-// Shared by launch, init, doctor, sync-agents and cancel so they can never drift.
+// Shared by launch, init, doctor and sync-agents so they can never drift.
 func syncBuiltinResources(root string) (bool, []string, error) {
 	files, err := embeddedBuiltinFiles()
 	if err != nil {

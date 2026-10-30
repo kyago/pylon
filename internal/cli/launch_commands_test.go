@@ -24,13 +24,43 @@ func TestPipelineCommandUsesRepoOwnedBranches(t *testing.T) {
 		`--pipeline-dir "$ROOT_PIPELINE_DIR"`,
 		`--held-out-output "$REPO_PIPELINE_DIR/evaluator-only/held-out.json"`,
 		`.sub_pipelines[] | select(.repo == $repo) | .branch`,
-		`--terminal-phase completed`,
+		`.status = "awaiting_cleanup"`,
 		`pylon internal trajectory failure`,
 		`--terminal-phase failed`,
 	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("pipeline command is missing repo-owned lifecycle instruction %q", required)
 		}
+	}
+}
+
+// 파이프라인은 완료 시 run을 정리하지 않고 /pl:cleanup에 넘긴다. 정리는 cleanup이 완료 체크포인트를 만든 뒤에만
+// 한다 — 체크포인트 없이 runtime·워크트리를 지우지 않기 위해.
+func TestCleanupClosesPipelineRunAfterCheckpoint(t *testing.T) {
+	pipeline, err := embeddedCommands.ReadFile("commands/pl-pipeline.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(pipeline), `cleanup-pipeline.sh "$ROOT_PIPELINE_DIR" --terminal-phase completed`) {
+		t.Fatal("pipeline must hand the completed run to /pl:cleanup instead of tearing it down")
+	}
+	content, err := embeddedCommands.ReadFile("commands/pl-cleanup.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := string(content)
+	checkpoint := strings.Index(cleanup, `pylon history checkpoint --pipeline "$PIPELINE_ID" --phase "$PHASE"`)
+	teardown := strings.Index(cleanup, `cleanup-pipeline.sh "$ROOT_PIPELINE_DIR" --terminal-phase "$PHASE"`)
+	if checkpoint < 0 || teardown < checkpoint {
+		t.Fatalf("cleanup must checkpoint before teardown: checkpoint=%d teardown=%d", checkpoint, teardown)
+	}
+	for _, required := range []string{"awaiting_cleanup", "git merge-base --is-ancestor", "headRefOid", "git worktree remove <path>"} {
+		if !strings.Contains(cleanup, required) {
+			t.Errorf("cleanup command is missing %q", required)
+		}
+	}
+	if strings.Contains(cleanup, "git worktree remove --force") {
+		t.Error("cleanup must not force-remove user worktrees")
 	}
 }
 

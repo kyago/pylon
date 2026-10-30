@@ -82,7 +82,7 @@ CLAUDE.md, `.claude/agents/` symlinks into `.pylon/builtin/agents/` and `.pylon/
 `runLaunch` also appends `.claude/`, `CLAUDE.md`, `AGENTS.md`, `.pylon/logs/`, `.pylon/builtin/` to `.gitignore`.
 
 **Ownership contract for `.pylon/` resources** (`syncBuiltinResources` in `doctor.go`, shared by launch,
-init, doctor, sync-agents and cancel): the embedded agents, skills, commands, scripts and manual live in
+init, doctor and sync-agents): the embedded agents, skills, commands, scripts and manual live in
 **`.pylon/builtin/`** (git-ignored), which is pylon-owned. Every sync compares each file with the embeds,
 rewrites missing or differing ones (restoring script exec bits) and deletes files the embeds no longer have —
 never a wholesale wipe, so concurrent launches converge instead of racing and a damaged builtin heals on the
