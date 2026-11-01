@@ -58,6 +58,8 @@ REQUIREMENT_EOF
    {"criteria": [{"id": "AC-1", "description": "검사 가능한 완료 조건"}]}
    ```
    ID와 설명이 비어 있거나 ID가 중복되면 다음 단계로 진행하지 않습니다.
+   `selected_workflow`가 `bugfix`·`hotfix`면 첫 기준을 결함 재현으로 둡니다 — 재현 명령이나 절차, 지금 나오는
+   잘못된 결과, 수정 후 기대 결과. 수정은 이 재현이 기대 결과를 낼 때만 완료입니다.
 5. `detected_domain`에 따라 실행 절차를 따릅니다:
    - `software` → **소프트웨어 파이프라인** (Steps 3-9)
    - `research`, `content`, `marketing` → **비소프트웨어 파이프라인** (Steps N1-N5)
@@ -123,6 +125,21 @@ acceptance criteria만 담습니다. held-out 명령(`evaluator-only/held-out.js
 
 각 태스크에 ID, 제목, 설명, 담당 에이전트(`subagent_type` 이름), 의존성, `repo_id`, `repo`를 부여해
 `$PIPELINE_DIR/tasks.json`에 씁니다. 의존성이 없는 태스크는 병렬로 실행됩니다.
+
+`bugfix`·`hotfix`는 재현 테스트를 첫 태스크로 두고 수정 태스크가 그것에 의존하게 합니다 — 함께 병렬로 돌면
+"수정 전에 실패했다"는 증거가 남지 않습니다. 두 태스크는 격리 없이 순서대로 실행합니다(격리하면 수정 태스크의
+워크트리에 재현 테스트가 없습니다).
+
+- 재현 태스크는 테스트만 추가하고 제품 코드는 고치지 않습니다. Step 6 프롬프트의 범위 밖에 그렇게 적고, `## 검증`에
+  기대 결과로 "새 테스트가 결함의 지금 잘못된 결과로 실패한다"를 적습니다.
+- 루트 세션은 그 실패 출력이 첨부되면 성공으로 기록하고 재시도하지 않습니다. 새 테스트가 통과하면(재현 안 됨)
+  테스트를 지금 동작에 맞추지 않고, 수정 태스크로 넘어가지 않은 채 사용자에게 보고합니다.
+- 재현 실패 출력과 수정 뒤 통과 출력은 Step 7 task report의 `summary`에 원문으로 넣습니다(Step 7의 `task-summary.txt`).
+  evaluator는 `execution-log.json`을 보지 못합니다.
+- 로컬 테스트로 재현하기 비싸면(통합 환경·운영 데이터 필요) 그 이유를 `requirement-analysis.md`에 적고 재현
+  태스크를 두지 않습니다. 그때는 수정 뒤 루트 세션이 Step 2의 재현 절차를 직접 실행하고 그 출력을 같은 `summary`에
+  넣습니다.
+
 `agent`는 `.pylon/builtin/agents/`의 내장 20개 이름 또는 `.pylon/agents/`의 사용자 에이전트 이름이어야 하며, tasks.json에 옛 이름이 남아 있으면 Step 6에서 `/pl:execute`(`.pylon/builtin/commands/pl-execute.md`)의 옛 에이전트 이름 매핑대로 바꿔 호출합니다:
 
 ```json
@@ -205,29 +222,24 @@ REPO_PIPELINE_DIR=$(jq -r --arg repo "$REPO" '.sub_pipelines[] | select(.repo ==
 - 실패하면 원인을 고쳐 재실행합니다. 실제 출력 없이 다음 단계로 넘어가지 않습니다.
 
 deterministic gate가 통과하면 worker 자기 보고가 아니라 `execution-log.json`·변경 파일·verification
-evidence를 근거로 repo 단위 task report를 확정합니다:
+evidence를 근거로 repo 단위 task report를 확정합니다. `summary`에는 테스트 출력 원문이 들어가므로 따옴표 친 heredoc으로 파일에 쓰고 JSON은 `jq`로 만듭니다(따옴표·줄바꿈·`$`가
+그대로 남습니다):
 
 ```bash
-cat > "$REPO_PIPELINE_DIR/task-report-input.json" <<JSON
-{
-  "run_id": "$PIPELINE_ID",
-  "task_id": "repo-final-$REPO_ID",
-  "repo_id": "$REPO_ID",
-  "attempt": 1,
-  "status": "succeeded",
-  "summary": "repo 구현과 deterministic verification 완료",
-  "changed_files": ["repo-relative/path"],
-  "evidence_refs": ["verification.json", "change.diff"],
-  "verification": {
-    "criteria_digest": "$(jq -r '.criteria_digest' "$REPO_PIPELINE_DIR/verification.json")",
-    "deterministic_passed": true,
-    "evaluator_status": "pending",
-    "evidence_refs": ["verification.json"]
-  },
-  "hypotheses_rejected": [],
-  "remaining_unknowns": []
-}
-JSON
+cat > "$REPO_PIPELINE_DIR/task-summary.txt" <<'SUMMARY_EOF'
+repo 구현과 deterministic verification 완료
+<bugfix·hotfix면 재현 실패 출력과 수정 뒤 통과 출력 원문>
+SUMMARY_EOF
+jq -n \
+  --arg run_id "$PIPELINE_ID" \
+  --arg repo_id "$REPO_ID" \
+  --rawfile summary "$REPO_PIPELINE_DIR/task-summary.txt" \
+  --arg criteria_digest "$(jq -r '.criteria_digest' "$REPO_PIPELINE_DIR/verification.json")" \
+  '{run_id: $run_id, task_id: ("repo-final-" + $repo_id), repo_id: $repo_id, attempt: 1, status: "succeeded",
+    summary: $summary, changed_files: ["repo-relative/path"], evidence_refs: ["verification.json", "change.diff"],
+    verification: {criteria_digest: $criteria_digest, deterministic_passed: true, evaluator_status: "pending",
+                   evidence_refs: ["verification.json"]},
+    hypotheses_rejected: [], remaining_unknowns: []}' > "$REPO_PIPELINE_DIR/task-report-input.json"
 
 pylon internal trajectory task-report \
   --input "$REPO_PIPELINE_DIR/task-report-input.json" \
@@ -239,9 +251,15 @@ pylon internal trajectory task-report \
 deterministic gate가 통과한 repo만 새 evaluator context로 검토합니다. 구현 agent의 대화·memory·prompt 없이
 Pylon이 허용한 증거만 read-only bundle로 복사합니다:
 
+`verification.json`에 `tree`가 없으면 diff에서 추적되지 않은 새 파일(재현 테스트 등)이 빠집니다. 그때는 Step 7
+검증을 다시 실행합니다(포매터가 고친 파일은 두 번째 실행에서 그대로 남습니다). 그래도 `tree`가 없으면 evaluator로
+넘어가지 않고 멈춰 보고합니다:
+
 ```bash
 BASE_REVISION=$(jq -r '.base_revision' "$REPO_PIPELINE_DIR/status.json")
-git -C "$REPO" diff --binary "$BASE_REVISION" > "$REPO_PIPELINE_DIR/change.diff"
+# 검증한 tree와 비교해야 아직 추적되지 않는 새 파일(새 테스트 등)도 diff에 들어갑니다
+VERIFIED_TREE=$(jq -r '.tree // empty' "$REPO_PIPELINE_DIR/verification.json")
+git -C "$REPO" diff --binary "$BASE_REVISION" "$VERIFIED_TREE" > "$REPO_PIPELINE_DIR/change.diff"
 
 pylon internal evaluator prepare \
   --task-id "repo-final" \
@@ -278,7 +296,7 @@ evaluator PASS로 덮을 수 없습니다.
 두 gate가 모두 통과해야 해당 repo 태스크가 verified이며, 자연어 Agent 보고만으로 성공 처리하지 않습니다:
 
 ```bash
-DETERMINISTIC_PASSED=$(jq -r '.passed == true' "$REPO_PIPELINE_DIR/verification.json")
+DETERMINISTIC_PASSED=$(jq -r '.ok == true' "$REPO_PIPELINE_DIR/verification.json")
 EVALUATOR_PASSED=$(jq -r '.status == "pass"' "$REPO_PIPELINE_DIR/evaluator-result.json")
 VERIFIED=false
 [[ "$DETERMINISTIC_PASSED" == "true" && "$EVALUATOR_PASSED" == "true" ]] && VERIFIED=true
@@ -289,7 +307,10 @@ VERIFIED=false
 
 ### Step 8: PR 생성 (선택)
 
-`config.yml`의 `git.pr.auto_pr`이 `true`일 때만 실행합니다(기본 비활성, 수동 생성은 `/pl:pr`):
+`config.yml`의 `git.pr.auto_pr`이 `true`일 때만 실행합니다(기본 비활성, 수동 생성은 `/pl:pr`). repo마다
+`/pl:pr`(`.pylon/builtin/commands/pl-pr.md`) 2단계와 같은 대조 — 현재 브랜치, 검증 통과, 검증 tree와 브랜치 tree 일치,
+미커밋 변경 없음 — 를 통과한 repo만 PR을 만듭니다. 파이프라인은 커밋하지 않으므로 통과하지 못한 repo는 건너뛰고
+커밋·재검증 안내를 보고에 남깁니다:
 
 ```bash
 source .pylon/builtin/scripts/bash/common.sh
@@ -299,6 +320,14 @@ if [[ "$AUTO_PR" == "true" ]]; then
     REPO=$(echo "$SUB" | jq -r '.repo')
     REPO_PIPELINE_DIR=$(echo "$SUB" | jq -r '.pipeline_dir')
     TASK_BRANCH=$(echo "$SUB" | jq -r '.branch')
+    VERIFIED_TREE=$(jq -r 'select(.ok == true) | .tree // empty' "$REPO_PIPELINE_DIR/verification.json")
+    BRANCH_TREE=$(git -C "$REPO" rev-parse "$TASK_BRANCH^{tree}")
+    UNCOMMITTED=$(git -C "$REPO" status --porcelain -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees')
+    if [[ "$(git -C "$REPO" branch --show-current)" != "$TASK_BRANCH" || -z "$VERIFIED_TREE" \
+          || "$VERIFIED_TREE" != "$BRANCH_TREE" || -n "$UNCOMMITTED" ]]; then
+      echo "PR 보류: $REPO — 미커밋 변경이 있거나 검증한 tree가 $TASK_BRANCH와 다릅니다. 커밋 후 /pl:pr로 진행하세요" >&2
+      continue
+    fi
     .pylon/builtin/scripts/bash/create-pr.sh "$REPO_PIPELINE_DIR" --git-root "$REPO" \
       --branch "$TASK_BRANCH" --title "feat: [요구사항 요약]"
   done

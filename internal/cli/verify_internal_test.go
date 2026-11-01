@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -194,6 +195,220 @@ func TestInternalVerify_PassesWhenStepsSucceed(t *testing.T) {
 	if !result.OK || result.Skipped || len(result.Checks) != 1 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
+}
+
+// 검증은 커밋 전 작업 트리에서 돈다. 기록한 tree가 그 변경을 그대로 커밋한 결과와 같아야 cleanup·PR이
+// "검증한 코드 == 머지된 코드"를 대조할 수 있다.
+func TestInternalVerify_RecordsWorkingTreeMatchingLaterCommit(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	// 워크스페이스 루트 repo는 .pylon/을 추적한다. 추적 중인 항목은 index 상태 그대로 tree에 남아야 한다.
+	writeTreeTestFile(t, dir, ".pylon/config.yml", "version: 1\n")
+	git("add", ".pylon/config.yml")
+	git("commit", "-q", "-m", "init")
+	// Agent(isolation="worktree")가 저장소 안에 만든 워크트리는 프로젝트 변경이 아니다.
+	git("worktree", "add", "-q", filepath.Join(dir, ".claude", "worktrees", "agent"), "-b", "agent")
+	writeTreeTestFile(t, dir, "main.go", "package main\n")
+
+	result := runTreeTestVerify(t, dir, "true")
+	if status := git("status", "--porcelain"); !strings.Contains(status, "?? main.go") {
+		t.Fatalf("검증이 실제 index를 바꾸면 안 된다: %q", status)
+	}
+
+	git("add", "main.go")
+	git("commit", "-q", "-m", "fix")
+	if want := git("rev-parse", "HEAD^{tree}"); result.Tree != want {
+		t.Fatalf("tree = %q, 커밋한 tree %q와 같아야 한다(.pylon 제외)", result.Tree, want)
+	}
+
+	if tree := workingTree(t.TempDir()); tree != "" {
+		t.Fatalf("git 저장소가 아니면 tree는 비어야 한다: %q", tree)
+	}
+}
+
+func TestInternalVerify_OmitsTreeWhenStepEditsFiles(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	writeTreeTestFile(t, dir, "main.go", "package main\n")
+	git("add", "main.go")
+	git("commit", "-q", "-m", "init")
+
+	if result := runTreeTestVerify(t, dir, "echo // formatted >> main.go"); result.Tree != "" {
+		t.Fatalf("검증 단계가 파일을 고치면 검사한 tree가 하나로 정해지지 않으므로 비워야 한다: %q", result.Tree)
+	}
+}
+
+// 검증이 새로 만든 파일(coverage.out 등)은 검사 입력이 아니다. 검증 전 tree를 남겨야 Step 7B diff가 새 테스트를 담는다.
+func TestInternalVerify_KeepsTreeWhenStepOnlyAddsFiles(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	writeTreeTestFile(t, dir, "main.go", "package main\n")
+	git("add", "main.go")
+	git("commit", "-q", "-m", "init")
+	writeTreeTestFile(t, dir, "repro_test.go", "package main\n")
+
+	result := runTreeTestVerify(t, dir, "echo cover > coverage.out")
+	git("add", "repro_test.go")
+	git("commit", "-q", "-m", "repro")
+	if want := git("rev-parse", "HEAD^{tree}"); result.Tree != want {
+		t.Fatalf("tree = %q, 검증 전 작업 트리(새 테스트 포함, coverage.out 제외) %q와 같아야 한다", result.Tree, want)
+	}
+}
+
+// 기록한 tree가 검증한 내용과 다른 커밋에 일치하면 안 된다(false match).
+func TestWorkingTree_NoFalseMatch(t *testing.T) {
+	t.Run("같은 크기 수정이 index와 같은 초에 일어나도 새 내용을 해시한다", func(t *testing.T) {
+		dir, git := newTreeTestRepo(t)
+		git("config", "core.checkStat", "minimal")
+		git("config", "core.trustCtime", "false")
+		past := time.Now().Add(-time.Hour).Truncate(time.Second)
+		file := writeTreeTestFile(t, dir, "limit.go", "a\n")
+		if err := os.Chtimes(file, past, past); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "limit.go")
+		git("commit", "-q", "-m", "init")
+		oldTree := git("rev-parse", "HEAD^{tree}")
+		writeTreeTestFile(t, dir, "limit.go", "b\n")
+		for _, path := range []string{file, filepath.Join(dir, ".git", "index")} {
+			if err := os.Chtimes(path, past, past); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		tree := workingTree(dir)
+		git("add", "limit.go")
+		git("commit", "-q", "-m", "fix")
+		if tree == oldTree || tree != git("rev-parse", "HEAD^{tree}") {
+			t.Fatalf("racy 수정을 놓쳤다: tree=%q old=%q", tree, oldTree)
+		}
+	})
+
+	// 검사는 디스크의 내용으로 돈다. index 표시로 숨긴 수정도 tree에 담아야 한다.
+	for _, mark := range []string{"--assume-unchanged", "--skip-worktree"} {
+		t.Run(mark+"로 숨긴 수정도 담는다", func(t *testing.T) {
+			dir, git := newTreeTestRepo(t)
+			writeTreeTestFile(t, dir, "conf.go", "old\n")
+			git("add", "conf.go")
+			git("commit", "-q", "-m", "init")
+			git("update-index", mark, "conf.go")
+			writeTreeTestFile(t, dir, "conf.go", "new\n")
+
+			tree := workingTree(dir)
+			if flags := git("ls-files", "-v", "conf.go"); flags[0] == 'H' {
+				t.Fatalf("검증이 실제 index의 표시를 지우면 안 된다: %q", flags)
+			}
+			git("update-index", "--no"+strings.TrimPrefix(mark, "-"), "conf.go")
+			git("add", "conf.go")
+			git("commit", "-q", "-m", "fix")
+			if want := git("rev-parse", "HEAD^{tree}"); tree != want {
+				t.Fatalf("tree = %q, 숨긴 수정을 커밋한 tree %q와 같아야 한다", tree, want)
+			}
+		})
+	}
+
+	t.Run("내장 저장소 안의 수정이 있으면 비운다", func(t *testing.T) {
+		dir, git := newTreeTestRepo(t)
+		git("commit", "-q", "--allow-empty", "-m", "init")
+		inner := filepath.Join(dir, "lib")
+		git("init", "-q", inner)
+		writeTreeTestFile(t, dir, "lib/lib.go", "package lib\n")
+		git("-C", inner, "add", "lib.go")
+		git("-C", inner, "commit", "-q", "-m", "lib")
+		writeTreeTestFile(t, dir, "lib/lib.go", "package lib // edited\n")
+
+		if tree := workingTree(dir); tree != "" {
+			t.Fatalf("gitlink는 내장 저장소의 미커밋 수정을 담지 못하므로 비워야 한다: %q", tree)
+		}
+
+		// 추적 안 된 파일(node_modules, 빌드 결과)만 있으면 수정이 아니다.
+		git("-C", inner, "checkout", "-q", "--", "lib.go")
+		writeTreeTestFile(t, dir, "lib/build.out", "bin\n")
+		if tree := workingTree(dir); tree == "" {
+			t.Fatal("내장 저장소에 추적 안 된 파일만 있으면 tree를 기록해야 한다")
+		}
+	})
+
+	// stage만 되고 커밋 안 된 .pylon 수정은 브랜치에 없다. 브랜치 tree와 맞으면 /pl:pr이 그대로 통과시킨다(fail-open).
+	t.Run("stage된 .pylon 수정은 커밋된 tree와 일치하지 않는다", func(t *testing.T) {
+		dir, git := newTreeTestRepo(t)
+		writeTreeTestFile(t, dir, ".pylon/config.yml", "old\n")
+		git("add", ".pylon")
+		git("commit", "-q", "-m", "init")
+		writeTreeTestFile(t, dir, ".pylon/config.yml", "new\n")
+		git("add", ".pylon")
+
+		if tree := workingTree(dir); tree == "" || tree == git("rev-parse", "HEAD^{tree}") {
+			t.Fatalf("stage된 .pylon 수정이 tree에 남아야 한다: %q", tree)
+		}
+	})
+}
+
+// pl-pr.md와 pl-pipeline.md의 `git status`는 tree와 같은 범위를 봐야 미커밋 판정과 tree 대조가 어긋나지 않는다.
+func TestPRCommandsUseTreePathspec(t *testing.T) {
+	quoted := make([]string, len(treePathspec))
+	for i, spec := range treePathspec {
+		quoted[i] = "'" + spec + "'"
+	}
+	want := "status --porcelain -- " + strings.Join(quoted, " ")
+	for _, name := range []string{"commands/pl-pr.md", "commands/pl-pipeline.md"} {
+		content, err := embeddedCommands.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), want) {
+			t.Errorf("%s의 git status가 treePathspec과 다르다: %q 필요", name, want)
+		}
+	}
+}
+
+func workingTree(workDir string) string {
+	snapshots, closeSnapshots := newTreeSnapshots(workDir)
+	defer closeSnapshots()
+	return snapshots.tree()
+}
+
+func newTreeTestRepo(t *testing.T) (string, func(args ...string) string) {
+	t.Helper()
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	return dir, git
+}
+
+func writeTreeTestFile(t *testing.T, dir, rel, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// runTreeTestVerify runs `pylon internal verify` with one build step; .pylon/verify.yml stays untracked.
+func runTreeTestVerify(t *testing.T, dir, command string) verificationResult {
+	t.Helper()
+	configPath := writeTreeTestFile(t, dir, ".pylon/verify.yml", fmt.Sprintf("build:\n  command: %q\n  timeout: 30s\n", command))
+	cmd := newInternalVerifyCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--workdir", dir, "--config", configPath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("verify failed: %v (%s)", err, out.String())
+	}
+	var result verificationResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out.String())), &result); err != nil {
+		t.Fatalf("출력 파싱 실패: %v (%s)", err, out.String())
+	}
+	return result
 }
 
 func TestInternalVerify_UsesFrozenSnapshotAndRejectsLiveConfigChange(t *testing.T) {

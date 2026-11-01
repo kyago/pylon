@@ -8,12 +8,13 @@ Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `py
 
 | 도구 | 용도 | 설치 |
 |------|------|------|
-| **Go** 1.24+ | 빌드 | https://go.dev/dl/ |
 | **git** | 버전 관리 | 기본 설치 |
 | **gh** | GitHub PR 생성 | `brew install gh` |
-| **Claude Code** | AI 에이전트 백엔드 | https://docs.anthropic.com/en/docs/claude-code |
+| **jq** | 파이프라인 스크립트의 JSON 처리 | `brew install jq` |
+| **Claude Code** 또는 **Codex** | AI 에이전트 provider (하나 이상) | https://docs.anthropic.com/en/docs/claude-code · https://github.com/openai/codex |
+| **Go** 1.24+ | `go install`·소스 빌드 시에만 | https://go.dev/dl/ |
 
-`pylon doctor`로 설치 상태를 확인할 수 있습니다.
+`pylon doctor`로 git·gh·provider 설치 상태를 확인할 수 있습니다 (jq는 파이프라인 스크립트가 실행 시 확인).
 
 ## 설치
 
@@ -73,6 +74,9 @@ pylon update 2026.6.3     # 특정 버전 설치 (CalVer)
 `pylon doctor`를 실행하여 워크스페이스의 내장 리소스(에이전트/스킬/커맨드/스크립트)와 설정
 기본값을 최신 상태로 동기화합니다.
 
+릴리스 조회에는 `GITHUB_TOKEN`, 없으면 `gh auth token` 값을 사용합니다. 둘 다 없으면 토큰 없이
+조회하며 GitHub API rate limit(공인 IP 기준)에 걸릴 수 있습니다.
+
 > Windows는 실행 중인 바이너리 자동 교체를 지원하지 않으므로 Releases에서 수동으로 받으세요.
 
 ### 소스 빌드로 설치한 경우
@@ -116,7 +120,7 @@ pylon add-project https://github.com/user/my-app.git
 pylon
 ```
 
-Permission Mode를 선택하면 Claude Code TUI 세션이 시작됩니다.
+Permission Mode를 선택하면 Claude Code TUI 세션이 시작됩니다 (Codex는 `workspace-write`/`read-only`/`danger-full-access` 중 Sandbox를 고릅니다).
 
 ```
 Permission Mode 선택
@@ -155,7 +159,7 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
 ```
 사용자 ←→ Claude Code TUI (LLM-as-Orchestrator)
               │
-              ├── 슬래시 커맨드 (.pylon/builtin/commands/)
+              ├── 슬래시 커맨드 (.pylon/builtin/commands/ + Go 내장 index·project-list)
               │   ├── /pl:pipeline ─ 전체 파이프라인
               │   ├── /pl:cleanup ── 세션 마무리 (run 마감·메모리·브랜치 정리)
               │   ├── /pl:architect ─ 아키텍처 분석
@@ -187,7 +191,7 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 | **AGENTS.md** | 루트 에이전트 운영 가이드. pylon 블록(매뉴얼 + 워크스페이스 정보)은 실행마다 재생성되고, 블록 밖은 사용자 규칙 영역 (`CLAUDE.md`는 `@AGENTS.md` import 마커) |
 | **슬래시 커맨드** | AI가 사용하는 내부 스킬 (`.pylon/builtin/commands/`, 사용자 추가분은 `.pylon/commands/`) |
 | **파이프라인** | 파일 기반 워크플로우 (산출물 존재 = 단계 완료) |
-| **task runtime** | append-only event와 lease/fencing으로 재시작 가능한 태스크 제어 상태 |
+| **검증 게이트** | 고정된 criteria snapshot으로 돌린 deterministic 검증 + 격리 evaluator 판정이 모두 통과해야 완료 |
 | **프로젝트 메모리** | `.pylon/memory/` 마크다운 파일 기반 지식 저장소 (git 추적) |
 
 ### 파이프라인 흐름
@@ -201,30 +205,36 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
     ├─ [4] repo sub-pipeline ───── repo별 branch + base revision
     ├─ [5] 루트 세션 태스크 분해 ─ tasks.json (repo 소유권 포함)
     ├─ [6] Agent 병렬 실행 ─────── execution-log.json
-    ├─ [7] repo별 검증/PR ──────── verification.json + pr.json
-    ├─ [8] PR (auto_pr 또는 대화로)
+    ├─ [7] repo별 검증 ─────────── verification.json + task-report.json
+    ├─ [7B] 격리 evaluator ─────── evaluator-result.json (두 gate 통과 = verified)
+    ├─ [8] PR (git.pr.auto_pr=true일 때만, 아니면 /pl:pr)
     ├─ [9] 완료 보고 + 인계 ──── status: awaiting_cleanup
     └─ 머지 후 /pl:cleanup ──── 메모리·도메인 지식 → terminal checkpoint → runtime·worktree·브랜치 정리
 ```
 
-### Durable task runtime
+bugfix·hotfix는 결함 재현을 첫 수용 기준으로 두고, 재현 테스트(수정 전 실패)를 첫 태스크로 실행한 뒤 수정
+태스크가 그것에 의존합니다. 리서치·콘텐츠·마케팅은 조사 → (전략) → 초안 → 팩트 체크·편집 → 수정 루프(최대 3회)
+→ 최종본 흐름을 따릅니다.
 
-`.pylon/runtime/<run-id>/events.jsonl`은 태스크 상태 전이의 source of truth입니다. 각 이벤트가
-먼저 append·fsync된 뒤 `tasks/<task-id>/state.json`과 attempt별 `lease.json`, `provider.json`,
-`result.json`이 materialize됩니다. 프로세스가 이벤트 기록 직후 종료되어도 replay가 파생 상태를
-복구하며, 커널 file lock은 비정상 종료 시 자동 해제됩니다.
+### 검증 게이트
 
-태스크는 `pending → ready → claimed → running → verifying → succeeded` 순서로 진행합니다.
-worker 성공 보고만으로는 완료되지 않으며 deterministic verification과 evaluator가 모두 통과해야
-`succeeded`가 됩니다. lease가 만료된 실행은 `interrupted`로 전환되고, provider 세션을 이어가는
-`resume`은 attempt를 유지하는 반면 새 작업을 시작하는 `retry`는 attempt를 증가시킵니다. 두 경우
-모두 fencing token을 교체하여 이전 worker의 늦은 쓰기를 거부합니다.
+파이프라인 상태는 `.pylon/runtime/<pipeline-id>/`의 산출물 파일이 전부입니다. root run은 요구사항과 repo
+목록을 묶는 논리 run이고(branch 없음), branch·base revision·worktree·검증·PR은 repo별 sub-pipeline
+(`repos/<repo-id>/`)이 소유합니다. 재실행하면 이미 있는 산출물은 건너뛰고 `status.json`의 마지막 단계부터
+재개합니다. worker의 "완료" 보고만으로는 성공 처리하지 않으며, 아래 두 gate가 모두 통과해야 태스크가
+`execution-log.json`에 `verified: true`로 기록됩니다.
 
 repo worker가 시작되기 전 `.pylon/verify.yml`과 정규화된 acceptance criteria는 repo runtime의
 `criteria.json`으로 snapshot되고 digest가 repo `status.json`에 결합됩니다. deterministic verifier는
 live 설정이 아니라 snapshot 명령만 실행합니다. snapshot/manifest가 달라지면 명령 실행 전 실패하고,
 live `verify.yml`만 변경되면 frozen 명령을 실행해 증거를 남긴 뒤 전체 결과를 fail-closed합니다.
-`verify.yml`의 `held_out` 명령도 snapshot에 포함되어 일반 build/test/lint 뒤에 실행됩니다.
+`verify.yml`의 `held_out` 명령은 별도 `evaluator-only/held-out.json`으로 snapshot되어 일반 build/test/lint 뒤에
+실행되며, 그 경로·내용은 구현 agent 프롬프트나 evaluator bundle에 전달하지 않습니다.
+
+`verification.json`에는 검증한 작업 트리의 git tree 해시(`tree`)가 기록됩니다. 미추적 파일과 assume-unchanged·
+skip-worktree로 숨긴 수정도 디스크 내용대로 담고, 추적 중인 `.pylon/` 파일은 index(stage) 상태로 담습니다. 검증 단계가
+기존 파일을 고치면 생략되고, 새 파일(coverage 등)만 만들면 검증 전 tree가 유지됩니다. `/pl:pr`은 이 tree를 브랜치 tree와 대조해 미커밋이면 커밋을 안내하고 다르면
+재검증한 뒤 PR을 만들며, `/pl:cleanup`은 tree가 머지된 PR head와 같을 때만 그 검증 결과를 근거로 씁니다.
 
 deterministic gate가 통과하면 Pylon은 requirement, criteria snapshot, verification output, diff, task report만
 별도 read-only evaluator bundle로 복사합니다. 결정 evaluator는 `Read/Grep/Glob`과 structured output만
@@ -232,15 +242,17 @@ deterministic gate가 통과하면 Pylon은 requirement, criteria snapshot, veri
 request digest와 모든 criterion coverage를 검증한 뒤 `evaluator-result.json`으로 기록합니다. `explorer`,
 `analyst`, `researcher`는 조사 역할이며 최종 PASS/FAIL을 소유하지 않습니다.
 
-각 task attempt는 provider 자연어 응답 대신 digest가 포함된 `task-report.json`을 남깁니다. 보고서에는
-provider/capability, 변경 파일, 검증 증거, 배제된 가설, 남은 불확실성이 포함됩니다. terminal failure는
+deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가 포함된 `task-report.json`을 남깁니다
+(`pylon internal trajectory task-report`). 보고서에는 provider/capability, 변경 파일, 검증 증거, 배제된 가설,
+남은 불확실성이 포함됩니다. terminal failure는
 `failure-record.json`을 먼저 원자적으로 기록하고 status manifest에 결합한 뒤 `failed` history checkpoint를
 생성합니다. failed checkpoint가 실패하면 cleanup이 `preserved`로 고정되어 runtime, worktree, 로그가
 삭제되지 않습니다.
 
 ## 슬래시 커맨드
 
-TUI 세션 내에서 AI가 사용하는 내부 스킬입니다:
+TUI 세션 내에서 AI가 사용하는 내부 스킬입니다. Codex에서는 같은 커맨드가 `$pl-<이름>` 스킬로 생성됩니다
+(`/pl:index`·`/pl:project-list`는 Claude Code 전용).
 
 | 커맨드 | 설명 |
 |--------|------|
@@ -301,15 +313,15 @@ Go 바이너리가 제공하는 유틸리티 명령입니다. 루트 에이전�
 |--------|------|
 | `pylon` | 선택된 interactive provider 세션 실행 (기본 동작) |
 | `pylon init` | 워크스페이스 초기화 |
-| `pylon doctor` | 필수 도구(git/gh/claude) 확인 + 워크스페이스 리소스·설정 동기화 (`--fix-excludes`) |
+| `pylon doctor` | 필수 도구(git/gh/provider) 확인 + 워크스페이스 리소스·훅·설정 동기화 (`--fix-excludes`, `--yes`로 비인터랙티브) |
 | `pylon version` | 버전 정보 |
-| `pylon update [version]` | 최신/특정 릴리스 바이너리로 자체 업데이트 |
-| `pylon add-project <url>` | 프로젝트를 워크스페이스에 clone하여 추가 |
+| `pylon update [version]` | 최신/특정 릴리스 바이너리로 자체 업데이트 후 `doctor` 실행 |
+| `pylon add-project <url>` | 프로젝트를 워크스페이스에 clone하여 추가 (`--name`, `--force`로 재clone, `--skip-clone`으로 기존 디렉터리에 `.pylon/`만 생성) |
 | `pylon delete-project <name>` | 프로젝트 등록 해제 (`--purge`로 디렉터리까지 삭제, `--force`로 확인 생략) |
 | `pylon add-agent <name>` | 커스텀 에이전트 추가 (`--domain`, `--role`) |
 | `pylon add-skill <name>` | 커스텀 스킬 추가 |
 | `pylon status` | 파이프라인 및 에이전트 상태 조회 |
-| `pylon uninstall` | 워크스페이스 완전 제거 |
+| `pylon uninstall` | 워크스페이스 완전 제거 (`--dry-run`, `--force`, `--remove-projects`, `--remove-binary`) |
 
 ### 프로젝트 메모리
 
@@ -320,6 +332,7 @@ pylon mem list --project <name>                        # 메모리 목록
 pylon mem search --project <name> --query "검색어"      # 토큰 매칭 검색
 pylon mem store --project <name> --key "키" --content "내용"  # 저장, 같은 key면 갱신 (--category 지정 가능)
 pylon mem delete --project <name> --key "키"            # 삭제 (--category, --dry-run 지원)
+pylon mem prune --category <category>                 # 오염 항목 일괄 삭제 (--project 생략 시 전체, --dry-run 지원)
 ```
 
 ### 동기화
@@ -334,66 +347,29 @@ pylon mem delete --project <name> --key "키"            # 삭제 (--category, -
 Pylon은 `.pylon/history/pipelines/<pipeline-id>/<phase>/` 디렉토리 스냅샷에 선별된 작업 이력을
 기록합니다. 파이프라인마다 planned, executed, completed/cancelled/failed 체크포인트를 생성할 수 있습니다.
 
-terminal snapshot은 criteria, deterministic verification, evaluator verdict, task reports, attempt state,
-provider handle/capability evidence, failure records와 rejected hypotheses를 함께 보존합니다. 대용량 원본 로그는
-복사하지 않아도 되지만 task/failure report의 안정적인 상대 경로와 digest로 참조합니다.
-
-### Acceptance corpus
-
-Pylon에는 multi-repo, resume/retry, stale fencing, partial-write replay, criteria tampering, live verify 변경,
-held-out failure, evaluator write boundary, cleanup gate, rejected hypotheses, curator approval을 다루는 13개 provider-neutral
-fixture가 내장되어 있습니다. driver는 fixture JSON을 stdin으로 받고 `PYLON_CORPUS_FIXTURE_ID`와
-`PYLON_CORPUS_WORKDIR` 환경 변수를 사용해 격리 실행한 뒤 기계적 outcome JSON 하나를 stdout으로 반환합니다.
-provider 이름과 자연어 `narrative`는 판정에 사용되지 않습니다.
-
-```bash
-# fixture 목록
-pylon internal corpus list
-
-# provider/session driver 실행
-pylon internal corpus run --driver ./my-corpus-driver --output corpus-report.json
-
-# 이전에 기록한 <fixture-id>.json 결과 재검증
-pylon internal corpus run --outcomes ./recorded-outcomes --output corpus-report.json
-```
-
-각 fixture는 verdict, run/task 상태, 필수 artifact/event, 금지 mutation, cleanup 및 runtime 보존 여부만
-비교합니다. 따라서 두 provider의 설명 문구가 달라도 동일한 상태·증거를 만들면 같은 판정을 받습니다.
-
-### Native curator
-
-curator는 active run이나 evaluator가 미확정인 run을 읽지 않습니다. completed/failed checkpoint의 artifact와
-combined digest를 다시 검증하고, criteria·verification·evaluator·task report·failure collection이 모두 확정된
-경우에만 `.pylon/learning/candidates/<candidate-id>/` 아래에 후보를 만듭니다.
-
-```bash
-cat > proposal.json <<'JSON'
-{
-  "type": "memory",
-  "title": "Preserve failed verification evidence",
-  "summary": "실패 cleanup 전에 evidence reference를 보존한다.",
-  "rationale": "finalized run에서 재현된 운영 위험이다.",
-  "target_files": [".pylon/memory/app/learning/cleanup.md"],
-  "evidence_refs": ["failure-records-summary.json"],
-  "regression_fixtures": ["cleanup-terminal-checkpoint-gate"]
-}
-JSON
-
-pylon internal curator propose --checkpoint <pipeline-id>/failed --input proposal.json
-pylon internal curator review --candidate <candidate-id> --decision approve --reason "evidence reviewed"
-pylon internal curator gate --candidate <candidate-id> --report corpus-report.json
-```
-
-후보의 proposal/evidence/source/target 파일 digest는 `status.json`에 고정되어 review/gate 전에 재검증됩니다.
-승인과 regression gate는 candidate 상태만 변경하며 active memory, skill, agent prompt, pipeline rule을 자동으로
-수정하지 않습니다. 실제 적용은 사용자가 candidate diff를 검토한 뒤 별도 commit 또는 PR로 수행합니다.
+terminal snapshot은 criteria, deterministic verification, evaluator verdict, task reports, failure records와
+rejected hypotheses의 요약을 함께 보존합니다. 대용량 원본 로그는 복사하지 않고 task/failure report의 안정적인
+상대 경로와 digest로 참조합니다.
 
 ```bash
 pylon history log --pipeline <pipeline-id>
 pylon history show <pipeline-id>/<phase>
 pylon history diff <from-ref> <to-ref>
 pylon history export <pipeline-id>/<phase> --output <new-directory>
+pylon history validate <pipeline-id>/<phase>       # 체크포인트 artifact 무결성 확인
+pylon history checkpoint --pipeline <id> --phase <planned|executed|completed|cancelled|failed>
 ```
+
+### 파이프라인 내부 명령
+
+`/pl:*` 커맨드가 검증 게이트를 기록할 때 호출하는 명령입니다 (`pylon internal --help`):
+
+| 명령어 | 설명 |
+|--------|------|
+| `pylon internal criteria snapshot` | `verify.yml` + acceptance criteria를 `criteria.json`으로 동결하고 digest를 manifest에 결합 |
+| `pylon internal verify` | snapshot 명령으로 deterministic 검증 실행 → `verification.json` (`tree` 포함) |
+| `pylon internal evaluator prepare\|record` | 격리 evaluator bundle 생성 / 판정 검증·기록 |
+| `pylon internal trajectory task-report\|failure` | task report / failure record 기록 (failure는 `failed` 체크포인트까지) |
 
 모든 명령에 `--json` 플래그를 추가하면 JSON 형식으로 출력됩니다.
 
@@ -403,7 +379,7 @@ pylon history export <pipeline-id>/<phase> --output <new-directory>
 workspace/
 ├── .pylon/                    # 소스 오브 트루스 (git 추적)
 │   ├── config.yml             # 워크스페이스 설정
-│   ├── builtin/               # 내장 리소스 (git 무시, 버전이 바뀌면 통째로 재생성)
+│   ├── builtin/               # 내장 리소스 (git 무시, 실행·doctor마다 파일 단위로 임베드와 동기화)
 │   │   ├── agents/            # 에이전트 정의 (20종)
 │   │   ├── skills/            # 에이전트 스킬
 │   │   ├── commands/          # 파이프라인 슬래시 커맨드 (pl-pipeline.md, ...)
@@ -417,10 +393,9 @@ workspace/
 │   ├── memory/                # 프로젝트 메모리 (git 추적)
 │   │   └── {project}/          # 프로젝트별 <category>/<slug>.md + INDEX.md
 │   ├── runtime/               # (git 무시)
-│   │   ├── {pipeline-id}/     # 논리 root pipeline 산출물
-│   │   │   ├── events.jsonl   # durable task 상태 전이 source of truth
-│   │   │   ├── tasks/         # task spec/state + attempt별 lease/provider/result
-│   │   │   └── repos/         # repo별 branch/base/criteria/verification/PR 상태
+│   │   ├── {pipeline-id}/     # 논리 root pipeline 산출물 (requirement.md, tasks.json, execution-log.json, status.json ...)
+│   │   │   └── repos/{repo-id}/  # repo sub-pipeline: criteria.json, verification.json, task-report.json,
+│   │   │                         #   evaluator-input/, evaluator-result.json, pr.json, status.json
 │   │   └── sessions/          # 세션 상태
 │   ├── conversations/         # 대화 이력 (git 무시)
 │   └── history/               # 파일 기반 작업 이력 (git 무시)
@@ -428,8 +403,10 @@ workspace/
 │
 ├── .claude/                   # 동적 생성 (git 무시)
 │   ├── agents/                # .pylon/builtin/agents/, .pylon/agents/ 심링크
-│   ├── commands/              # 슬래시 커맨드 심링크
+│   ├── commands/              # 슬래시 커맨드 (내장 + .pylon/commands/에서 생성)
 │   └── settings.json          # Claude Code hooks 설정
+│
+├── .agents/skills/pl-*/       # Codex용 $pl-* 스킬 (동적 생성, git 무시)
 │
 ├── AGENTS.md                  # 운영 가이드 (pylon 블록은 재생성, 블록 밖은 사용자 소유)
 ├── CLAUDE.md                  # @AGENTS.md import 마커 (동적 생성)
@@ -473,6 +450,7 @@ git:
     enabled: true              # git worktree 격리
     auto_cleanup: true         # 완료 후 자동 정리
   pr:
+    auto_pr: false             # true면 /pl:pipeline이 검증 후 PR까지 생성 (기본: /pl:pr로 수동)
     draft: false
     reviewers: []
 
@@ -494,8 +472,12 @@ skills:
   progressive_disclosure: true # 메타데이터만 주입(true) vs 전체 본문 주입(false)
 ```
 
-기존 `runtime.backend`와 agent frontmatter의 `backend`는 마이그레이션 기간 동안 deprecated alias로
-읽지만 자동으로 파일을 다시 쓰지는 않습니다. `provider`가 함께 있으면 `provider`가 우선합니다.
+기존 `runtime.backend`와 agent frontmatter의 `backend`는 deprecated alias로 읽으며, `provider`가 함께 있으면
+`provider`가 우선합니다. `pylon doctor`는 `config.yml`의 `runtime.backend`를 `runtime.provider`로 바꿔 씁니다.
+
+`runtime.execution_mode`, `routing`, `wiki`, `workflow`, `git.branch_prefix`, `git.auto_push`, `git.worktree`,
+`git.pr.draft`/`reviewers`는 스키마와 기본값만 있고
+현재 이를 읽는 코드가 없습니다 (작업 브랜치는 `task-<pipeline-id>-<repo-id>`, base는 초기화 시점의 현재 브랜치).
 
 `runtime`의 `effort`/`model`/`env`(비어 있으면 provider 기본값)를 제외한 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 전체 필드와 기본값을 보여주며,
 명시하지 않은 필드는 로드 시 코드 기본값으로 자동 채워집니다. `pylon init`이 처음 생성하는 `config.yml`은
@@ -503,6 +485,8 @@ skills:
 `pylon doctor`가 누락된 필드를 감지해 기본값으로 동기화합니다.
 
 ## 개발
+
+아키텍처·규약 등 개발 가이드는 [AGENTS.md](AGENTS.md)에 있습니다 (`CLAUDE.md`는 이를 import).
 
 ```bash
 make build       # 빌드
@@ -520,7 +504,7 @@ make clean       # 정리
 | TUI 컴포넌트 | charmbracelet/huh |
 | 프로세스 실행 | syscall.Exec (최소 런처) + Claude Code Agent 도구 (서브에이전트) |
 | 파이프라인 작업 | Shell Scripts (원자적 작업) |
-| AI 백엔드 | Claude Code CLI |
+| AI 백엔드 | Claude Code CLI, Codex CLI (provider adapter) |
 | 저장소 | 마크다운/JSON 파일 (.pylon/memory, .pylon/history) |
 | 메모리 검색 | 토큰 매칭 + INDEX.md 주입 |
 | 작업 이력 | 디렉토리 스냅샷 (.pylon/history/pipelines) |
