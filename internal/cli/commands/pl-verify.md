@@ -19,9 +19,10 @@ description: "빌드/테스트/린트 검증 실행"
 ```
 
 검증 결과의 `tree`는 깨끗한 작업 트리에서 검증한 HEAD에만 기록됩니다. PR·cleanup의 근거로 쓸 결과라면 변경을
-먼저 커밋합니다. 미커밋 변경이 있으면 검증은 돌지만 `tree` 대신 `tree_reason`이 남습니다. 검증 명령이 새로 만든
-추적 안 된 파일은 결과 파일 옆 `verify-artifacts/`(결과 파일이 없으면 `<repo>/.pylon/runtime/verify-artifacts/`)로
-옮겨지고 마지막 검증분만 남습니다 — 목록은 결과의 `artifacts`에 있습니다.
+먼저 커밋합니다. 미커밋 변경이 있으면 검증은 돌지만 `tree` 대신 `tree_reason`이 남습니다. 깨끗한 트리에서 시작한
+검증이 새로 만든 추적 안 된 파일은 결과 파일 옆 `verify-artifacts/`(결과 파일이 없으면
+`<repo>/.pylon/runtime/verify-artifacts/`)로 옮겨지고 같은 경로는 최신본으로 덮어씁니다 — 목록은 결과의 `artifacts`에
+있습니다.
 
 `$ARGUMENTS` repo pipeline에는 worker 실행 전에 생성된 `criteria.json`과 digest를 가진 `status.json`이
 있어야 합니다. 이 명령은 live `verify.yml`을 실행 기준으로 사용하지 않습니다.

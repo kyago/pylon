@@ -43,7 +43,7 @@ if [[ -n "$GIT_ROOT_ARG" && -n "$PIPELINE_DIR_ARG" ]]; then
   UNCOMMITTED=$(git -C "$GIT_ROOT" status --porcelain --untracked-files=normal --ignore-submodules=untracked \
     -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees')
   if [[ -n "$UNCOMMITTED" ]]; then
-    die "$GIT_ROOT_ARG 에 커밋되지 않은 변경·추적 안 된 파일이 있습니다. commit, 'git stash -u', 또는 .git/info/exclude 추가 후 다시 실행하세요:
+    die "$GIT_ROOT_ARG 에 커밋되지 않은 변경·추적 안 된 파일이 있습니다. commit, 'git stash -u', 또는 .git/info/exclude 추가 후 다시 실행하세요 (pylon이 실행 시 만든 .gitignore라면 커밋하세요):
 $UNCOMMITTED"
   fi
   if [[ -f "$SUB_PIPELINE_DIR/status.json" ]]; then

@@ -229,15 +229,11 @@ git -C "$REPO" log --oneline -5        # 커밋 메시지 형식
   - 추적 중인 파일의 변경은 태스크 결과인지 확인해 맞으면 커밋하고, 판단이 서지 않으면 되돌리지 말고 멈춰 보고합니다.
   - 추적 안 된 소스·테스트 파일은 태스크 결과에서 빠졌는지 확인해 맞으면 커밋합니다.
   - 나머지(커버리지, 빌드 결과, 임시 파일)는 run이 만든 잔여물입니다 — run은 깨끗한 트리에서 시작합니다
-    (`init-pipeline.sh`가 확인). 지우지 말고 경로째 run 폴더로 옮기고 완료 보고에 목록을 남깁니다. `/pl:cleanup`이
-    run과 함께 정리합니다:
+    (`init-pipeline.sh`가 확인). 지우지 말고 경로째 run 폴더로 옮기고 출력의 `moved` 목록을 완료 보고에 남깁니다.
+    `/pl:cleanup`이 run과 함께 정리합니다:
 
     ```bash
-    git -C "$REPO" status --porcelain -z --untracked-files=all -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees' \
-      | tr '\0' '\n' | sed -n 's/^?? //p' | while IFS= read -r FILE; do
-        mkdir -p "$(dirname "$REPO_PIPELINE_DIR/leftovers/$FILE")"
-        mv "$REPO/$FILE" "$REPO_PIPELINE_DIR/leftovers/$FILE"
-      done
+    pylon internal move-untracked --workdir "$REPO" --to "$REPO_PIPELINE_DIR/leftovers"
     ```
 - 위 status가 비어 있어야 Step 7로 갑니다.
 
@@ -257,8 +253,8 @@ REPO_PIPELINE_DIR=$(jq -r --arg repo "$REPO" '.sub_pipelines[] | select(.repo ==
   새 run을 시작합니다.
 - 실패하면 원인을 고쳐 Step 6B대로 커밋한 뒤 재실행합니다. 실제 출력 없이 다음 단계로 넘어가지 않습니다.
 - 통과했는데 `tree`가 없으면 `tree_reason`을 봅니다. 미커밋 변경이 남았으면 Step 6B대로 정리하고 재실행합니다.
-  검증 명령이 새로 만든 파일(coverage 등)은 검증이 `$REPO_PIPELINE_DIR/verify-artifacts/`로 직접 옮기므로(마지막
-  검증분만 남음) 따로 처리하지 않습니다.
+  깨끗한 트리에서 시작한 검증이 새로 만든 파일(coverage 등)은 검증이 `$REPO_PIPELINE_DIR/verify-artifacts/`로 직접
+  옮기므로(같은 경로는 최신본으로 덮어씀) 따로 처리하지 않습니다.
 
 deterministic gate가 통과하면 worker 자기 보고가 아니라 `execution-log.json`·변경 파일·verification
 evidence를 근거로 repo 단위 task report를 확정합니다. `summary`에는 테스트 출력 원문이 들어가므로 따옴표 친 heredoc으로 파일에 쓰고 JSON은 `jq`로 만듭니다(따옴표·줄바꿈·`$`가

@@ -247,6 +247,24 @@ func TestInternalVerify_RecordsHeadTreeOnlyWhenClean(t *testing.T) {
 		{name: "표시만 있고 내용은 같음", setup: func(t *testing.T, dir string, git func(...string) string) {
 			git("update-index", "--assume-unchanged", "main.go")
 		}, recorded: true},
+		{name: "표시된 심볼릭 링크, 대상 같음", setup: func(t *testing.T, dir string, git func(...string) string) {
+			commitSymlink(t, dir, git)
+			git("update-index", "--assume-unchanged", "link")
+		}, recorded: true},
+		{name: "표시된 심볼릭 링크, 대상 바뀜", setup: func(t *testing.T, dir string, git func(...string) string) {
+			commitSymlink(t, dir, git)
+			git("update-index", "--assume-unchanged", "link")
+			if err := os.Remove(filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(".pylon/config.yml", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+		}, reason: "숨긴 수정"},
+		{name: "표시된 내장 저장소, 커밋 같음", setup: func(t *testing.T, dir string, git func(...string) string) {
+			commitNestedRepo(t, dir, git)
+			git("update-index", "--skip-worktree", "lib")
+		}, recorded: true},
 		{name: "sparse checkout처럼 디스크에 없는 skip-worktree 파일", setup: func(t *testing.T, dir string, git func(...string) string) {
 			git("update-index", "--skip-worktree", "main.go")
 			if err := os.Remove(filepath.Join(dir, "main.go")); err != nil {
@@ -292,45 +310,98 @@ func TestInternalVerify_RecordsHeadTreeOnlyWhenClean(t *testing.T) {
 	}
 }
 
-// 검증이 만든 추적 안 된 파일은 산출물 폴더로 옮겨 다음 검증이 깨끗한 트리에서 시작하게 한다.
+// 깨끗하게 시작한 검증이 만든 추적 안 된 파일은 산출물 폴더로 옮겨 다음 검증이 깨끗한 트리에서 시작하게 한다.
 func TestInternalVerify_MovesArtifactsOutOfRepository(t *testing.T) {
 	dir, git := newTreeTestRepo(t)
 	writeTreeTestFile(t, dir, "main.go", "package main\n")
 	git("add", "main.go")
 	git("commit", "-q", "-m", "init")
-	writeTreeTestFile(t, dir, "notes.txt", "draft\n") // 검증 전부터 있던 파일은 사용자 것이다
 
-	result := runTreeTestVerify(t, dir, "mkdir -p __pycache__ && echo pyc > __pycache__/m.pyc && echo cover > coverage.out")
+	result := runTreeTestVerify(t, dir, "mkdir -p __pycache__ && echo pyc > __pycache__/m.pyc && echo one > coverage.out")
 	realDir, err := filepath.EvalSymlinks(dir) // git이 보고하는 루트는 심볼릭 링크를 푼 경로다(macOS /private/var)
 	if err != nil {
 		t.Fatal(err)
 	}
 	artifacts := filepath.Join(realDir, ".pylon", "runtime", "verify-artifacts")
-	if result.ArtifactsDir != artifacts || strings.Join(result.Artifacts, ",") != "__pycache__/m.pyc,coverage.out" {
-		t.Fatalf("artifacts = %v in %q", result.Artifacts, result.ArtifactsDir)
+	if result.Tree == "" || result.ArtifactsDir != artifacts || strings.Join(result.Artifacts, ",") != "__pycache__/m.pyc,coverage.out" {
+		t.Fatalf("tree = %q (%s), artifacts = %v in %q", result.Tree, result.TreeReason, result.Artifacts, result.ArtifactsDir)
 	}
 	for _, gone := range []string{"coverage.out", "__pycache__"} {
 		if _, err := os.Stat(filepath.Join(dir, gone)); !os.IsNotExist(err) {
 			t.Fatalf("%s가 repo에 남았다: %v", gone, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(artifacts, "__pycache__", "m.pyc")); err != nil {
-		t.Fatalf("산출물이 경로째 옮겨지지 않았다: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "notes.txt")); err != nil {
-		t.Fatalf("검증 전부터 있던 파일을 옮기면 안 된다: %v", err)
-	}
 
-	// 마지막 검증분만 남는다.
-	if err := os.Remove(filepath.Join(dir, "notes.txt")); err != nil {
-		t.Fatal(err)
-	}
-	result = runTreeTestVerify(t, dir, "echo cover > coverage.out")
+	// 같은 경로는 최신본으로 바뀌고, 다른 경로는 지우지 않는다(검증 중 누가 만든 파일일 수도 있다).
+	result = runTreeTestVerify(t, dir, "echo two > coverage.out")
 	if result.Tree == "" || strings.Join(result.Artifacts, ",") != "coverage.out" {
 		t.Fatalf("tree = %q (%s), artifacts = %v", result.Tree, result.TreeReason, result.Artifacts)
 	}
-	if _, err := os.Stat(filepath.Join(artifacts, "__pycache__")); !os.IsNotExist(err) {
-		t.Fatalf("이전 검증의 산출물이 남았다: %v", err)
+	if data, err := os.ReadFile(filepath.Join(artifacts, "coverage.out")); err != nil || string(data) != "two\n" {
+		t.Fatalf("같은 경로는 최신본이어야 한다: %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(artifacts, "__pycache__", "m.pyc")); err != nil {
+		t.Fatalf("이전 검증의 다른 산출물을 지우면 안 된다: %v", err)
+	}
+}
+
+// 지저분한 트리에서 돈 검증은 어차피 tree를 남기지 않으므로, 커밋하려던 생성 파일(스냅숏 등)을 가져가지 않는다.
+func TestInternalVerify_LeavesFilesWhenStartedDirty(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	writeTreeTestFile(t, dir, "main.go", "package main\n")
+	git("add", "main.go")
+	git("commit", "-q", "-m", "init")
+	writeTreeTestFile(t, dir, "notes.txt", "draft\n")
+
+	result := runTreeTestVerify(t, dir, "echo snap > new.snap")
+	if result.Tree != "" || len(result.Artifacts) != 0 {
+		t.Fatalf("tree = %q, artifacts = %v", result.Tree, result.Artifacts)
+	}
+	for _, kept := range []string{"notes.txt", "new.snap"} {
+		if _, err := os.Stat(filepath.Join(dir, kept)); err != nil {
+			t.Fatalf("%s를 옮기면 안 된다: %v", kept, err)
+		}
+	}
+}
+
+// run 잔여물은 경로째 run 폴더로 옮긴다. .pylon/과 ignore된 파일은 그대로 두고, 프로젝트 안으로는 옮기지 않는다.
+func TestInternalMoveUntracked(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	writeTreeTestFile(t, dir, ".gitignore", "*.log\n")
+	git("add", ".gitignore")
+	git("commit", "-q", "-m", "init")
+	writeTreeTestFile(t, dir, "build/out/my file.bin", "bin\n")
+	writeTreeTestFile(t, dir, "-n.tmp", "tmp\n")
+	writeTreeTestFile(t, dir, "debug.log", "ignored\n")
+	writeTreeTestFile(t, dir, ".pylon/verify.yml", "build: {}\n")
+
+	run := func(to string) (string, error) {
+		cmd := newInternalMoveUntrackedCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs([]string{"--workdir", dir, "--to", to})
+		err := cmd.Execute()
+		return out.String(), err
+	}
+	if _, err := run(filepath.Join(dir, "leftovers")); err == nil {
+		t.Fatal("프로젝트 안으로 옮기면 tree에 다시 들어가므로 거부해야 한다")
+	}
+	leftovers := filepath.Join(t.TempDir(), "leftovers")
+	out, err := run(leftovers)
+	if err != nil || !strings.Contains(out, `"moved":["-n.tmp","build/out/my file.bin"]`) {
+		t.Fatalf("move-untracked: %v (%s)", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(leftovers, "build", "out", "my file.bin")); err != nil {
+		t.Fatalf("경로째 옮겨야 한다: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(err) {
+		t.Fatalf("비게 된 디렉토리가 남았다: %v", err)
+	}
+	for _, kept := range []string{"debug.log", ".pylon/verify.yml"} {
+		if _, err := os.Stat(filepath.Join(dir, kept)); err != nil {
+			t.Fatalf("%s는 그대로 둬야 한다: %v", kept, err)
+		}
 	}
 }
 
@@ -355,7 +426,7 @@ func TestInternalVerify_ArtifactsFollowOutputAndFailedRuns(t *testing.T) {
 	}
 }
 
-// 결과 파일을 프로젝트 안에 두면 그 옆 verify-artifacts/는 사용자 디렉토리일 수 있다. 지우지 않고 .pylon/runtime으로 보낸다.
+// 결과 파일을 프로젝트 안에 두면 그 옆 verify-artifacts/는 프로젝트 파일이다. 산출물은 .pylon/runtime으로 보낸다.
 func TestInternalVerify_ArtifactsNeverWipeProjectDirectory(t *testing.T) {
 	dir, git := newTreeTestRepo(t)
 	writeTreeTestFile(t, dir, "verify-artifacts/keep.txt", "user\n")
@@ -409,6 +480,16 @@ func TestInternalVerify_NoTreeWithoutCommittedHead(t *testing.T) {
 			t.Fatalf("실패한 검증은 tree를 남기면 안 된다: %+v", result)
 		}
 	})
+}
+
+// commitSymlink commits link -> main.go.
+func commitSymlink(t *testing.T, dir string, git func(...string) string) {
+	t.Helper()
+	if err := os.Symlink("main.go", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "link")
+	git("commit", "-q", "-m", "link")
 }
 
 // commitNestedRepo commits lib/ as its own repository and records it in dir as a gitlink.

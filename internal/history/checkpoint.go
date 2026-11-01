@@ -77,7 +77,9 @@ func summarizeRecursiveFiles(sourceDir, name, dest string, allowed map[string]bo
 			return err
 		}
 		if entry.IsDir() {
-			if entry.Name() == "evaluator-input" {
+			// evaluator-input holds copies; verify-artifacts and leftovers hold arbitrary project files.
+			switch entry.Name() {
+			case "evaluator-input", "verify-artifacts", "leftovers":
 				return filepath.SkipDir
 			}
 			return nil

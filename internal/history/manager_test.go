@@ -285,6 +285,21 @@ func TestFailedCheckpointPreservesTrajectoryArtifacts(t *testing.T) {
 	}
 }
 
+// verify-artifacts·leftovers에는 프로젝트 파일이 그대로 옮겨진다. 이름이 같아도 파이프라인 산출물로 읽으면 안 된다.
+func TestCheckpointSkipsMovedProjectFiles(t *testing.T) {
+	m, root := newTestManager(t)
+	pipelineDir := filepath.Join(root, ".pylon", "runtime", "pipe-1")
+	mustWrite(t, filepath.Join(pipelineDir, "status.json"), `{"pipeline_id":"pipe-1","status":"failed"}`)
+	for _, dir := range []string{"verify-artifacts", "leftovers"} {
+		mustWrite(t, filepath.Join(pipelineDir, "repos", "service-a", dir, "fixtures", "criteria.json"), "not json")
+		mustWrite(t, filepath.Join(pipelineDir, "repos", "service-a", dir, "task-report.json"), "not json")
+	}
+
+	if _, err := m.Checkpoint("pipe-1", PhaseFailed); err != nil {
+		t.Fatalf("옮겨진 프로젝트 파일 때문에 체크포인트가 실패하면 run 정리가 막힌다: %v", err)
+	}
+}
+
 func TestLogSortsByRecordedAtDesc(t *testing.T) {
 	m, root := newTestManager(t)
 	base := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
