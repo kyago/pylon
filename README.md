@@ -237,7 +237,7 @@ live `verify.yml`만 변경되면 frozen 명령을 실행해 증거를 남긴 �
 HEAD의 tree가 기록됩니다. 미커밋 변경·추적 안 된 파일·assume-unchanged/skip-worktree로 숨긴 수정·stage된 `.pylon/`
 변경이 있거나, 검증 단계가 추적 파일을 고치거나 커밋하면 `tree` 대신 `tree_reason`이 남습니다. 검증 명령이 새로
 만든 추적 안 된 파일(coverage, `__pycache__` 등)은 HEAD와 동결된 명령으로 다시 만들어지므로 검증이 직접 run 폴더의
-`verify-artifacts/`(같은 경로는 최신본으로 덮어씀)로 옮기고, 커밋 뒤 남은 run 잔여물은 `leftovers/`로 옮겨 run과 함께
+`verify-artifacts/`(같은 경로는 최신본으로 덮어씀)로 옮기고, 커밋 뒤 남은 run 잔여물은 지정한 파일만 `leftovers/<시각>/`으로 옮겨 run과 함께
 정리됩니다 — repo나 ignore 규칙에 쌓이지 않습니다. `/pl:pr`은 이 tree를 브랜치 tree와 대조해 다르면 재검증한 뒤 PR을 만들고,
 `/pl:cleanup`은 tree가 머지된 PR head와 같을 때만 그 검증 결과를 근거로 씁니다.
 
@@ -373,7 +373,7 @@ pylon history checkpoint --pipeline <id> --phase <planned|executed|completed|can
 |--------|------|
 | `pylon internal criteria snapshot` | `verify.yml` + acceptance criteria를 `criteria.json`으로 동결하고 digest를 manifest에 결합 |
 | `pylon internal verify` | snapshot 명령으로 deterministic 검증 실행 → `verification.json` (깨끗한 HEAD면 `tree`, 산출물은 `verify-artifacts/`로 이동) |
-| `pylon internal move-untracked` | 커밋하지 않은 run 잔여물(추적 안 된 파일)을 경로째 run 폴더로 이동 |
+| `pylon internal move-untracked` | 지정한 run 잔여물(추적 안 된 파일)을 경로째 run 폴더(`.pylon/runtime/` 아래)로 이동 |
 | `pylon internal evaluator prepare\|record` | 격리 evaluator bundle 생성 / 판정 검증·기록 |
 | `pylon internal trajectory task-report\|failure` | task report / failure record 기록 (failure는 `failed` 체크포인트까지) |
 

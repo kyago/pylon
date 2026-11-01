@@ -19,7 +19,7 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
 - 미커밋 변경(`git status`)과 미푸시 커밋(upstream이 있으면 `git log @{u}..HEAD`, 없으면 `git log origin/<base>..HEAD`)
 - `.pylon/runtime/` 아래의 run 전부: root run(`status.json`의 `scope`가 `root`), repo-scope run, `status.json`이 없는
   디렉토리. root run 안의 `repos/<id>/`는 그 run의 일부이며 상태는 root run의 `status`를 따르고, `pylon init`이 만드는
-  `memory/`·`sessions/`는 run이
+  `memory/`·`sessions/`와 검증이 쓰는 `verify-artifacts/`는 run이
   아닙니다. 대화에 pipeline id가 나온 run이 **이번 세션의 run**입니다. `status`가 `awaiting_cleanup`이면
   `/pl:pipeline`이 끝나 마감을 기다리는 run입니다
 

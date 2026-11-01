@@ -154,7 +154,7 @@ func newInternalVerifyCmd() *cobra.Command {
 				remaining := after.untracked
 				if len(after.untracked) > 0 {
 					executed.ArtifactsDir = verificationArtifactsDir(after.top, outputPath)
-					executed.Artifacts, remaining = moveUntracked(after.top, after.untracked, executed.ArtifactsDir)
+					executed.Artifacts, remaining = moveUntracked(after.top, after.untracked, executed.ArtifactsDir, true)
 					if len(executed.Artifacts) == 0 {
 						executed.ArtifactsDir = ""
 					}

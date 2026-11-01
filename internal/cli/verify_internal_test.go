@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -265,6 +266,25 @@ func TestInternalVerify_RecordsHeadTreeOnlyWhenClean(t *testing.T) {
 			commitNestedRepo(t, dir, git)
 			git("update-index", "--skip-worktree", "lib")
 		}, recorded: true},
+		{name: "표시된 내장 저장소, 초기화 안 됨", setup: func(t *testing.T, dir string, git func(...string) string) {
+			commitNestedRepo(t, dir, git)
+			git("update-index", "--assume-unchanged", "lib")
+			if err := os.RemoveAll(filepath.Join(dir, "lib")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(dir, "lib"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, recorded: true},
+		{name: "core.symlinks=false로 파일이 된 표시된 링크", setup: func(t *testing.T, dir string, git func(...string) string) {
+			commitSymlink(t, dir, git)
+			git("config", "core.symlinks", "false")
+			git("update-index", "--assume-unchanged", "link")
+			if err := os.Remove(filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+			writeTreeTestFile(t, dir, "link", "main.go")
+		}, recorded: true},
 		{name: "sparse checkout처럼 디스크에 없는 skip-worktree 파일", setup: func(t *testing.T, dir string, git func(...string) string) {
 			git("update-index", "--skip-worktree", "main.go")
 			if err := os.Remove(filepath.Join(dir, "main.go")); err != nil {
@@ -364,7 +384,7 @@ func TestInternalVerify_LeavesFilesWhenStartedDirty(t *testing.T) {
 	}
 }
 
-// run 잔여물은 경로째 run 폴더로 옮긴다. .pylon/과 ignore된 파일은 그대로 두고, 프로젝트 안으로는 옮기지 않는다.
+// run 잔여물은 지정한 파일만 경로째 run 폴더로 옮긴다. 호출마다 새 폴더라 앞서 옮긴 파일을 덮지 않는다.
 func TestInternalMoveUntracked(t *testing.T) {
 	dir, git := newTreeTestRepo(t)
 	writeTreeTestFile(t, dir, ".gitignore", "*.log\n")
@@ -372,36 +392,100 @@ func TestInternalMoveUntracked(t *testing.T) {
 	git("commit", "-q", "-m", "init")
 	writeTreeTestFile(t, dir, "build/out/my file.bin", "bin\n")
 	writeTreeTestFile(t, dir, "-n.tmp", "tmp\n")
+	writeTreeTestFile(t, dir, "TODO.md", "user\n")
 	writeTreeTestFile(t, dir, "debug.log", "ignored\n")
-	writeTreeTestFile(t, dir, ".pylon/verify.yml", "build: {}\n")
 
-	run := func(to string) (string, error) {
+	run := func(to string, paths ...string) (string, error) {
 		cmd := newInternalMoveUntrackedCmd()
 		var out strings.Builder
 		cmd.SetOut(&out)
 		cmd.SetErr(&out)
-		cmd.SetArgs([]string{"--workdir", dir, "--to", to})
+		cmd.SetArgs(append([]string{"--workdir", dir, "--to", to, "--"}, paths...))
 		err := cmd.Execute()
 		return out.String(), err
 	}
-	if _, err := run(filepath.Join(dir, "leftovers")); err == nil {
-		t.Fatal("프로젝트 안으로 옮기면 tree에 다시 들어가므로 거부해야 한다")
+	for _, to := range []string{t.TempDir(), filepath.Join(dir, "leftovers")} {
+		if _, err := run(to, "-n.tmp"); err == nil {
+			t.Fatalf("run 폴더(.pylon/runtime) 밖으로는 옮기면 안 된다: %s", to)
+		}
 	}
-	leftovers := filepath.Join(t.TempDir(), "leftovers")
-	out, err := run(leftovers)
+	leftovers := filepath.Join(t.TempDir(), ".pylon", "runtime", "run-1", "repos", "svc", "leftovers")
+	out, err := run(leftovers, "build", "-n.tmp")
 	if err != nil || !strings.Contains(out, `"moved":["-n.tmp","build/out/my file.bin"]`) {
 		t.Fatalf("move-untracked: %v (%s)", err, out)
 	}
-	if _, err := os.Stat(filepath.Join(leftovers, "build", "out", "my file.bin")); err != nil {
+	var first struct{ Dir string }
+	if err := json.Unmarshal([]byte(out), &first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(first.Dir, "build", "out", "my file.bin")); err != nil {
 		t.Fatalf("경로째 옮겨야 한다: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(err) {
 		t.Fatalf("비게 된 디렉토리가 남았다: %v", err)
 	}
-	for _, kept := range []string{"debug.log", ".pylon/verify.yml"} {
+	for _, kept := range []string{"TODO.md", "debug.log"} {
 		if _, err := os.Stat(filepath.Join(dir, kept)); err != nil {
-			t.Fatalf("%s는 그대로 둬야 한다: %v", kept, err)
+			t.Fatalf("지정하지 않은 %s는 그대로 둬야 한다: %v", kept, err)
 		}
+	}
+
+	// 같은 경로를 다시 옮겨도 앞서 옮긴 파일은 남는다.
+	writeTreeTestFile(t, dir, "-n.tmp", "second\n")
+	if out, err := run(leftovers, "-n.tmp"); err != nil {
+		t.Fatalf("두 번째 이동: %v (%s)", err, out)
+	}
+	if data, err := os.ReadFile(filepath.Join(first.Dir, "-n.tmp")); err != nil || string(data) != "tmp\n" {
+		t.Fatalf("앞서 옮긴 잔여물을 덮었다: %q %v", data, err)
+	}
+	// 추적 안 된 파일이 아닌 경로는 옮기지 않고 실패로 알린다.
+	if out, err := run(leftovers, ".gitignore"); err == nil || !strings.Contains(out, `"not_untracked":[".gitignore"]`) {
+		t.Fatalf("추적 중인 파일 지정은 실패해야 한다: %v (%s)", err, out)
+	}
+}
+
+// 이전 검증이 옮겨 둔 심볼릭 링크를 따라가 산출물 폴더 밖을 지우거나 쓰면 안 된다.
+func TestInternalVerify_ArtifactMovesNeverFollowSymlinks(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "init")
+	outside := t.TempDir()
+	writeTreeTestFile(t, outside, "a.txt", "keep\n")
+
+	if result := runTreeTestVerify(t, dir, "ln -s "+shellQuote(outside)+" out"); result.Tree == "" {
+		t.Fatalf("첫 검증: %s", result.TreeReason)
+	}
+	result := runTreeTestVerify(t, dir, "mkdir out && echo new > out/a.txt")
+	if result.Tree == "" || strings.Join(result.Artifacts, ",") != "out/a.txt" {
+		t.Fatalf("tree = %q (%s), artifacts = %v", result.Tree, result.TreeReason, result.Artifacts)
+	}
+	if data, err := os.ReadFile(filepath.Join(outside, "a.txt")); err != nil || string(data) != "keep\n" {
+		t.Fatalf("링크 너머의 파일이 바뀌었다: %q %v", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(result.ArtifactsDir, "out", "a.txt")); err != nil || string(data) != "new\n" {
+		t.Fatalf("새 산출물이 산출물 폴더에 있어야 한다: %q %v", data, err)
+	}
+}
+
+// rename이 안 되는 다른 파일시스템이면 복사한 뒤 원본을 지운다.
+func TestMoveUntrackedCopiesAcrossFilesystems(t *testing.T) {
+	renameFile = func(string, string) error { return errors.New("cross-device link") }
+	t.Cleanup(func() { renameFile = os.Rename })
+	top := t.TempDir()
+	writeTreeTestFile(t, top, "cache/data.bin", "bin\n")
+	if err := os.Symlink("data.bin", filepath.Join(top, "cache", "link")); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "artifacts")
+
+	moved, kept := moveUntracked(top, []string{"cache/data.bin", "cache/link"}, dest, true)
+	if len(kept) != 0 || len(moved) != 2 {
+		t.Fatalf("moved = %v, kept = %v", moved, kept)
+	}
+	if target, err := os.Readlink(filepath.Join(dest, "cache", "link")); err != nil || target != "data.bin" {
+		t.Fatalf("링크는 링크로 옮겨야 한다: %q %v", target, err)
+	}
+	if _, err := os.Stat(filepath.Join(top, "cache")); !os.IsNotExist(err) {
+		t.Fatalf("복사 뒤 원본이 남았다: %v", err)
 	}
 }
 

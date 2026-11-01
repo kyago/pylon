@@ -34,7 +34,8 @@ description: "Pull Request 생성"
    - 그 밖에는(검증 실패, 검증 뒤 커밋이 추가됨, `tree`가 없는 결과) 다시 검증하고, 새 결과의 `ok`가 true이고
      `tree`가 `$BRANCH^{tree}`와 같을 때만 진행합니다. 검증은 추적 안 된 파일이 없을 때만 `tree`를 남기므로 `??`
      파일은 먼저 커밋하거나, 커밋하지 않을 파일이면 경로째 run 폴더로 옮기고 출력의 `moved` 목록을 보고에 남깁니다
-     (`pylon internal move-untracked --workdir "$REPO" --to "$ARGUMENTS/leftovers"`, 검증 명령이 만든 파일은 검증이
+     (`pylon internal move-untracked --workdir "$REPO" --to "$ARGUMENTS/leftovers" -- <파일>...` — 지정한 파일만
+     옮기며 사용자가 남긴 파일은 지정하지 않습니다. 검증 명령이 만든 파일은 검증이
      `verify-artifacts/`로 직접 옮깁니다). 그래도 맞지
      않으면 `tree_reason`과 함께 멈추고 보고합니다:
      `.pylon/builtin/scripts/bash/run-verification.sh "$ARGUMENTS" --git-root "$REPO"`

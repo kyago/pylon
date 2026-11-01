@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/kyago/pylon/internal/fsutil"
 	"github.com/kyago/pylon/internal/layout"
 )
 
@@ -51,28 +51,9 @@ func readWorktree(workDir string) worktreeState {
 	if s.tree, err = gitIn(top, "", "rev-parse", "--verify", "-q", "HEAD^{tree}"); err != nil {
 		s.tree, s.problem = "", "커밋된 HEAD가 없습니다 (git 저장소가 아니거나 첫 커밋 전)"
 	}
-	// One scan gives both the clean check and the untracked set. --untracked-files is explicit because
-	// status.showUntrackedFiles=no would hide a forgotten new source file.
-	status, err := gitIn(top, "", append([]string{"status", "--porcelain", "-z", "--untracked-files=all",
-		"--ignore-submodules=untracked", "--"}, treePathspec...)...)
-	if err != nil {
+	if s.changes, s.untracked, err = projectStatus(top); err != nil {
 		s.problem = "git status 실패"
 		return s
-	}
-	entries := strings.Split(status, "\x00")
-	for i := 0; i < len(entries); i++ {
-		entry := entries[i]
-		if len(entry) < 4 {
-			continue
-		}
-		if path, ok := strings.CutPrefix(entry, "?? "); ok {
-			s.untracked = append(s.untracked, path)
-			continue
-		}
-		s.changes = append(s.changes, entry)
-		if strings.ContainsAny(entry[:2], "RC") {
-			i++ // -z puts a rename's source path in the next field
-		}
 	}
 	if s.problem != "" {
 		return s
@@ -84,6 +65,33 @@ func readWorktree(workDir string) worktreeState {
 	}
 	s.problem = hiddenEdit(top)
 	return s
+}
+
+// projectStatus returns the repository's `git status` entries for tracked project files and its untracked,
+// non-ignored project files relative to top, in one scan. --untracked-files is explicit because
+// status.showUntrackedFiles=no would hide a forgotten new source file.
+func projectStatus(top string) (changes, untracked []string, err error) {
+	status, err := gitIn(top, "", append([]string{"status", "--porcelain", "-z", "--untracked-files=all",
+		"--ignore-submodules=untracked", "--"}, treePathspec...)...)
+	if err != nil {
+		return nil, nil, err
+	}
+	entries := strings.Split(status, "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 4 {
+			continue
+		}
+		if path, ok := strings.CutPrefix(entry, "?? "); ok {
+			untracked = append(untracked, path)
+			continue
+		}
+		changes = append(changes, entry)
+		if strings.ContainsAny(entry[:2], "RC") {
+			i++ // -z puts a rename's source path in the next field
+		}
+	}
+	return changes, untracked, nil
 }
 
 // hiddenEdit finds edits that git status cannot see: entries marked assume-unchanged or skip-worktree whose
@@ -118,11 +126,14 @@ func hiddenEdit(top string) string {
 		}
 		switch mode {
 		case "160000": // submodule: the index holds a commit, not file content
+			if _, err := os.Lstat(filepath.Join(full, ".git")); err != nil {
+				continue // not initialized: rev-parse would walk up and report the superproject's HEAD
+			}
 			if head, err := gitIn(full, "", "rev-parse", "HEAD"); err != nil || head != blob {
 				return reason(path)
 			}
 		case "120000": // symlink: the blob is the link text, which hash-object on the path would not read
-			target, err := os.Readlink(full)
+			target, err := symlinkText(full)
 			if err != nil {
 				return reason(path)
 			}
@@ -140,6 +151,20 @@ func hiddenEdit(top string) string {
 		}
 	}
 	return ""
+}
+
+// symlinkText returns a symlink's target, or the file content when core.symlinks=false checked it out as a plain
+// file holding the link text.
+func symlinkText(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return os.Readlink(path)
+	}
+	data, err := os.ReadFile(path)
+	return string(data), err
 }
 
 // dirtyReason explains why the working tree is not exactly HEAD, counting only the given untracked files;
@@ -161,23 +186,31 @@ func (s worktreeState) dirtyReason(untracked []string) string {
 	return "커밋되지 않은 변경: " + strings.Join(dirty, ", ")
 }
 
+// resolvePath returns path made absolute with symlinks resolved as far as it exists, so it compares with the
+// resolved root git reports (/private/var on macOS) even when its tail is not created yet.
+func resolvePath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	var tail []string
+	for dir := abs; ; dir = filepath.Dir(dir) {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(append([]string{real}, tail...)...)
+		}
+		if filepath.Dir(dir) == dir {
+			return abs
+		}
+		tail = append([]string{filepath.Base(dir)}, tail...)
+	}
+}
+
 // insideProject reports whether path lies in the repository's project content: under top and outside every
 // .pylon/ directory. Moving files there would put them right back into the tree they were taken out of.
 func insideProject(top, path string) bool {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return true
-	}
-	// git reports top with symlinks resolved (/private/var on macOS), so resolve the existing parent too.
-	if parent, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
-		abs = filepath.Join(parent, filepath.Base(abs))
-	}
-	if within, err := fsutil.IsWithin(top, abs); err != nil || !within {
+	rel, err := filepath.Rel(top, resolvePath(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return err != nil
-	}
-	rel, err := filepath.Rel(top, abs)
-	if err != nil {
-		return true
 	}
 	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
 		if part == filepath.Base(layout.PylonDir("")) {
@@ -187,29 +220,43 @@ func insideProject(top, path string) bool {
 	return true
 }
 
-// verificationArtifactsDir returns where verification artifacts go: beside the result file (the pipeline's run
-// directory), or <repo>/.pylon/runtime/verify-artifacts when there is none or it sits in the project itself.
-func verificationArtifactsDir(top, outputPath string) string {
-	fallback := filepath.Join(layout.RuntimeDir(top), "verify-artifacts")
-	if outputPath == "" {
-		return fallback
+// underPylonRuntime reports whether path lies in some .pylon/runtime/ directory, the only place leftovers may go.
+func underPylonRuntime(path string) bool {
+	pylon, runtime := filepath.Base(layout.PylonDir("")), filepath.Base(layout.RuntimeDir(""))
+	parts := strings.Split(filepath.ToSlash(resolvePath(path)), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == pylon && parts[i+1] == runtime {
+			return true
+		}
 	}
-	if dir := filepath.Join(filepath.Dir(outputPath), "verify-artifacts"); !insideProject(top, dir) {
-		return dir
-	}
-	return fallback
+	return false
 }
 
+// verificationArtifactsDir returns the absolute directory for verification artifacts: beside the result file
+// (the pipeline's run directory), or <repo>/.pylon/runtime/verify-artifacts when there is none or it sits in
+// the project itself.
+func verificationArtifactsDir(top, outputPath string) string {
+	if outputPath != "" {
+		if dir := resolvePath(filepath.Join(filepath.Dir(outputPath), "verify-artifacts")); !insideProject(top, dir) {
+			return dir
+		}
+	}
+	return filepath.Join(layout.RuntimeDir(top), "verify-artifacts")
+}
+
+// renameFile is os.Rename; tests swap it to exercise the cross-filesystem copy.
+var renameFile = os.Rename
+
 // moveUntracked moves untracked project files into dir under the same relative paths and removes directories
-// they leave empty. Only a file already at the same destination path is replaced — never the whole directory —
-// so recurring artifacts stay bounded and nothing else is ever deleted. Files it cannot move are returned as kept.
-func moveUntracked(top string, paths []string, dir string) (moved, kept []string) {
+// they leave empty. With replace, a file already at the destination is replaced — only that path, and only once
+// the new file is in place — so recurring artifacts stay bounded; without it, an existing destination keeps the
+// file in the repository. Files it cannot move are returned as kept.
+func moveUntracked(top string, paths []string, dir string, replace bool) (moved, kept []string) {
 	sorted := append([]string{}, paths...)
 	sort.Strings(sorted)
 	for _, path := range sorted {
 		src, dst := filepath.Join(top, path), filepath.Join(dir, path)
-		// shortcut: rename only; across filesystems the file stays put and is reported as kept (fail-closed).
-		if os.RemoveAll(dst) != nil || os.MkdirAll(filepath.Dir(dst), 0o755) != nil || os.Rename(src, dst) != nil {
+		if err := moveEntry(src, dir, dst, replace); err != nil {
 			kept = append(kept, path)
 			continue
 		}
@@ -223,40 +270,160 @@ func moveUntracked(top string, paths []string, dir string) (moved, kept []string
 	return moved, kept
 }
 
-// newInternalMoveUntrackedCmd moves a run's leftover untracked files out of a repository so its working tree is
-// clean for verification, keeping them recoverable under the run directory.
+// moveEntry moves src to dst inside root without ever following a symlink an earlier move left there.
+func moveEntry(src, root, dst string, replace bool) error {
+	rel, err := filepath.Rel(root, filepath.Dir(dst))
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	parent := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." {
+			continue
+		}
+		parent = filepath.Join(parent, part)
+		info, err := os.Lstat(parent)
+		if err == nil && info.IsDir() {
+			continue
+		}
+		if err == nil { // a file or symlink from an earlier move sits where a directory is needed
+			if !replace {
+				return fmt.Errorf("%s exists", parent)
+			}
+			if err := os.Remove(parent); err != nil {
+				return err
+			}
+		}
+		if err := os.Mkdir(parent, 0o755); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Lstat(dst); err == nil && !replace {
+		return fmt.Errorf("%s exists", dst)
+	}
+	// Stage beside dst first so the previous artifact is removed only after the new one fully arrived.
+	staged := dst + ".pylon-moving"
+	if err := os.RemoveAll(staged); err != nil {
+		return err
+	}
+	if err := renameFile(src, staged); err != nil {
+		if err := copyEntry(src, staged); err != nil {
+			_ = os.RemoveAll(staged)
+			return err
+		}
+		if err := os.RemoveAll(src); err != nil {
+			_ = os.RemoveAll(staged)
+			return err
+		}
+	}
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	return os.Rename(staged, dst)
+}
+
+// copyEntry copies a file, symlink or directory tree for a move across filesystems, where rename fails.
+func copyEntry(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		case info.IsDir():
+			return os.Mkdir(target, info.Mode().Perm())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
+}
+
+// newInternalMoveUntrackedCmd moves the listed untracked files out of a repository into a fresh directory under a
+// run's .pylon/runtime/, so the working tree is clean for verification and the files stay recoverable.
 func newInternalMoveUntrackedCmd() *cobra.Command {
 	var workDir, to string
 	cmd := &cobra.Command{
-		Use:          "move-untracked",
-		Short:        "Move untracked project files out of a repository, keeping their paths",
+		Use:          "move-untracked -- <path>...",
+		Short:        "Move listed untracked project files under a run directory, keeping their paths",
+		Args:         cobra.MinimumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			state := readWorktree(workDir)
-			if state.top == "" {
+			top, err := gitIn(workDir, "", "rev-parse", "--show-toplevel")
+			if err != nil {
 				return fmt.Errorf("git 저장소가 아닙니다: %s", workDir)
 			}
-			if to == "" || insideProject(state.top, to) {
-				return fmt.Errorf("--to는 프로젝트 밖(예: run 폴더)이어야 합니다: %q", to)
+			if to == "" || !underPylonRuntime(to) || insideProject(top, to) {
+				return fmt.Errorf("--to는 .pylon/runtime/ 아래(run 폴더)여야 합니다: %q", to)
 			}
-			moved, kept := moveUntracked(state.top, state.untracked, to)
+			_, untracked, err := projectStatus(top)
+			if err != nil {
+				return fmt.Errorf("git status 실패: %w", err)
+			}
+			// Only listed paths that git reports as untracked move; a directory selects the files under it.
+			var selected, missing []string
+			for _, arg := range args {
+				want := strings.TrimSuffix(filepath.ToSlash(filepath.Clean(arg)), "/")
+				found := false
+				for _, path := range untracked {
+					if trimmed := strings.TrimSuffix(path, "/"); trimmed == want || strings.HasPrefix(trimmed, want+"/") {
+						selected, found = append(selected, path), true
+					}
+				}
+				if !found {
+					missing = append(missing, arg)
+				}
+			}
+			// Each call gets its own directory, so a second move never meets an earlier one's files.
+			if err := os.MkdirAll(to, 0o755); err != nil {
+				return err
+			}
+			dir, err := os.MkdirTemp(to, time.Now().UTC().Format("20060102T150405Z")+"-")
+			if err != nil {
+				return err
+			}
+			moved, kept := moveUntracked(top, selected, dir, false)
+			if len(moved) == 0 {
+				_ = os.Remove(dir)
+			}
 			data, err := json.Marshal(struct {
-				Moved []string `json:"moved"`
-				Kept  []string `json:"kept"`
-			}{append([]string{}, moved...), append([]string{}, kept...)})
+				Dir     string   `json:"dir"`
+				Moved   []string `json:"moved"`
+				Kept    []string `json:"kept"`
+				Missing []string `json:"not_untracked"`
+			}{dir, append([]string{}, moved...), append([]string{}, kept...), append([]string{}, missing...)})
 			if err != nil {
 				return err
 			}
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(data)); err != nil {
 				return err
 			}
-			if len(kept) > 0 {
-				return errors.New("옮기지 못한 파일이 있습니다")
+			if len(kept) > 0 || len(missing) > 0 {
+				return errors.New("옮기지 못했거나 추적 안 된 파일이 아닌 경로가 있습니다")
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&workDir, "workdir", ".", "repository to clean")
-	cmd.Flags().StringVar(&to, "to", "", "destination directory outside the project (paths are kept)")
+	cmd.Flags().StringVar(&to, "to", "", "run directory under .pylon/runtime/ to move into (paths are kept)")
 	return cmd
 }

@@ -229,11 +229,12 @@ git -C "$REPO" log --oneline -5        # 커밋 메시지 형식
   - 추적 중인 파일의 변경은 태스크 결과인지 확인해 맞으면 커밋하고, 판단이 서지 않으면 되돌리지 말고 멈춰 보고합니다.
   - 추적 안 된 소스·테스트 파일은 태스크 결과에서 빠졌는지 확인해 맞으면 커밋합니다.
   - 나머지(커버리지, 빌드 결과, 임시 파일)는 run이 만든 잔여물입니다 — run은 깨끗한 트리에서 시작합니다
-    (`init-pipeline.sh`가 확인). 지우지 말고 경로째 run 폴더로 옮기고 출력의 `moved` 목록을 완료 보고에 남깁니다.
-    `/pl:cleanup`이 run과 함께 정리합니다:
+    (`init-pipeline.sh`가 확인). 지우지 말고 그 파일들을 지정해 경로째 run 폴더로 옮기고(호출마다 새
+    `leftovers/<시각>/` 폴더, 디렉토리를 지정하면 그 아래 추적 안 된 파일 전부) 출력의 `moved` 목록을 완료 보고에
+    남깁니다. 지정하지 않은 파일은 옮기지 않습니다. `/pl:cleanup`이 run과 함께 정리합니다:
 
     ```bash
-    pylon internal move-untracked --workdir "$REPO" --to "$REPO_PIPELINE_DIR/leftovers"
+    pylon internal move-untracked --workdir "$REPO" --to "$REPO_PIPELINE_DIR/leftovers" -- coverage.out build/
     ```
 - 위 status가 비어 있어야 Step 7로 갑니다.
 
