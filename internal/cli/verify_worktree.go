@@ -22,8 +22,8 @@ import (
 var treePathspec = []string{":(top)", ":(top,glob,exclude)**/.pylon/**", ":(top,exclude).claude/worktrees"}
 
 // worktreeState is what verification needs to know about a repository: HEAD's tree and everything that keeps
-// the working tree from being exactly that commit. Ignored files are local environment and never count;
-// unstaged edits to tracked .pylon/ files are not seen either, since pylon writes its own state there.
+// the working tree from being exactly that commit. The rules it serves are the verification evidence contract in
+// AGENTS.md: never a tree for unchecked code, never a lost user file, everything else fails closed.
 type worktreeState struct {
 	top       string   // repository root; "" outside a git repository
 	tree      string   // HEAD^{tree}
@@ -63,7 +63,7 @@ func readWorktree(workDir string) worktreeState {
 		s.problem = "stage된 .pylon/ 변경이 있습니다"
 		return s
 	}
-	s.problem = hiddenEdit(top)
+	s.problem = markedOnDisk(top)
 	return s
 }
 
@@ -94,77 +94,28 @@ func projectStatus(top string) (changes, untracked []string, err error) {
 	return changes, untracked, nil
 }
 
-// hiddenEdit finds edits that git status cannot see: entries marked assume-unchanged or skip-worktree whose
-// disk content differs from the index (equal to HEAD once status is clean). A skip-worktree entry absent from
-// disk (sparse checkout) is not an edit.
-func hiddenEdit(top string) string {
-	entries, err := gitIn(top, "", append([]string{"ls-files", "-s", "-v", "-z", "--"}, treePathspec...)...)
+// markedOnDisk reports a file marked assume-unchanged or skip-worktree that is present on disk: git status cannot
+// see its edits, so the tree fails closed instead of comparing contents. A skip-worktree file absent from disk
+// (sparse checkout) is not checked out at all and does not count.
+func markedOnDisk(top string) string {
+	entries, err := gitIn(top, "", append([]string{"ls-files", "-v", "-z", "--"}, treePathspec...)...)
 	if err != nil {
 		return "git ls-files 실패"
 	}
-	reason := func(path string) string {
-		return "assume-unchanged·skip-worktree로 숨긴 수정이 있습니다: " + path
-	}
-	var paths, blobs []string
 	for _, entry := range strings.Split(entries, "\x00") {
-		meta, path, ok := strings.Cut(entry, "\t")
-		fields := strings.Fields(meta)
-		if !ok || len(fields) != 4 {
+		if len(entry) < 3 {
 			continue
 		}
-		tag, mode, blob := fields[0][0], fields[1], fields[2]
-		assumeUnchanged, skipWorktree := tag >= 'a' && tag <= 'z', tag == 'S' || tag == 's'
-		if !assumeUnchanged && !skipWorktree {
+		tag, path := entry[0], entry[2:]
+		if (tag < 'a' || tag > 'z') && tag != 'S' {
 			continue
 		}
-		full := filepath.Join(top, path)
-		if _, err := os.Lstat(full); err != nil {
-			if skipWorktree {
-				continue
-			}
-			return reason(path)
-		}
-		switch mode {
-		case "160000": // submodule: the index holds a commit, not file content
-			if _, err := os.Lstat(filepath.Join(full, ".git")); err != nil {
-				continue // not initialized: rev-parse would walk up and report the superproject's HEAD
-			}
-			if head, err := gitIn(full, "", "rev-parse", "HEAD"); err != nil || head != blob {
-				return reason(path)
-			}
-		case "120000": // symlink: the blob is the link text, which hash-object on the path would not read
-			target, err := symlinkText(full)
-			if err != nil {
-				return reason(path)
-			}
-			if hash, err := gitIn(top, target, "hash-object", "--stdin"); err != nil || hash != blob {
-				return reason(path)
-			}
-		default:
-			paths, blobs = append(paths, path), append(blobs, blob)
-		}
-	}
-	if len(paths) > 0 {
-		hashes, err := gitIn(top, strings.Join(paths, "\n")+"\n", "hash-object", "--stdin-paths")
-		if err != nil || hashes != strings.Join(blobs, "\n") {
-			return reason(strings.Join(paths, ", "))
+		if _, err := os.Lstat(filepath.Join(top, path)); err == nil {
+			return "assume-unchanged·skip-worktree 표시된 파일이 있어 수정 여부를 알 수 없습니다: " + path +
+				" (git update-index --no-assume-unchanged / --no-skip-worktree로 해제)"
 		}
 	}
 	return ""
-}
-
-// symlinkText returns a symlink's target, or the file content when core.symlinks=false checked it out as a plain
-// file holding the link text.
-func symlinkText(path string) (string, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return "", err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return os.Readlink(path)
-	}
-	data, err := os.ReadFile(path)
-	return string(data), err
 }
 
 // dirtyReason explains why the working tree is not exactly HEAD, counting only the given untracked files;
@@ -244,9 +195,6 @@ func verificationArtifactsDir(top, outputPath string) string {
 	return filepath.Join(layout.RuntimeDir(top), "verify-artifacts")
 }
 
-// renameFile is os.Rename; tests swap it to exercise the cross-filesystem copy.
-var renameFile = os.Rename
-
 // moveUntracked moves untracked project files into dir under the same relative paths and removes directories
 // they leave empty. With replace, a file already at the destination is replaced — only that path, and only once
 // the new file is in place — so recurring artifacts stay bounded; without it, an existing destination keeps the
@@ -304,58 +252,19 @@ func moveEntry(src, root, dst string, replace bool) error {
 	if _, err := os.Lstat(dst); err == nil && !replace {
 		return fmt.Errorf("%s exists", dst)
 	}
-	// Stage beside dst first so the previous artifact is removed only after the new one fully arrived.
+	// Stage beside dst first so the previous artifact is removed only after the new one fully arrived. Rename only:
+	// across filesystems it fails and the file stays where it is (fail-closed).
 	staged := dst + ".pylon-moving"
 	if err := os.RemoveAll(staged); err != nil {
 		return err
 	}
-	if err := renameFile(src, staged); err != nil {
-		if err := copyEntry(src, staged); err != nil {
-			_ = os.RemoveAll(staged)
-			return err
-		}
-		if err := os.RemoveAll(src); err != nil {
-			_ = os.RemoveAll(staged)
-			return err
-		}
+	if err := os.Rename(src, staged); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(dst); err != nil {
 		return err
 	}
 	return os.Rename(staged, dst)
-}
-
-// copyEntry copies a file, symlink or directory tree for a move across filesystems, where rename fails.
-func copyEntry(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		switch {
-		case info.Mode()&os.ModeSymlink != 0:
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(link, target)
-		case info.IsDir():
-			return os.Mkdir(target, info.Mode().Perm())
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, info.Mode().Perm())
-	})
 }
 
 // newInternalMoveUntrackedCmd moves the listed untracked files out of a repository into a fresh directory under a

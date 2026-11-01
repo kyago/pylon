@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -237,54 +236,18 @@ func TestInternalVerify_RecordsHeadTreeOnlyWhenClean(t *testing.T) {
 		{name: "검증 단계가 새 파일을 만듦", command: "echo cover > coverage.out", recorded: true},
 		{name: "검증 단계가 추적 파일을 고침", command: "echo // formatted >> main.go", reason: "작업 트리를 바꿨습니다"},
 		{name: "검증 중 커밋", command: "echo x > extra.go && git add extra.go && git -c user.name=t -c user.email=t@t commit -q -m x", reason: "HEAD가 바뀌었습니다"},
+		// 계약: git status가 못 보는 표시된 파일이 디스크에 있으면 내용 비교 없이 tree를 남기지 않는다(fail-closed).
 		{name: "assume-unchanged로 숨긴 수정", setup: func(t *testing.T, dir string, git func(...string) string) {
 			git("update-index", "--assume-unchanged", "main.go")
 			writeTreeTestFile(t, dir, "main.go", "package main // hidden\n")
-		}, reason: "숨긴 수정"},
+		}, reason: "표시된 파일"},
 		{name: "skip-worktree로 숨긴 수정", setup: func(t *testing.T, dir string, git func(...string) string) {
 			git("update-index", "--skip-worktree", "main.go")
 			writeTreeTestFile(t, dir, "main.go", "package main // hidden\n")
-		}, reason: "숨긴 수정"},
+		}, reason: "표시된 파일"},
 		{name: "표시만 있고 내용은 같음", setup: func(t *testing.T, dir string, git func(...string) string) {
 			git("update-index", "--assume-unchanged", "main.go")
-		}, recorded: true},
-		{name: "표시된 심볼릭 링크, 대상 같음", setup: func(t *testing.T, dir string, git func(...string) string) {
-			commitSymlink(t, dir, git)
-			git("update-index", "--assume-unchanged", "link")
-		}, recorded: true},
-		{name: "표시된 심볼릭 링크, 대상 바뀜", setup: func(t *testing.T, dir string, git func(...string) string) {
-			commitSymlink(t, dir, git)
-			git("update-index", "--assume-unchanged", "link")
-			if err := os.Remove(filepath.Join(dir, "link")); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(".pylon/config.yml", filepath.Join(dir, "link")); err != nil {
-				t.Fatal(err)
-			}
-		}, reason: "숨긴 수정"},
-		{name: "표시된 내장 저장소, 커밋 같음", setup: func(t *testing.T, dir string, git func(...string) string) {
-			commitNestedRepo(t, dir, git)
-			git("update-index", "--skip-worktree", "lib")
-		}, recorded: true},
-		{name: "표시된 내장 저장소, 초기화 안 됨", setup: func(t *testing.T, dir string, git func(...string) string) {
-			commitNestedRepo(t, dir, git)
-			git("update-index", "--assume-unchanged", "lib")
-			if err := os.RemoveAll(filepath.Join(dir, "lib")); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Mkdir(filepath.Join(dir, "lib"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-		}, recorded: true},
-		{name: "core.symlinks=false로 파일이 된 표시된 링크", setup: func(t *testing.T, dir string, git func(...string) string) {
-			commitSymlink(t, dir, git)
-			git("config", "core.symlinks", "false")
-			git("update-index", "--assume-unchanged", "link")
-			if err := os.Remove(filepath.Join(dir, "link")); err != nil {
-				t.Fatal(err)
-			}
-			writeTreeTestFile(t, dir, "link", "main.go")
-		}, recorded: true},
+		}, reason: "표시된 파일"},
 		{name: "sparse checkout처럼 디스크에 없는 skip-worktree 파일", setup: func(t *testing.T, dir string, git func(...string) string) {
 			git("update-index", "--skip-worktree", "main.go")
 			if err := os.Remove(filepath.Join(dir, "main.go")); err != nil {
@@ -466,29 +429,6 @@ func TestInternalVerify_ArtifactMovesNeverFollowSymlinks(t *testing.T) {
 	}
 }
 
-// rename이 안 되는 다른 파일시스템이면 복사한 뒤 원본을 지운다.
-func TestMoveUntrackedCopiesAcrossFilesystems(t *testing.T) {
-	renameFile = func(string, string) error { return errors.New("cross-device link") }
-	t.Cleanup(func() { renameFile = os.Rename })
-	top := t.TempDir()
-	writeTreeTestFile(t, top, "cache/data.bin", "bin\n")
-	if err := os.Symlink("data.bin", filepath.Join(top, "cache", "link")); err != nil {
-		t.Fatal(err)
-	}
-	dest := filepath.Join(t.TempDir(), "artifacts")
-
-	moved, kept := moveUntracked(top, []string{"cache/data.bin", "cache/link"}, dest, true)
-	if len(kept) != 0 || len(moved) != 2 {
-		t.Fatalf("moved = %v, kept = %v", moved, kept)
-	}
-	if target, err := os.Readlink(filepath.Join(dest, "cache", "link")); err != nil || target != "data.bin" {
-		t.Fatalf("링크는 링크로 옮겨야 한다: %q %v", target, err)
-	}
-	if _, err := os.Stat(filepath.Join(top, "cache")); !os.IsNotExist(err) {
-		t.Fatalf("복사 뒤 원본이 남았다: %v", err)
-	}
-}
-
 func TestInternalVerify_ArtifactsFollowOutputAndFailedRuns(t *testing.T) {
 	dir, git := newTreeTestRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "init")
@@ -564,16 +504,6 @@ func TestInternalVerify_NoTreeWithoutCommittedHead(t *testing.T) {
 			t.Fatalf("실패한 검증은 tree를 남기면 안 된다: %+v", result)
 		}
 	})
-}
-
-// commitSymlink commits link -> main.go.
-func commitSymlink(t *testing.T, dir string, git func(...string) string) {
-	t.Helper()
-	if err := os.Symlink("main.go", filepath.Join(dir, "link")); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "link")
-	git("commit", "-q", "-m", "link")
 }
 
 // commitNestedRepo commits lib/ as its own repository and records it in dir as a gitlink.

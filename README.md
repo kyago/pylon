@@ -234,12 +234,14 @@ live `verify.yml`만 변경되면 frozen 명령을 실행해 증거를 남긴 �
 
 검증은 커밋된 코드에 대해서만 근거를 남깁니다. 파이프라인은 검증 전에 task 브랜치에 커밋하고(`init-pipeline.sh`는
 추적 안 된 파일까지 없는 깨끗한 트리에서만 시작), `verification.json`의 `tree`에는 작업 트리가 깨끗할 때 검증한
-HEAD의 tree가 기록됩니다. 미커밋 변경·추적 안 된 파일·assume-unchanged/skip-worktree로 숨긴 수정·stage된 `.pylon/`
+HEAD의 tree가 기록됩니다. 미커밋 변경·추적 안 된 파일·assume-unchanged/skip-worktree 표시가 붙은 파일·stage된 `.pylon/`
 변경이 있거나, 검증 단계가 추적 파일을 고치거나 커밋하면 `tree` 대신 `tree_reason`이 남습니다. 검증 명령이 새로
 만든 추적 안 된 파일(coverage, `__pycache__` 등)은 HEAD와 동결된 명령으로 다시 만들어지므로 검증이 직접 run 폴더의
 `verify-artifacts/`(같은 경로는 최신본으로 덮어씀)로 옮기고, 커밋 뒤 남은 run 잔여물은 지정한 파일만 `leftovers/<시각>/`으로 옮겨 run과 함께
 정리됩니다 — repo나 ignore 규칙에 쌓이지 않습니다. `/pl:pr`은 이 tree를 브랜치 tree와 대조해 다르면 재검증한 뒤 PR을 만들고,
-`/pl:cleanup`은 tree가 머지된 PR head와 같을 때만 그 검증 결과를 근거로 씁니다.
+`/pl:cleanup`은 tree가 머지된 PR head와 같을 때만 그 검증 결과를 근거로 씁니다. 이 규칙의 정본은 AGENTS.md의
+"Verification evidence contract"입니다 — 검증하지 않은 코드에 tree를 남기지 않고 사용자 파일을 잃지 않으며, 그 밖의
+드문 경우는 tree 없이 실패합니다.
 
 deterministic gate가 통과하면 Pylon은 requirement, criteria snapshot, verification output, diff, task report만
 별도 read-only evaluator bundle로 복사합니다. 결정 evaluator는 `Read/Grep/Glob`과 structured output만
