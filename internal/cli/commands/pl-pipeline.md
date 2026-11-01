@@ -216,7 +216,7 @@ SUB=$(jq -c --arg repo "$REPO" '.sub_pipelines[] | select(.repo == $repo)' "$ROO
 TASK_BRANCH=$(echo "$SUB" | jq -r '.branch')
 REPO_PIPELINE_DIR=$(echo "$SUB" | jq -r '.pipeline_dir')
 git -C "$REPO" branch --show-current   # $TASK_BRANCH여야 합니다
-git -C "$REPO" status --porcelain --untracked-files=normal -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees'
+git -C "$REPO" status --porcelain --untracked-files=normal --ignore-submodules=untracked -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees'
 git -C "$REPO" log --oneline -5        # 커밋 메시지 형식
 ```
 
@@ -231,7 +231,8 @@ git -C "$REPO" log --oneline -5        # 커밋 메시지 형식
   - 나머지(커버리지, 빌드 결과, 임시 파일)는 run이 만든 잔여물입니다 — run은 깨끗한 트리에서 시작합니다
     (`init-pipeline.sh`가 확인). 지우지 말고 그 파일들을 지정해 경로째 run 폴더로 옮기고(호출마다 새
     `leftovers/<시각>/` 폴더, 디렉토리를 지정하면 그 아래 추적 안 된 파일 전부) 출력의 `moved` 목록을 완료 보고에
-    남깁니다. 지정하지 않은 파일은 옮기지 않습니다. `/pl:cleanup`이 run과 함께 정리합니다:
+    남깁니다. 지정하지 않은 파일은 옮기지 않습니다. `/pl:cleanup`은 이 폴더를 지우지 않고
+    `.pylon/runtime/leftovers/<run>/`으로 옮겨 보존합니다:
 
     ```bash
     pylon internal move-untracked --workdir "$REPO" --to "$REPO_PIPELINE_DIR/leftovers" -- coverage.out build/
@@ -357,7 +358,7 @@ if [[ "$AUTO_PR" == "true" ]]; then
     TASK_BRANCH=$(echo "$SUB" | jq -r '.branch')
     VERIFIED_TREE=$(jq -r 'select(.ok == true) | .tree // empty' "$REPO_PIPELINE_DIR/verification.json")
     BRANCH_TREE=$(git -C "$REPO" rev-parse "$TASK_BRANCH^{tree}")
-    UNCOMMITTED=$(git -C "$REPO" status --porcelain --untracked-files=no -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees')
+    UNCOMMITTED=$(git -C "$REPO" status --porcelain --untracked-files=no --ignore-submodules=untracked -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees')
     if [[ "$(git -C "$REPO" branch --show-current)" != "$TASK_BRANCH" || -z "$VERIFIED_TREE" \
           || "$VERIFIED_TREE" != "$BRANCH_TREE" || -n "$UNCOMMITTED" ]]; then
       echo "PR 보류: $REPO — 미커밋 변경이 있거나 검증한 tree가 $TASK_BRANCH와 다릅니다. /pl:pr로 진행하세요" >&2

@@ -19,7 +19,7 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
 - 미커밋 변경(`git status`)과 미푸시 커밋(upstream이 있으면 `git log @{u}..HEAD`, 없으면 `git log origin/<base>..HEAD`)
 - `.pylon/runtime/` 아래의 run 전부: root run(`status.json`의 `scope`가 `root`), repo-scope run, `status.json`이 없는
   디렉토리. root run 안의 `repos/<id>/`는 그 run의 일부이며 상태는 root run의 `status`를 따르고, `pylon init`이 만드는
-  `memory/`·`sessions/`와 검증이 쓰는 `verify-artifacts/`는 run이
+  `memory/`·`sessions/`와 pylon이 옮긴 파일을 두는 `verify-artifacts/`·`leftovers/`는 run이
   아닙니다. 대화에 pipeline id가 나온 run이 **이번 세션의 run**입니다. `status`가 `awaiting_cleanup`이면
   `/pl:pipeline`이 끝나 마감을 기다리는 run입니다
 
@@ -123,7 +123,8 @@ pylon mem store --project <프로젝트> --category decision --key <슬러그> -
 **정리 전 준비.**
 - 각 sub의 `repo`, `branch`, `base_revision`(root `status.json`)과 `base_branch`(sub의 `status.json`)를 기록해 둡니다.
   정리하면 `status.json`이 사라지는데 Step 6에 필요합니다.
-- sub 폴더의 `leftovers/`(커밋하지 않은 run 잔여물)는 run과 함께 지워집니다. 있으면 목록을 보고에 남깁니다.
+- sub 폴더의 `leftovers/`(커밋하지 않은 run 잔여물)는 지워지지 않습니다. 정리 스크립트가
+  `.pylon/runtime/leftovers/<run>/`으로 옮기고 출력의 `kept`에 남기므로, 그 경로를 보고에 적습니다.
 - 메인 체크아웃이 run 브랜치에 있고(`init-pipeline.sh`가 task 브랜치를 체크아웃한다) 미커밋 변경이 없으면 base
   브랜치로 전환하고 `git pull --ff-only`로 맞춥니다.
 

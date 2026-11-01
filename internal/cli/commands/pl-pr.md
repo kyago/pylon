@@ -24,7 +24,7 @@ description: "Pull Request 생성"
    git -C "$REPO" branch --show-current
    jq -c '{ok, tree, tree_reason}' "$ARGUMENTS/verification.json"
    git -C "$REPO" rev-parse "$BRANCH^{tree}"
-   git -C "$REPO" status --porcelain --untracked-files=normal -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees'
+   git -C "$REPO" status --porcelain --untracked-files=normal --ignore-submodules=untracked -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees'
    ```
 
    - 현재 브랜치가 `$BRANCH`가 아니면 멈추고 알립니다. 검증과 status가 다른 브랜치를 보게 됩니다.

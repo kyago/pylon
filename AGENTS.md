@@ -125,10 +125,11 @@ happen, and changes here are judged against them:
 
 1. **A `tree` for code that was not checked.** No tree when, before or after the checks, there is any uncommitted
    or untracked project file, a staged `.pylon/` edit, a file marked assume-unchanged/skip-worktree present on disk,
-   a tracked edit made by a step, or a moved HEAD.
+   a tracked edit made by a step, a moved HEAD, or a result that is not `ok`.
 2. **A user file lost.** Pylon never deletes a project file. It only moves untracked files, only into a
    `.pylon/runtime/` directory, never through a symlink, and replaces only its own earlier artifact at the same path
-   once the new one is in place. Run leftovers move only when listed, each call into a fresh directory.
+   once the new one is in place; emptied directories stay. Run leftovers move only when listed, each call into a
+   fresh directory, and outlive the run (`cleanup-pipeline.sh` keeps them in `.pylon/runtime/leftovers/<run>/`).
 
 Everything else fails closed — no `tree`, a `tree_reason`, and the caller re-verifies or stops — rather than being
 handled: marked files on disk, cross-filesystem moves, edits inside nested repositories, a dirty start (its new

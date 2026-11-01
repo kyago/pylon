@@ -173,6 +173,13 @@ func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	if _, err := history.NewManager(workspace).Checkpoint(root.PipelineID, history.PhaseCompleted); err != nil {
 		t.Fatal(err)
 	}
+	leftover := filepath.Join(sub.PipelineDir, "leftovers", "20260101T000000Z-1", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(leftover), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leftover, []byte("user\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	readOnlyDir := filepath.Join(sub.PipelineDir, "evaluator-input")
 	if err := os.MkdirAll(readOnlyDir, 0755); err != nil {
 		t.Fatal(err)
@@ -207,6 +214,11 @@ func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	}
 	if _, err := os.Stat(sub.PipelineDir); !os.IsNotExist(err) {
 		t.Fatalf("runtime still exists after checkpoint cleanup: %v", err)
+	}
+	kept := filepath.Join(workspace, ".pylon", "runtime", "leftovers", root.PipelineID, "repos", filepath.Base(sub.PipelineDir),
+		"leftovers", "20260101T000000Z-1", "notes.md")
+	if data, err := os.ReadFile(kept); err != nil || string(data) != "user\n" {
+		t.Fatalf("run 잔여물은 정리 뒤에도 보존해야 한다: %q %v\n%s", data, err, output)
 	}
 	assertBranchMissing(t, repo, agentBranch)
 }

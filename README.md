@@ -237,8 +237,8 @@ live `verify.yml`만 변경되면 frozen 명령을 실행해 증거를 남긴 �
 HEAD의 tree가 기록됩니다. 미커밋 변경·추적 안 된 파일·assume-unchanged/skip-worktree 표시가 붙은 파일·stage된 `.pylon/`
 변경이 있거나, 검증 단계가 추적 파일을 고치거나 커밋하면 `tree` 대신 `tree_reason`이 남습니다. 검증 명령이 새로
 만든 추적 안 된 파일(coverage, `__pycache__` 등)은 HEAD와 동결된 명령으로 다시 만들어지므로 검증이 직접 run 폴더의
-`verify-artifacts/`(같은 경로는 최신본으로 덮어씀)로 옮기고, 커밋 뒤 남은 run 잔여물은 지정한 파일만 `leftovers/<시각>/`으로 옮겨 run과 함께
-정리됩니다 — repo나 ignore 규칙에 쌓이지 않습니다. `/pl:pr`은 이 tree를 브랜치 tree와 대조해 다르면 재검증한 뒤 PR을 만들고,
+`verify-artifacts/`(같은 경로는 최신본으로 덮어씀)로 옮기고, 커밋 뒤 남은 run 잔여물은 지정한 파일만 `leftovers/<시각>/`으로 옮기고 run을 정리할 때
+`.pylon/runtime/leftovers/<run>/`에 보존합니다 — repo나 ignore 규칙에 쌓이지 않습니다. `/pl:pr`은 이 tree를 브랜치 tree와 대조해 다르면 재검증한 뒤 PR을 만들고,
 `/pl:cleanup`은 tree가 머지된 PR head와 같을 때만 그 검증 결과를 근거로 씁니다. 이 규칙의 정본은 AGENTS.md의
 "Verification evidence contract"입니다 — 검증하지 않은 코드에 tree를 남기지 않고 사용자 파일을 잃지 않으며, 그 밖의
 드문 경우는 tree 없이 실패합니다.

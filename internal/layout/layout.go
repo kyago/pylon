@@ -15,9 +15,21 @@ func ConfigPath(root string) string {
 	return filepath.Join(PylonDir(root), "config.yml")
 }
 
+// Folder names inside a run directory (and VerifyArtifactsDir) that hold project files pylon moved out of a
+// repository: verification artifacts and run leftovers.
+const (
+	VerifyArtifactsName = "verify-artifacts"
+	LeftoversName       = "leftovers"
+)
+
 // RuntimeDir returns the pipeline runtime state directory (.pylon/runtime).
 func RuntimeDir(root string) string {
 	return filepath.Join(PylonDir(root), "runtime")
+}
+
+// VerifyArtifactsDir is where verification artifacts go when there is no run directory.
+func VerifyArtifactsDir(root string) string {
+	return filepath.Join(RuntimeDir(root), VerifyArtifactsName)
 }
 
 // MemoryDir returns the markdown memory store root (.pylon/memory).

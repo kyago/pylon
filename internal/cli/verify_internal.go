@@ -162,7 +162,7 @@ func newInternalVerifyCmd() *cobra.Command {
 				if executed.OK {
 					if reason := after.dirtyReason(remaining); reason != "" {
 						executed.TreeReason = "검증 단계가 작업 트리를 바꿨습니다 — " + reason
-					} else if after.tree != before.tree {
+					} else if after.head != before.head {
 						executed.TreeReason = "검증 중 HEAD가 바뀌었습니다"
 					} else {
 						executed.Tree = before.tree
@@ -193,6 +193,9 @@ func newInternalVerifyCmd() *cobra.Command {
 					ExitCode: 1,
 					Output:   executed.Reason,
 				})
+			}
+			if !executed.OK {
+				executed.Tree = "" // a tree vouches only for a passing result
 			}
 			return emitVerificationResult(cmd, outputPath, executed)
 		},

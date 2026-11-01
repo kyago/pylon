@@ -235,6 +235,7 @@ func TestInternalVerify_RecordsHeadTreeOnlyWhenClean(t *testing.T) {
 		// 검증이 만든 파일은 HEAD와 고정된 명령으로 다시 만들어진다. 검증이 치우므로 tree가 남는다.
 		{name: "검증 단계가 새 파일을 만듦", command: "echo cover > coverage.out", recorded: true},
 		{name: "검증 단계가 추적 파일을 고침", command: "echo // formatted >> main.go", reason: "작업 트리를 바꿨습니다"},
+		{name: "검증 중 빈 커밋", command: "git -c user.name=t -c user.email=t@t commit -q --allow-empty -m x", reason: "HEAD가 바뀌었습니다"},
 		{name: "검증 중 커밋", command: "echo x > extra.go && git add extra.go && git -c user.name=t -c user.email=t@t commit -q -m x", reason: "HEAD가 바뀌었습니다"},
 		// 계약: git status가 못 보는 표시된 파일이 디스크에 있으면 내용 비교 없이 tree를 남기지 않는다(fail-closed).
 		{name: "assume-unchanged로 숨긴 수정", setup: func(t *testing.T, dir string, git func(...string) string) {
@@ -309,7 +310,7 @@ func TestInternalVerify_MovesArtifactsOutOfRepository(t *testing.T) {
 	if result.Tree == "" || result.ArtifactsDir != artifacts || strings.Join(result.Artifacts, ",") != "__pycache__/m.pyc,coverage.out" {
 		t.Fatalf("tree = %q (%s), artifacts = %v in %q", result.Tree, result.TreeReason, result.Artifacts, result.ArtifactsDir)
 	}
-	for _, gone := range []string{"coverage.out", "__pycache__"} {
+	for _, gone := range []string{"coverage.out", "__pycache__/m.pyc"} {
 		if _, err := os.Stat(filepath.Join(dir, gone)); !os.IsNotExist(err) {
 			t.Fatalf("%s가 repo에 남았다: %v", gone, err)
 		}
@@ -373,7 +374,7 @@ func TestInternalMoveUntracked(t *testing.T) {
 		}
 	}
 	leftovers := filepath.Join(t.TempDir(), ".pylon", "runtime", "run-1", "repos", "svc", "leftovers")
-	out, err := run(leftovers, "build", "-n.tmp")
+	out, err := run(leftovers, "build", "build/out/my file.bin", "-n.tmp") // 겹치는 지정은 한 번만 옮긴다
 	if err != nil || !strings.Contains(out, `"moved":["-n.tmp","build/out/my file.bin"]`) {
 		t.Fatalf("move-untracked: %v (%s)", err, out)
 	}
@@ -384,8 +385,8 @@ func TestInternalMoveUntracked(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(first.Dir, "build", "out", "my file.bin")); err != nil {
 		t.Fatalf("경로째 옮겨야 한다: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(err) {
-		t.Fatalf("비게 된 디렉토리가 남았다: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "build", "out", "my file.bin")); !os.IsNotExist(err) {
+		t.Fatalf("옮긴 파일이 repo에 남았다: %v", err)
 	}
 	for _, kept := range []string{"TODO.md", "debug.log"} {
 		if _, err := os.Stat(filepath.Join(dir, kept)); err != nil {
@@ -432,7 +433,10 @@ func TestInternalVerify_ArtifactMovesNeverFollowSymlinks(t *testing.T) {
 func TestInternalVerify_ArtifactsFollowOutputAndFailedRuns(t *testing.T) {
 	dir, git := newTreeTestRepo(t)
 	git("commit", "-q", "--allow-empty", "-m", "init")
-	runDir := t.TempDir()
+	runDir := filepath.Join(t.TempDir(), ".pylon", "runtime", "run-1", "repos", "svc")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	configPath := writeTreeTestFile(t, dir, ".pylon/verify.yml", "build:\n  command: \"echo log > failure.log; false\"\n")
 	cmd := newInternalVerifyCmd()
 	var out strings.Builder
@@ -469,6 +473,29 @@ func TestInternalVerify_ArtifactsNeverWipeProjectDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".pylon", "runtime", "verify-artifacts", "coverage.out")); err != nil {
 		t.Fatalf("산출물은 .pylon/runtime으로 가야 한다: %v", err)
+	}
+}
+
+// 결과 파일이 run 폴더(.pylon/runtime)에 있지 않으면 그 옆 사용자 폴더로 산출물을 옮기지 않는다.
+func TestInternalVerify_ArtifactsStayUnderPylonRuntime(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "init")
+	elsewhere := t.TempDir()
+	writeTreeTestFile(t, elsewhere, "verify-artifacts/coverage.out", "user\n")
+	configPath := writeTreeTestFile(t, dir, ".pylon/verify.yml", "build:\n  command: \"echo cover > coverage.out\"\n")
+	cmd := newInternalVerifyCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--workdir", dir, "--config", configPath, "--output", filepath.Join(elsewhere, "verification.json")})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("verify: %v (%s)", err, out.String())
+	}
+	if data, err := os.ReadFile(filepath.Join(elsewhere, "verify-artifacts", "coverage.out")); err != nil || string(data) != "user\n" {
+		t.Fatalf(".pylon/runtime 밖의 폴더를 건드렸다: %q %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".pylon", "runtime", "verify-artifacts", "coverage.out")); err != nil {
+		t.Fatalf("산출물은 repo의 .pylon/runtime으로 가야 한다: %v", err)
 	}
 }
 
@@ -530,8 +557,19 @@ func TestPRCommandsUseTreePathspec(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(content), "status --porcelain") || !strings.Contains(string(content), want) {
-			t.Errorf("%s의 git status가 treePathspec과 다르다: %q 필요", name, want)
+		lines := 0
+		for _, line := range strings.Split(string(content), "\n") {
+			if !strings.Contains(line, "status --porcelain") {
+				continue
+			}
+			lines++
+			// 검증은 하위 모듈 안의 추적 안 된 파일을 수정으로 보지 않는다. 같은 플래그가 없으면 영영 비지 않는다.
+			if !strings.Contains(line, want) || !strings.Contains(line, "--ignore-submodules=untracked") {
+				t.Errorf("%s의 git status가 검증과 다른 범위를 본다: %s", name, line)
+			}
+		}
+		if lines == 0 {
+			t.Errorf("%s에 git status 확인이 없다", name)
 		}
 	}
 	script, err := embeddedScripts.ReadFile("scripts/bash/init-pipeline.sh")

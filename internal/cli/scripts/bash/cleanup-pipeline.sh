@@ -101,6 +101,16 @@ fi
 # Clean pipeline runtime directory
 if [[ -n "$PIPELINE_DIR" && -d "$PIPELINE_DIR" ]]; then
   chmod -R u+w "$PIPELINE_DIR" || die "runtime 권한 복구 실패: $PIPELINE_DIR"
+  # leftovers/는 pylon이 repo에서 옮긴 프로젝트 파일이다 — run과 함께 지우지 않고 보존한다.
+  for LEFTOVERS in "$PIPELINE_DIR/leftovers" "$PIPELINE_DIR"/repos/*/leftovers; do
+    [[ -d "$LEFTOVERS" ]] || continue
+    REL="${LEFTOVERS#"$PIPELINE_DIR"/}"
+    [[ "$SCOPE" != "repo" ]] || REL="repos/$(basename "$PIPELINE_DIR")/$REL"
+    KEEP="$RUNTIME_DIR/leftovers/$ROOT_PIPELINE_ID/$REL"
+    [[ ! -e "$KEEP" ]] || die "leftovers 보존 경로가 이미 있습니다: $KEEP"
+    mkdir -p "$(dirname "$KEEP")" && mv "$LEFTOVERS" "$KEEP" || die "leftovers 보존 실패: $LEFTOVERS"
+    KEPT+=("leftovers:$KEEP")
+  done
   rm -rf "$PIPELINE_DIR"
   CLEANED+=("runtime-deleted:$PIPELINE_DIR")
 fi

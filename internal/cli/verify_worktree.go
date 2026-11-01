@@ -13,19 +13,24 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kyago/pylon/internal/fsutil"
 	"github.com/kyago/pylon/internal/layout"
 )
 
 // treePathspec selects a repository's project content: .pylon/ (pylon-local state) and agent worktrees under
 // .claude/worktrees/ are left out. init-pipeline.sh, pl-pr.md and pl-pipeline.md pass the same pathspec to
 // `git status` (TestPRCommandsUseTreePathspec keeps them in step).
-var treePathspec = []string{":(top)", ":(top,glob,exclude)**/.pylon/**", ":(top,exclude).claude/worktrees"}
+var treePathspec = []string{":(top)", ":(top,glob,exclude)**/" + pylonDirName + "/**", ":(top,exclude).claude/worktrees"}
+
+// pylonDirName is ".pylon", taken from layout so the directory name lives in one place.
+var pylonDirName = filepath.Base(layout.PylonDir(""))
 
 // worktreeState is what verification needs to know about a repository: HEAD's tree and everything that keeps
 // the working tree from being exactly that commit. The rules it serves are the verification evidence contract in
 // AGENTS.md: never a tree for unchecked code, never a lost user file, everything else fails closed.
 type worktreeState struct {
 	top       string   // repository root; "" outside a git repository
+	head      string   // HEAD commit
 	tree      string   // HEAD^{tree}
 	changes   []string // `git status` entries for tracked files
 	untracked []string // untracked, non-ignored project files relative to top
@@ -48,8 +53,12 @@ func readWorktree(workDir string) worktreeState {
 		return s
 	}
 	s.top = top
-	if s.tree, err = gitIn(top, "", "rev-parse", "--verify", "-q", "HEAD^{tree}"); err != nil {
-		s.tree, s.problem = "", "커밋된 HEAD가 없습니다 (git 저장소가 아니거나 첫 커밋 전)"
+	s.head, err = gitIn(top, "", "rev-parse", "--verify", "-q", "HEAD")
+	if err == nil {
+		s.tree, err = gitIn(top, "", "rev-parse", "--verify", "-q", "HEAD^{tree}")
+	}
+	if err != nil {
+		s.head, s.tree, s.problem = "", "", "커밋된 HEAD가 없습니다 (git 저장소가 아니거나 첫 커밋 전)"
 	}
 	if s.changes, s.untracked, err = projectStatus(top); err != nil {
 		s.problem = "git status 실패"
@@ -59,7 +68,7 @@ func readWorktree(workDir string) worktreeState {
 		return s
 	}
 	// A staged .pylon/ edit is outside the pathspec but would ride along with the next commit.
-	if _, err := gitIn(top, "", "diff", "--cached", "--quiet", "--", ":(top,glob)**/.pylon/**"); err != nil {
+	if _, err := gitIn(top, "", "diff", "--cached", "--quiet", "--", ":(top,glob)**/"+pylonDirName+"/**"); err != nil {
 		s.problem = "stage된 .pylon/ 변경이 있습니다"
 		return s
 	}
@@ -159,66 +168,67 @@ func resolvePath(path string) string {
 // insideProject reports whether path lies in the repository's project content: under top and outside every
 // .pylon/ directory. Moving files there would put them right back into the tree they were taken out of.
 func insideProject(top, path string) bool {
-	rel, err := filepath.Rel(top, resolvePath(path))
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	resolved := resolvePath(path)
+	within, err := fsutil.IsWithin(top, resolved)
+	if err != nil || !within {
 		return err != nil
 	}
+	rel, err := filepath.Rel(top, resolved)
+	if err != nil {
+		return true
+	}
 	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
-		if part == filepath.Base(layout.PylonDir("")) {
+		if part == pylonDirName {
 			return false
 		}
 	}
 	return true
 }
 
-// underPylonRuntime reports whether path lies in some .pylon/runtime/ directory, the only place leftovers may go.
+// underPylonRuntime reports whether path lies in some .pylon/runtime/ directory, the only place moved files may go.
 func underPylonRuntime(path string) bool {
-	pylon, runtime := filepath.Base(layout.PylonDir("")), filepath.Base(layout.RuntimeDir(""))
+	runtime := filepath.Base(layout.RuntimeDir(""))
 	parts := strings.Split(filepath.ToSlash(resolvePath(path)), "/")
 	for i := 0; i+1 < len(parts); i++ {
-		if parts[i] == pylon && parts[i+1] == runtime {
+		if parts[i] == pylonDirName && parts[i+1] == runtime {
 			return true
 		}
 	}
 	return false
 }
 
-// verificationArtifactsDir returns the absolute directory for verification artifacts: beside the result file
-// (the pipeline's run directory), or <repo>/.pylon/runtime/verify-artifacts when there is none or it sits in
-// the project itself.
+// verificationArtifactsDir returns the absolute directory for verification artifacts: beside the result file when
+// that is a run directory under .pylon/runtime/, otherwise <repo>/.pylon/runtime/verify-artifacts.
 func verificationArtifactsDir(top, outputPath string) string {
 	if outputPath != "" {
-		if dir := resolvePath(filepath.Join(filepath.Dir(outputPath), "verify-artifacts")); !insideProject(top, dir) {
+		dir := resolvePath(filepath.Join(filepath.Dir(outputPath), layout.VerifyArtifactsName))
+		if underPylonRuntime(dir) && !insideProject(top, dir) {
 			return dir
 		}
 	}
-	return filepath.Join(layout.RuntimeDir(top), "verify-artifacts")
+	return layout.VerifyArtifactsDir(top)
 }
 
-// moveUntracked moves untracked project files into dir under the same relative paths and removes directories
-// they leave empty. With replace, a file already at the destination is replaced — only that path, and only once
-// the new file is in place — so recurring artifacts stay bounded; without it, an existing destination keeps the
-// file in the repository. Files it cannot move are returned as kept.
+// moveUntracked moves untracked project files into dir under the same relative paths. With replace, an earlier
+// artifact at the destination is replaced once the new file is in place, so recurring artifacts stay bounded;
+// without it, an existing destination keeps the file in the repository. Emptied directories are left alone: git
+// cannot say which ones a step created. Files it cannot move are returned as kept.
 func moveUntracked(top string, paths []string, dir string, replace bool) (moved, kept []string) {
 	sorted := append([]string{}, paths...)
 	sort.Strings(sorted)
 	for _, path := range sorted {
-		src, dst := filepath.Join(top, path), filepath.Join(dir, path)
-		if err := moveEntry(src, dir, dst, replace); err != nil {
+		if err := moveEntry(filepath.Join(top, path), dir, filepath.Join(dir, path), replace); err != nil {
 			kept = append(kept, path)
 			continue
 		}
 		moved = append(moved, path)
-		for parent := filepath.Dir(src); parent != top && strings.HasPrefix(parent, top+string(filepath.Separator)); parent = filepath.Dir(parent) {
-			if os.Remove(parent) != nil {
-				break // not empty
-			}
-		}
 	}
 	return moved, kept
 }
 
-// moveEntry moves src to dst inside root without ever following a symlink an earlier move left there.
+// moveEntry moves src to dst inside root. The file first lands in a private staging directory, so nothing in root
+// is removed unless the move itself succeeded, and no symlink an earlier move left in root is ever followed.
+// Rename only: across filesystems it fails and the file stays where it is (fail-closed).
 func moveEntry(src, root, dst string, replace bool) error {
 	rel, err := filepath.Rel(root, filepath.Dir(dst))
 	if err != nil {
@@ -226,6 +236,21 @@ func moveEntry(src, root, dst string, replace bool) error {
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
+	}
+	staging, err := os.MkdirTemp(root, ".pylon-moving-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(staging) }() // only when empty: a file that could not go back stays here
+	staged := filepath.Join(staging, filepath.Base(dst))
+	if err := os.Rename(src, staged); err != nil {
+		return err
+	}
+	restore := func(cause error) error {
+		if err := os.Rename(staged, src); err != nil {
+			return fmt.Errorf("%w (원래 위치로 되돌리지 못함, %s에 있음: %v)", cause, staged, err)
+		}
+		return cause
 	}
 	parent := root
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
@@ -237,34 +262,30 @@ func moveEntry(src, root, dst string, replace bool) error {
 		if err == nil && info.IsDir() {
 			continue
 		}
-		if err == nil { // a file or symlink from an earlier move sits where a directory is needed
+		if err == nil { // an earlier artifact (file or symlink) sits where a directory is needed
 			if !replace {
-				return fmt.Errorf("%s exists", parent)
+				return restore(fmt.Errorf("%s exists", parent))
 			}
 			if err := os.Remove(parent); err != nil {
-				return err
+				return restore(err)
 			}
 		}
 		if err := os.Mkdir(parent, 0o755); err != nil {
-			return err
+			return restore(err)
 		}
 	}
-	if _, err := os.Lstat(dst); err == nil && !replace {
-		return fmt.Errorf("%s exists", dst)
+	if _, err := os.Lstat(dst); err == nil {
+		if !replace {
+			return restore(fmt.Errorf("%s exists", dst))
+		}
+		if err := os.RemoveAll(dst); err != nil {
+			return restore(err)
+		}
 	}
-	// Stage beside dst first so the previous artifact is removed only after the new one fully arrived. Rename only:
-	// across filesystems it fails and the file stays where it is (fail-closed).
-	staged := dst + ".pylon-moving"
-	if err := os.RemoveAll(staged); err != nil {
-		return err
+	if err := os.Rename(staged, dst); err != nil {
+		return restore(err)
 	}
-	if err := os.Rename(src, staged); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(dst); err != nil {
-		return err
-	}
-	return os.Rename(staged, dst)
+	return nil
 }
 
 // newInternalMoveUntrackedCmd moves the listed untracked files out of a repository into a fresh directory under a
@@ -290,12 +311,16 @@ func newInternalMoveUntrackedCmd() *cobra.Command {
 			}
 			// Only listed paths that git reports as untracked move; a directory selects the files under it.
 			var selected, missing []string
+			seen := map[string]bool{}
 			for _, arg := range args {
 				want := strings.TrimSuffix(filepath.ToSlash(filepath.Clean(arg)), "/")
 				found := false
 				for _, path := range untracked {
 					if trimmed := strings.TrimSuffix(path, "/"); trimmed == want || strings.HasPrefix(trimmed, want+"/") {
-						selected, found = append(selected, path), true
+						found = true
+						if !seen[path] {
+							seen[path], selected = true, append(selected, path)
+						}
 					}
 				}
 				if !found {

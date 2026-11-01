@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/kyago/pylon/internal/fsutil"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 // stageCheckpoint copies and curates a pipeline's runtime artifacts into destDir,
@@ -79,7 +80,7 @@ func summarizeRecursiveFiles(sourceDir, name, dest string, allowed map[string]bo
 		if entry.IsDir() {
 			// evaluator-input holds copies; verify-artifacts and leftovers hold arbitrary project files.
 			switch entry.Name() {
-			case "evaluator-input", "verify-artifacts", "leftovers":
+			case "evaluator-input", layout.VerifyArtifactsName, layout.LeftoversName:
 				return filepath.SkipDir
 			}
 			return nil
