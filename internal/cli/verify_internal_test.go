@@ -408,6 +408,26 @@ func TestInternalMoveUntracked(t *testing.T) {
 	}
 }
 
+// 옮길 자리가 막히면 파일은 원래 위치로 돌아가고 임시 폴더도 남지 않는다(계약: 사용자 파일을 잃지 않는다).
+func TestMoveEntryRestoresSourceOnConflict(t *testing.T) {
+	top, root := t.TempDir(), t.TempDir()
+	src := writeTreeTestFile(t, top, "notes.md", "user\n")
+	dst := writeTreeTestFile(t, root, "notes.md", "earlier\n")
+
+	if err := moveEntry(src, root, dst, false); err == nil {
+		t.Fatal("덮어쓰지 않는 이동은 자리가 있으면 실패해야 한다")
+	}
+	if data, err := os.ReadFile(src); err != nil || string(data) != "user\n" {
+		t.Fatalf("원래 위치로 돌아와야 한다: %q %v", data, err)
+	}
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "earlier\n" {
+		t.Fatalf("기존 파일을 건드리면 안 된다: %q %v", data, err)
+	}
+	if staging, _ := filepath.Glob(filepath.Join(root, ".pylon-moving-*")); len(staging) != 0 {
+		t.Fatalf("임시 폴더가 남았다: %v", staging)
+	}
+}
+
 // 이전 검증이 옮겨 둔 심볼릭 링크를 따라가 산출물 폴더 밖을 지우거나 쓰면 안 된다.
 func TestInternalVerify_ArtifactMovesNeverFollowSymlinks(t *testing.T) {
 	dir, git := newTreeTestRepo(t)
