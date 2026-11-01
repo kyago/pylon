@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/criteria"
 	"github.com/kyago/pylon/internal/fsutil"
+	"github.com/kyago/pylon/internal/layout"
 )
 
 type verificationCheck struct {
@@ -38,6 +40,9 @@ type verificationResult struct {
 	IntegrityOK    bool                `json:"integrity_ok,omitempty"`
 	SourceChanged  bool                `json:"source_changed,omitempty"`
 	Tree           string              `json:"tree,omitempty"`
+	TreeReason     string              `json:"tree_reason,omitempty"`
+	Artifacts      []string            `json:"artifacts,omitempty"`
+	ArtifactsDir   string              `json:"artifacts_dir,omitempty"`
 	Timestamp      string              `json:"timestamp"`
 }
 
@@ -133,23 +138,35 @@ func newInternalVerifyCmd() *cobra.Command {
 				}
 			}
 
-			// No steps means ok=false; a tree is recorded only as evidence for a passing run.
-			var snapshots *treeSnapshots
-			treeBefore := ""
+			// Only committed code can be matched to a PR, so verification vouches for HEAD's tree and only when the
+			// checks ran against exactly that: nothing uncommitted before, during or after.
+			treeBefore, treeReason := "", ""
+			top, untrackedBefore := "", map[string]bool(nil)
 			if len(steps) > 0 {
-				var closeSnapshots func()
-				snapshots, closeSnapshots = newTreeSnapshots(workDir)
-				defer closeSnapshots()
-				treeBefore = snapshots.tree()
+				treeBefore, treeReason = cleanHeadTree(workDir)
+				top, untrackedBefore = untrackedFiles(workDir)
 			}
 			executed, err := executeVerification(workDir, steps, time.Now)
 			if err != nil {
 				return err
 			}
-			// A step that rewrites files (formatter) leaves no single tree the checks ran against; files a step
-			// only adds (coverage.out, build output) were not inputs, so the tree from before still holds.
-			if treeBefore != "" && executed.OK && snapshots.onlyAdditionsSince(treeBefore) {
-				executed.Tree = treeBefore
+			if untrackedBefore != nil {
+				executed.ArtifactsDir = verificationArtifactsDir(top, outputPath)
+				executed.Artifacts = moveVerificationArtifacts(top, untrackedBefore, executed.ArtifactsDir)
+				if len(executed.Artifacts) == 0 {
+					executed.ArtifactsDir = ""
+				}
+			}
+			if executed.OK && len(steps) > 0 {
+				if treeBefore == "" {
+					executed.TreeReason = treeReason
+				} else if treeAfter, reason := cleanHeadTree(workDir); treeAfter == treeBefore {
+					executed.Tree = treeBefore
+				} else if treeAfter == "" {
+					executed.TreeReason = "검증 단계가 작업 트리를 바꿨습니다 — " + reason
+				} else {
+					executed.TreeReason = "검증 중 HEAD가 바뀌었습니다"
+				}
 			}
 			executed.Skipped = skipped
 			executed.CriteriaDigest = result.CriteriaDigest
@@ -267,125 +284,153 @@ func executeVerification(workDir string, steps []config.NamedVerifyStep, now fun
 }
 
 // treePathspec selects a repository's project content: .pylon/ (pylon-local state) and agent worktrees under
-// .claude/worktrees/ are left out, so tracked .pylon/ files keep their index state in the tree. pl-pr.md and
-// pl-pipeline.md pass the same pathspec to `git status`.
+// .claude/worktrees/ are left out. pl-pr.md and pl-pipeline.md pass the same pathspec to `git status`.
 var treePathspec = []string{":(top)", ":(top,glob,exclude)**/.pylon/**", ":(top,exclude).claude/worktrees"}
 
-// treeSnapshots hashes workDir's working tree, untracked files included, so a verdict on uncommitted changes
-// matches the commit that later lands them. It works on a private copy of the index, leaving the real one
-// untouched; later snapshots reuse that copy so only files changed since are rehashed.
-type treeSnapshots struct {
-	workDir string
-	index   string // "" when workDir is not a git repository
-}
-
-func newTreeSnapshots(workDir string) (*treeSnapshots, func()) {
-	s := &treeSnapshots{workDir: workDir}
-	tmpDir, err := os.MkdirTemp("", "pylon-tree-")
+// cleanHeadTree returns HEAD's tree when workDir has no uncommitted project change, untracked files included
+// (a step's generated file could have been compiled by a later step), or "" and the reason. Ignored files are
+// local environment and never count. Unstaged edits to tracked .pylon/ files are not seen either: pylon writes
+// its own state there.
+func cleanHeadTree(workDir string) (string, string) {
+	git := func(stdin string, args ...string) (string, error) {
+		// --no-optional-locks: never take index.lock while agents work in the same repository.
+		command := exec.Command("git", append([]string{"--no-optional-locks", "-C", workDir}, args...)...)
+		command.Stdin = strings.NewReader(stdin)
+		out, err := command.Output()
+		return strings.TrimRight(string(out), "\n"), err
+	}
+	tree, err := git("", "rev-parse", "--verify", "-q", "HEAD^{tree}")
 	if err != nil {
-		return s, func() {}
+		return "", "커밋된 HEAD가 없습니다 (git 저장소가 아니거나 첫 커밋 전)"
 	}
-	cleanup := func() { _ = os.RemoveAll(tmpDir) }
-	// --path-format=absolute needs git 2.31; --git-path prints a path relative to workDir instead.
-	out, err := exec.Command("git", "-C", workDir, "rev-parse", "--git-path", "index").Output()
+	// Explicit --untracked-files: status.showUntrackedFiles=no would hide a forgotten new source file.
+	status, err := git("", append([]string{"status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=untracked", "--"}, treePathspec...)...)
 	if err != nil {
-		return s, cleanup
+		return "", "git status 실패"
 	}
-	realIndexPath := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(realIndexPath) {
-		realIndexPath = filepath.Join(workDir, realIndexPath)
-	}
-	index := filepath.Join(tmpDir, "index")
-	// The copied stat cache keeps unchanged files from being rehashed; a missing index just starts empty.
-	// The copy keeps the original mtime because git rechecks content only for entries not older than the
-	// index file (racy git); a fresh mtime would let a same-size edit in that window pass as unchanged.
-	if info, err := os.Stat(realIndexPath); err == nil {
-		data, err := os.ReadFile(realIndexPath)
-		if err != nil {
-			return s, cleanup
+	if status != "" {
+		lines := strings.Split(status, "\n")
+		if len(lines) > 3 {
+			lines = append(lines[:3], "...")
 		}
-		if err := os.WriteFile(index, data, 0o600); err != nil {
-			return s, cleanup
-		}
-		if err := os.Chtimes(index, info.ModTime(), info.ModTime()); err != nil {
-			return s, cleanup
-		}
+		return "", "커밋되지 않은 변경: " + strings.Join(lines, ", ")
 	}
-	s.index = index
-	return s, cleanup
-}
-
-func (s *treeSnapshots) git(stdin string, args ...string) (string, error) {
-	// A split temp index would leave orphan sharedindex files in the real .git.
-	command := exec.Command("git", append([]string{"-C", s.workDir, "-c", "core.splitIndex=false"}, args...)...)
-	command.Env = append(os.Environ(), "GIT_INDEX_FILE="+s.index)
-	command.Stdin = strings.NewReader(stdin)
-	out, err := command.Output()
-	return strings.TrimSpace(string(out)), err
-}
-
-// tree returns the hash of the current working tree, or "" when no tree can carry it.
-func (s *treeSnapshots) tree() string {
-	if s.index == "" {
-		return ""
+	// A staged .pylon/ edit is outside the pathspec but would ride along with the next commit.
+	if _, err := git("", "diff", "--cached", "--quiet", "--", ":(top,glob)**/.pylon/**"); err != nil {
+		return "", "stage된 .pylon/ 변경이 있습니다"
 	}
-	// assume-unchanged and skip-worktree hide edits from `add`. The checks ran against what is on disk, so drop
-	// both marks in the private index; a skip-worktree file absent from disk (sparse checkout) keeps its blob.
-	entries, err := s.git("", append([]string{"ls-files", "-v", "-z"}, treePathspec...)...)
+	// git status skips assume-unchanged and skip-worktree entries, so compare their disk content with the
+	// index (equal to HEAD once status is clean). A skip-worktree file absent from disk (sparse checkout) is fine.
+	entries, err := git("", append([]string{"ls-files", "-s", "-v", "-z", "--"}, treePathspec...)...)
 	if err != nil {
-		return ""
+		return "", "git ls-files 실패"
 	}
-	var assumed, skipped strings.Builder
+	var paths, blobs []string
 	for _, entry := range strings.Split(entries, "\x00") {
-		if len(entry) < 3 {
+		meta, path, ok := strings.Cut(entry, "\t")
+		fields := strings.Fields(meta)
+		if !ok || len(fields) != 4 {
 			continue
 		}
-		tag, path := entry[0], entry[2:]
-		if tag >= 'a' && tag <= 'z' {
-			assumed.WriteString(path + "\x00")
+		tag := fields[0][0]
+		assumeUnchanged, skipWorktree := tag >= 'a' && tag <= 'z', tag == 'S' || tag == 's'
+		if !assumeUnchanged && !skipWorktree {
+			continue
 		}
-		if tag == 'S' || tag == 's' {
-			if _, err := os.Lstat(filepath.Join(s.workDir, path)); err == nil {
-				skipped.WriteString(path + "\x00")
+		if _, err := os.Lstat(filepath.Join(workDir, path)); err != nil && skipWorktree {
+			continue
+		}
+		paths, blobs = append(paths, path), append(blobs, fields[2])
+	}
+	if len(paths) > 0 {
+		hashes, err := git(strings.Join(paths, "\n")+"\n", "hash-object", "--stdin-paths")
+		if err != nil || strings.Join(blobs, "\n") != hashes {
+			return "", "assume-unchanged·skip-worktree로 숨긴 수정이 있습니다"
+		}
+	}
+	return tree, ""
+}
+
+// untrackedFiles returns the repository root and its untracked, non-ignored project files relative to it, or a
+// nil set when workDir is not a git repository or status fails.
+func untrackedFiles(workDir string) (string, map[string]bool) {
+	out, err := exec.Command("git", "--no-optional-locks", "-C", workDir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", nil
+	}
+	top := strings.TrimSpace(string(out))
+	args := append([]string{"--no-optional-locks", "-C", top, "status", "--porcelain", "-z", "--untracked-files=all",
+		"--ignore-submodules=all", "--"}, treePathspec...)
+	out, err = exec.Command("git", args...).Output()
+	if err != nil {
+		return top, nil
+	}
+	files := map[string]bool{}
+	for _, entry := range strings.Split(string(out), "\x00") {
+		if path, ok := strings.CutPrefix(entry, "?? "); ok {
+			files[path] = true
+		}
+	}
+	return top, files
+}
+
+// verificationArtifactsDir returns where artifacts go: beside the result file (the pipeline's run directory), or
+// <repo>/.pylon/runtime/verify-artifacts. The directory is wiped on every run, so a result path inside the project
+// itself falls back too — never wipe a user directory, never move artifacts back into the tree they leave.
+func verificationArtifactsDir(top, outputPath string) string {
+	fallback := filepath.Join(layout.RuntimeDir(top), "verify-artifacts")
+	if outputPath == "" {
+		return fallback
+	}
+	dir, err := filepath.Abs(filepath.Join(filepath.Dir(outputPath), "verify-artifacts"))
+	if err != nil {
+		return fallback
+	}
+	if realDir, err := filepath.EvalSymlinks(filepath.Dir(dir)); err == nil {
+		dir = filepath.Join(realDir, filepath.Base(dir))
+	}
+	rel, err := filepath.Rel(top, dir)
+	inProject := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	if inProject && !strings.Contains(string(filepath.Separator)+rel+string(filepath.Separator), string(filepath.Separator)+".pylon"+string(filepath.Separator)) {
+		return fallback
+	}
+	return dir
+}
+
+// moveVerificationArtifacts moves the untracked files that appeared during verification into dir, replacing what
+// the previous verification left there, and returns their repository-relative paths. The frozen commands rebuild
+// them from HEAD, so moving them keeps the next clean-tree check passing without any ignore rule piling up.
+func moveVerificationArtifacts(top string, before map[string]bool, dir string) []string {
+	_, after := untrackedFiles(top)
+	if after == nil || os.RemoveAll(dir) != nil {
+		return nil
+	}
+	var created []string
+	for path := range after {
+		if !before[path] {
+			created = append(created, path)
+		}
+	}
+	sort.Strings(created)
+	var moved []string
+	for _, path := range created {
+		src, dst := filepath.Join(top, path), filepath.Join(dir, path)
+		if os.MkdirAll(filepath.Dir(dst), 0o755) != nil {
+			continue
+		}
+		// shortcut: rename only; across filesystems the file stays and the tree goes unrecorded (fail-closed).
+		if os.Rename(src, dst) != nil {
+			continue
+		}
+		moved = append(moved, path)
+		// Directories the step created (__pycache__/, coverage/) are left empty; stop at the first non-empty one.
+		for parent := filepath.Dir(src); parent != top && strings.HasPrefix(parent, top+string(filepath.Separator)); parent = filepath.Dir(parent) {
+			if os.Remove(parent) != nil {
+				break
 			}
 		}
 	}
-	// update-index applies only the first mark option per path, so each mark needs its own call.
-	if assumed.Len() > 0 {
-		if _, err := s.git(assumed.String(), "update-index", "--no-assume-unchanged", "-z", "--stdin"); err != nil {
-			return ""
-		}
-	}
-	if skipped.Len() > 0 {
-		if _, err := s.git(skipped.String(), "update-index", "--no-skip-worktree", "-z", "--stdin"); err != nil {
-			return ""
-		}
-	}
-	if _, err := s.git("", append([]string{"add", "-A"}, treePathspec...)...); err != nil {
-		return ""
-	}
-	// A tree cannot carry edits inside submodules or nested repositories; their untracked files are not edits.
-	if _, err := s.git("", append([]string{"diff-files", "--quiet", "--ignore-submodules=untracked"}, treePathspec...)...); err != nil {
-		return ""
-	}
-	tree, err := s.git("", "write-tree")
-	if err != nil {
-		return ""
-	}
-	return tree
-}
-
-// onlyAdditionsSince reports whether the working tree still matches before apart from newly added files.
-func (s *treeSnapshots) onlyAdditionsSince(before string) bool {
-	after := s.tree()
-	if after == "" {
-		return false
-	}
-	if after == before {
-		return true
-	}
-	changed, err := s.git("", "diff-tree", "-r", "--no-renames", "--name-only", "--diff-filter=a", before, after)
-	return err == nil && changed == ""
+	return moved
 }
 
 func failVerification(cmd *cobra.Command, outputPath, manifestPath string, result verificationResult, eventType string, cause error) error {

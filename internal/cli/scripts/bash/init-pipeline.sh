@@ -39,8 +39,12 @@ if [[ -n "$GIT_ROOT_ARG" && -n "$PIPELINE_DIR_ARG" ]]; then
   EXPECTED_BRANCH="task-${ROOT_PIPELINE_ID}-${REPO_ID}"
 
   # Create or checkout branch in target repo
-  if ! git -C "$GIT_ROOT" diff --quiet || ! git -C "$GIT_ROOT" diff --cached --quiet; then
-    die "$GIT_ROOT_ARG 에 uncommitted changes가 있습니다. commit 또는 stash 후 다시 실행하세요."
+  # 검증은 깨끗한 작업 트리의 HEAD만 기록하므로 run도 깨끗하게 시작한다 — 이후 남는 파일은 모두 이 run의 것이다.
+  UNCOMMITTED=$(git -C "$GIT_ROOT" status --porcelain --untracked-files=normal --ignore-submodules=untracked \
+    -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees')
+  if [[ -n "$UNCOMMITTED" ]]; then
+    die "$GIT_ROOT_ARG 에 커밋되지 않은 변경·추적 안 된 파일이 있습니다. commit, 'git stash -u', 또는 .git/info/exclude 추가 후 다시 실행하세요:
+$UNCOMMITTED"
   fi
   if [[ -f "$SUB_PIPELINE_DIR/status.json" ]]; then
     STORED_REPO=$(jq -r '.repo // ""' "$SUB_PIPELINE_DIR/status.json")
