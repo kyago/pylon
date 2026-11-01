@@ -116,6 +116,27 @@ Desired-state for `.claude/commands/` is computed by `buildDesiredClaudeCommands
 the embeds, then user commands from `.pylon/commands/`) and applied by both `generateClaudeDir` and
 `pylon doctor`, so the launch path and the maintenance path can never drift.
 
+### Verification evidence contract (`internal/cli/verify_worktree.go`)
+
+`verification.json`'s `tree` claims one thing: the frozen checks passed on exactly this commit's project content.
+Project content is the repository minus ignored files, `.pylon/` and `.claude/worktrees/` (`treePathspec`); ignored
+files are local environment and `.pylon/` is pylon state, so neither is part of the claim. Two things must never
+happen, and changes here are judged against them:
+
+1. **A `tree` for code that was not checked.** No tree when, before or after the checks, there is any uncommitted
+   or untracked project file, a staged `.pylon/` edit, a file marked assume-unchanged/skip-worktree present on disk,
+   a tracked edit made by a step, a moved HEAD, or a result that is not `ok`.
+2. **A user file lost.** Pylon never deletes a project file. It only moves untracked files, only into a
+   `.pylon/runtime/` directory, never through a symlink, and replaces only its own earlier artifact at the same path
+   once the new one is in place; emptied directories stay. Run leftovers move only when listed, each call into a
+   fresh directory, and outlive the run (`cleanup-pipeline.sh` keeps them in `.pylon/runtime/leftovers/<run>/`).
+
+Everything else fails closed — no `tree`, a `tree_reason`, and the caller re-verifies or stops — rather than being
+handled: marked files on disk, cross-filesystem moves, edits inside nested repositories, a dirty start (its new
+files stay where they are). Non-goals: unstaged edits to tracked `.pylon/` files, and files another process creates
+in the worktree during verification (moved with the artifacts, recoverable there). A review finding outside these
+two rules is a known limit, not a bug; prefer failing closed over new handling code.
+
 ### Package layout
 
 - `cmd/pylon/main.go` — entry point; sets version, calls `cli.Execute()`.

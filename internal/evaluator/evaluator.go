@@ -148,7 +148,7 @@ func Prepare(options PrepareOptions) (Request, error) {
 	if options.OutputDir == "" || options.ImplementationRoot == "" || options.ManifestPath == "" {
 		return Request{}, fmt.Errorf("%w: implementation root, output directory, and manifest are required", ErrInvalidInput)
 	}
-	inside, err := isWithin(options.ImplementationRoot, options.OutputDir)
+	inside, err := fsutil.IsWithin(options.ImplementationRoot, options.OutputDir)
 	if err != nil {
 		return Request{}, err
 	}
@@ -493,11 +493,11 @@ func Record(options RecordOptions) (Verdict, error) {
 	if err != nil {
 		return Verdict{}, err
 	}
-	insideManifest, err := isWithin(manifestDir, outputPath)
+	insideManifest, err := fsutil.IsWithin(manifestDir, outputPath)
 	if err != nil {
 		return Verdict{}, err
 	}
-	insideBundle, err := isWithin(options.BundleDir, outputPath)
+	insideBundle, err := fsutil.IsWithin(options.BundleDir, outputPath)
 	if err != nil {
 		return Verdict{}, err
 	}
@@ -611,22 +611,6 @@ func fileDigest(path string) (string, int64, error) {
 func digestBytes(data []byte) string {
 	digest := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(digest[:])
-}
-
-func isWithin(root, target string) (bool, error) {
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return false, err
-	}
-	targetAbs, err := filepath.Abs(target)
-	if err != nil {
-		return false, err
-	}
-	relative, err := filepath.Rel(rootAbs, targetAbs)
-	if err != nil {
-		return false, err
-	}
-	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))), nil
 }
 
 func makeWritable(root string) error {

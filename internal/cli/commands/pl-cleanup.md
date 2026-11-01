@@ -19,7 +19,7 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
 - 미커밋 변경(`git status`)과 미푸시 커밋(upstream이 있으면 `git log @{u}..HEAD`, 없으면 `git log origin/<base>..HEAD`)
 - `.pylon/runtime/` 아래의 run 전부: root run(`status.json`의 `scope`가 `root`), repo-scope run, `status.json`이 없는
   디렉토리. root run 안의 `repos/<id>/`는 그 run의 일부이며 상태는 root run의 `status`를 따르고, `pylon init`이 만드는
-  `memory/`·`sessions/`는 run이
+  `memory/`·`sessions/`와 pylon이 옮긴 파일을 두는 `verify-artifacts/`·`leftovers/`는 run이
   아닙니다. 대화에 pipeline id가 나온 run이 **이번 세션의 run**입니다. `status`가 `awaiting_cleanup`이면
   `/pl:pipeline`이 끝나 마감을 기다리는 run입니다
 
@@ -50,10 +50,11 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
   - 이 대화에서 돌린 검증 출력. 검증을 돌린 커밋이 머지된 PR의 head(`gh pr view <번호> --json headRefOid`)와 같을
     때만 근거가 됩니다.
   - PR의 체크 결과(`gh pr checks <번호>`). "no checks reported"는 실패가 아니라 "PR 체크 없음"으로 보고합니다.
-  - 파이프라인 run의 `verification.json`·`evaluator-result.json`. 검증은 커밋 전 작업 트리에서도 돌기 때문에
-    커밋이 아니라 tree로 대조합니다 — `verification.json`의 `tree`가 머지된 PR head의 tree
-    (`git -C <repo> rev-parse "<headRefOid>^{tree}"`)와 같을 때만 근거가 됩니다. `tree`가 없거나(이전 버전 run,
-    검증 중 파일을 고친 단계), 명령이 실패하거나(head 커밋이 로컬에 없음), 값이 다르면 검증 뒤 코드가 바뀐 것이므로
+  - 파이프라인 run의 `verification.json`·`evaluator-result.json`. `tree`는 깨끗한 작업 트리에서 검증한 HEAD의
+    tree이고, rebase·merge 뒤에도 같은 코드면 일치하도록 커밋이 아니라 tree로 대조합니다 — `verification.json`의
+    `tree`가 머지된 PR head의 tree(`git -C <repo> rev-parse "<headRefOid>^{tree}"`)와 같을 때만 근거가 됩니다.
+    `tree`가 없거나(이전 버전 run, 미커밋 상태에서 검증, 검증 중 파일을 고친 단계 — `tree_reason` 참고), 명령이
+    실패하거나(head 커밋이 로컬에 없음), 값이 다르면 검증 뒤 코드가 바뀐 것이므로
     위 두 근거로 확인합니다. `evaluator-result.json`은 판정에 쓴 사본
     `evaluator-input/deterministic-verification.json`의 `tree`로 따로 대조합니다 — `/pl:pr`이 다시 검증하면
     `verification.json`만 새로 바뀝니다.
@@ -122,6 +123,8 @@ pylon mem store --project <프로젝트> --category decision --key <슬러그> -
 **정리 전 준비.**
 - 각 sub의 `repo`, `branch`, `base_revision`(root `status.json`)과 `base_branch`(sub의 `status.json`)를 기록해 둡니다.
   정리하면 `status.json`이 사라지는데 Step 6에 필요합니다.
+- sub 폴더의 `leftovers/`(커밋하지 않은 run 잔여물)는 지워지지 않습니다. 정리 스크립트가
+  `.pylon/runtime/leftovers/<run>/`으로 옮기고 출력의 `kept`에 남기므로, 그 경로를 보고에 적습니다.
 - 메인 체크아웃이 run 브랜치에 있고(`init-pipeline.sh`가 task 브랜치를 체크아웃한다) 미커밋 변경이 없으면 base
   브랜치로 전환하고 `git pull --ff-only`로 맞춥니다.
 

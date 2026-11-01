@@ -120,6 +120,32 @@ func TestInitPipelineRejectsOwnedBranchThatLostBaseAncestry(t *testing.T) {
 	}
 }
 
+// 검증은 깨끗한 트리의 HEAD만 기록하므로 run도 깨끗하게 시작해야 한다. .pylon/과 에이전트 워크트리는 프로젝트 변경이 아니다.
+func TestInitPipelineRejectsUntrackedFiles(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	if err := os.WriteFile(filepath.Join(repo, ".pylon", "verify.yml"), []byte("build: {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "notes.txt"), []byte("draft\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	root := runInitPipeline(t, workspace, "dirty start")
+
+	cmd := exec.Command(filepath.Join(layout.ScriptsDir(workspace), "init-pipeline.sh"),
+		"dirty start", "--git-root", "service-a", "--pipeline-dir", root.PipelineDir)
+	cmd.Dir = workspace
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "notes.txt") || strings.Contains(string(output), "verify.yml") {
+		t.Fatalf("추적 안 된 notes.txt만 거부 사유여야 한다 (err=%v): %s", err, output)
+	}
+
+	if err := os.Remove(filepath.Join(repo, "notes.txt")); err != nil {
+		t.Fatal(err)
+	}
+	runInitPipeline(t, workspace, "dirty start", "--git-root", "service-a", "--pipeline-dir", root.PipelineDir)
+}
+
 func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	workspace := setupPipelineScriptWorkspace(t)
 	repo, _ := initGitRepo(t, workspace, "service-a")
@@ -145,6 +171,13 @@ func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	assertBranchExists(t, repo, agentBranch)
 
 	if _, err := history.NewManager(workspace).Checkpoint(root.PipelineID, history.PhaseCompleted); err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(sub.PipelineDir, "leftovers", "20260101T000000Z-1", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(leftover), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leftover, []byte("user\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	readOnlyDir := filepath.Join(sub.PipelineDir, "evaluator-input")
@@ -181,6 +214,11 @@ func TestCleanupPipelineRequiresMatchingTerminalCheckpoint(t *testing.T) {
 	}
 	if _, err := os.Stat(sub.PipelineDir); !os.IsNotExist(err) {
 		t.Fatalf("runtime still exists after checkpoint cleanup: %v", err)
+	}
+	kept := filepath.Join(workspace, ".pylon", "runtime", "leftovers", root.PipelineID, "repos", filepath.Base(sub.PipelineDir),
+		"leftovers", "20260101T000000Z-1", "notes.md")
+	if data, err := os.ReadFile(kept); err != nil || string(data) != "user\n" {
+		t.Fatalf("run 잔여물은 정리 뒤에도 보존해야 한다: %q %v\n%s", data, err, output)
 	}
 	assertBranchMissing(t, repo, agentBranch)
 }

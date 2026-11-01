@@ -205,6 +205,7 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
     ├─ [4] repo sub-pipeline ───── repo별 branch + base revision
     ├─ [5] 루트 세션 태스크 분해 ─ tasks.json (repo 소유권 포함)
     ├─ [6] Agent 병렬 실행 ─────── execution-log.json
+    ├─ [6B] repo별 커밋 ─────────── task 브랜치에 이번 run의 변경 커밋
     ├─ [7] repo별 검증 ─────────── verification.json + task-report.json
     ├─ [7B] 격리 evaluator ─────── evaluator-result.json (두 gate 통과 = verified)
     ├─ [8] PR (git.pr.auto_pr=true일 때만, 아니면 /pl:pr)
@@ -231,10 +232,16 @@ live `verify.yml`만 변경되면 frozen 명령을 실행해 증거를 남긴 �
 `verify.yml`의 `held_out` 명령은 별도 `evaluator-only/held-out.json`으로 snapshot되어 일반 build/test/lint 뒤에
 실행되며, 그 경로·내용은 구현 agent 프롬프트나 evaluator bundle에 전달하지 않습니다.
 
-`verification.json`에는 검증한 작업 트리의 git tree 해시(`tree`)가 기록됩니다. 미추적 파일과 assume-unchanged·
-skip-worktree로 숨긴 수정도 디스크 내용대로 담고, 추적 중인 `.pylon/` 파일은 index(stage) 상태로 담습니다. 검증 단계가
-기존 파일을 고치면 생략되고, 새 파일(coverage 등)만 만들면 검증 전 tree가 유지됩니다. `/pl:pr`은 이 tree를 브랜치 tree와 대조해 미커밋이면 커밋을 안내하고 다르면
-재검증한 뒤 PR을 만들며, `/pl:cleanup`은 tree가 머지된 PR head와 같을 때만 그 검증 결과를 근거로 씁니다.
+검증은 커밋된 코드에 대해서만 근거를 남깁니다. 파이프라인은 검증 전에 task 브랜치에 커밋하고(`init-pipeline.sh`는
+추적 안 된 파일까지 없는 깨끗한 트리에서만 시작), `verification.json`의 `tree`에는 작업 트리가 깨끗할 때 검증한
+HEAD의 tree가 기록됩니다. 미커밋 변경·추적 안 된 파일·assume-unchanged/skip-worktree 표시가 붙은 파일·stage된 `.pylon/`
+변경이 있거나, 검증 단계가 추적 파일을 고치거나 커밋하면 `tree` 대신 `tree_reason`이 남습니다. 검증 명령이 새로
+만든 추적 안 된 파일(coverage, `__pycache__` 등)은 HEAD와 동결된 명령으로 다시 만들어지므로 검증이 직접 run 폴더의
+`verify-artifacts/`(같은 경로는 최신본으로 덮어씀)로 옮기고, 커밋 뒤 남은 run 잔여물은 지정한 파일만 `leftovers/<시각>/`으로 옮기고 run을 정리할 때
+`.pylon/runtime/leftovers/<run>/`에 보존합니다 — repo나 ignore 규칙에 쌓이지 않습니다. `/pl:pr`은 이 tree를 브랜치 tree와 대조해 다르면 재검증한 뒤 PR을 만들고,
+`/pl:cleanup`은 tree가 머지된 PR head와 같을 때만 그 검증 결과를 근거로 씁니다. 이 규칙의 정본은 AGENTS.md의
+"Verification evidence contract"입니다 — 검증하지 않은 코드에 tree를 남기지 않고 사용자 파일을 잃지 않으며, 그 밖의
+드문 경우는 tree 없이 실패합니다.
 
 deterministic gate가 통과하면 Pylon은 requirement, criteria snapshot, verification output, diff, task report만
 별도 read-only evaluator bundle로 복사합니다. 결정 evaluator는 `Read/Grep/Glob`과 structured output만
@@ -367,7 +374,8 @@ pylon history checkpoint --pipeline <id> --phase <planned|executed|completed|can
 | 명령어 | 설명 |
 |--------|------|
 | `pylon internal criteria snapshot` | `verify.yml` + acceptance criteria를 `criteria.json`으로 동결하고 digest를 manifest에 결합 |
-| `pylon internal verify` | snapshot 명령으로 deterministic 검증 실행 → `verification.json` (`tree` 포함) |
+| `pylon internal verify` | snapshot 명령으로 deterministic 검증 실행 → `verification.json` (깨끗한 HEAD면 `tree`, 산출물은 `verify-artifacts/`로 이동) |
+| `pylon internal move-untracked` | 지정한 run 잔여물(추적 안 된 파일)을 경로째 run 폴더(`.pylon/runtime/` 아래)로 이동 |
 | `pylon internal evaluator prepare\|record` | 격리 evaluator bundle 생성 / 판정 검증·기록 |
 | `pylon internal trajectory task-report\|failure` | task report / failure record 기록 (failure는 `failed` 체크포인트까지) |
 
@@ -395,7 +403,8 @@ workspace/
 │   ├── runtime/               # (git 무시)
 │   │   ├── {pipeline-id}/     # 논리 root pipeline 산출물 (requirement.md, tasks.json, execution-log.json, status.json ...)
 │   │   │   └── repos/{repo-id}/  # repo sub-pipeline: criteria.json, verification.json, task-report.json,
-│   │   │                         #   evaluator-input/, evaluator-result.json, pr.json, status.json
+│   │   │                         #   evaluator-input/, evaluator-result.json, pr.json, status.json,
+│   │   │                         #   verify-artifacts/(검증 산출물), leftovers/(커밋 안 한 run 잔여물)
 │   │   └── sessions/          # 세션 상태
 │   ├── conversations/         # 대화 이력 (git 무시)
 │   └── history/               # 파일 기반 작업 이력 (git 무시)

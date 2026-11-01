@@ -91,3 +91,5 @@ pipeline이 `execution-log.json`의 task 항목에 `verified: true|false`로 기
 ```
 
 root pipeline에는 branch가 없으며, 서로 다른 repo의 branch를 한 merge 호출에 섞지 않습니다.
+5. 검증 전에 repo마다 이번 변경을 task 브랜치에 커밋합니다 — 절차는 `/pl:pipeline`(`.pylon/builtin/commands/pl-pipeline.md`)
+   Step 6B입니다. 검증은 커밋된 HEAD만 기록합니다.

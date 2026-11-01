@@ -205,6 +205,40 @@ TASK_BRANCH=$(jq -r --arg repo "$REPO" '.sub_pipelines[] | select(.repo == $repo
 다른 repo의 branch를 같은 merge 호출에 섞지 않습니다. merge 실패 시 checkpoint와 runtime을 보존하고
 cleanup을 실행하지 않습니다.
 
+### Step 6B: 커밋
+
+검증은 깨끗한 작업 트리의 커밋된 HEAD만 기록합니다(`verification.json`의 `tree`). 그래서 검증 전에 repo마다 이번
+run의 변경을 task 브랜치에 커밋합니다:
+
+```bash
+REPO="service-a"
+SUB=$(jq -c --arg repo "$REPO" '.sub_pipelines[] | select(.repo == $repo)' "$ROOT_PIPELINE_DIR/status.json")
+TASK_BRANCH=$(echo "$SUB" | jq -r '.branch')
+REPO_PIPELINE_DIR=$(echo "$SUB" | jq -r '.pipeline_dir')
+git -C "$REPO" branch --show-current   # $TASK_BRANCH여야 합니다
+git -C "$REPO" status --porcelain --untracked-files=normal --ignore-submodules=untracked -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees'
+git -C "$REPO" log --oneline -5        # 커밋 메시지 형식
+```
+
+- 현재 브랜치가 `$TASK_BRANCH`가 아니면 멈추고 보고합니다.
+- `execution-log.json`의 변경 파일과 새 테스트만 `git add -- <파일>`로 stage합니다(`git add -A` 금지).
+- 메시지는 repo의 최근 커밋 형식을 따릅니다. 새 커밋만 만듭니다(amend·강제 push 금지 — `create-pr.sh`는 강제 없이
+  push합니다). hook 실패나 git 사용자 정보 누락이면 `--no-verify`로 우회하지 않고 멈춰 보고합니다.
+- 커밋할 변경이 없으면(status가 이미 비어 있음) 커밋을 건너뜁니다.
+- 커밋 뒤에도 남은 파일:
+  - 추적 중인 파일의 변경은 태스크 결과인지 확인해 맞으면 커밋하고, 판단이 서지 않으면 되돌리지 말고 멈춰 보고합니다.
+  - 추적 안 된 소스·테스트 파일은 태스크 결과에서 빠졌는지 확인해 맞으면 커밋합니다.
+  - 나머지(커버리지, 빌드 결과, 임시 파일)는 run이 만든 잔여물입니다 — run은 깨끗한 트리에서 시작합니다
+    (`init-pipeline.sh`가 확인). 지우지 말고 그 파일들을 지정해 경로째 run 폴더로 옮기고(호출마다 새
+    `leftovers/<시각>/` 폴더, 디렉토리를 지정하면 그 아래 추적 안 된 파일 전부) 출력의 `moved` 목록을 완료 보고에
+    남깁니다. 지정하지 않은 파일은 옮기지 않습니다. `/pl:cleanup`은 이 폴더를 지우지 않고
+    `.pylon/runtime/leftovers/<run>/`으로 옮겨 보존합니다:
+
+    ```bash
+    pylon internal move-untracked --workdir "$REPO" --to "$REPO_PIPELINE_DIR/leftovers" -- coverage.out build/
+    ```
+- 위 status가 비어 있어야 Step 7로 갑니다.
+
 ### Step 7: 검증
 
 변경된 **프로젝트마다** `--git-root`로 검증합니다(생략하면 루트에서 돌아 하위 프로젝트의 `verify.yml`을 보지
@@ -219,7 +253,10 @@ REPO_PIPELINE_DIR=$(jq -r --arg repo "$REPO" '.sub_pipelines[] | select(.repo ==
 - snapshot·manifest digest가 맞지 않으면 명령을 실행하지 않고 fail-closed합니다. snapshot 이후 live
   `verify.yml`이 바뀌면 결과는 실패이고 `criteria-events.jsonl`에 이벤트가 남습니다 — 기준 변경을 승인한 뒤
   새 run을 시작합니다.
-- 실패하면 원인을 고쳐 재실행합니다. 실제 출력 없이 다음 단계로 넘어가지 않습니다.
+- 실패하면 원인을 고쳐 Step 6B대로 커밋한 뒤 재실행합니다. 실제 출력 없이 다음 단계로 넘어가지 않습니다.
+- 통과했는데 `tree`가 없으면 `tree_reason`을 봅니다. 미커밋 변경이 남았으면 Step 6B대로 정리하고 재실행합니다.
+  깨끗한 트리에서 시작한 검증이 새로 만든 파일(coverage 등)은 검증이 `$REPO_PIPELINE_DIR/verify-artifacts/`로 직접
+  옮기므로(같은 경로는 최신본으로 덮어씀) 따로 처리하지 않습니다.
 
 deterministic gate가 통과하면 worker 자기 보고가 아니라 `execution-log.json`·변경 파일·verification
 evidence를 근거로 repo 단위 task report를 확정합니다. `summary`에는 테스트 출력 원문이 들어가므로 따옴표 친 heredoc으로 파일에 쓰고 JSON은 `jq`로 만듭니다(따옴표·줄바꿈·`$`가
@@ -251,13 +288,12 @@ pylon internal trajectory task-report \
 deterministic gate가 통과한 repo만 새 evaluator context로 검토합니다. 구현 agent의 대화·memory·prompt 없이
 Pylon이 허용한 증거만 read-only bundle로 복사합니다:
 
-`verification.json`에 `tree`가 없으면 diff에서 추적되지 않은 새 파일(재현 테스트 등)이 빠집니다. 그때는 Step 7
-검증을 다시 실행합니다(포매터가 고친 파일은 두 번째 실행에서 그대로 남습니다). 그래도 `tree`가 없으면 evaluator로
-넘어가지 않고 멈춰 보고합니다:
+`verification.json`에 `tree`가 있어야 evaluator가 커밋된 변경 전체를 봅니다. 없으면 `tree_reason`이 미커밋 변경일
+때 Step 6B대로 정리하고 Step 7을 한 번 더 실행합니다(포매터가 고친 파일은 커밋하면 두 번째 실행에서 그대로
+남습니다). 그래도 `tree`가 없으면 evaluator로 넘어가지 않고 `tree_reason`과 함께 멈춰 보고합니다:
 
 ```bash
 BASE_REVISION=$(jq -r '.base_revision' "$REPO_PIPELINE_DIR/status.json")
-# 검증한 tree와 비교해야 아직 추적되지 않는 새 파일(새 테스트 등)도 diff에 들어갑니다
 VERIFIED_TREE=$(jq -r '.tree // empty' "$REPO_PIPELINE_DIR/verification.json")
 git -C "$REPO" diff --binary "$BASE_REVISION" "$VERIFIED_TREE" > "$REPO_PIPELINE_DIR/change.diff"
 
@@ -309,8 +345,8 @@ VERIFIED=false
 
 `config.yml`의 `git.pr.auto_pr`이 `true`일 때만 실행합니다(기본 비활성, 수동 생성은 `/pl:pr`). repo마다
 `/pl:pr`(`.pylon/builtin/commands/pl-pr.md`) 2단계와 같은 대조 — 현재 브랜치, 검증 통과, 검증 tree와 브랜치 tree 일치,
-미커밋 변경 없음 — 를 통과한 repo만 PR을 만듭니다. 파이프라인은 커밋하지 않으므로 통과하지 못한 repo는 건너뛰고
-커밋·재검증 안내를 보고에 남깁니다:
+추적 중인 파일의 미커밋 변경 없음 — 를 통과한 repo만 PR을 만듭니다. 통과하지 못한 repo는 건너뛰고 커밋·재검증
+안내를 보고에 남깁니다:
 
 ```bash
 source .pylon/builtin/scripts/bash/common.sh
@@ -322,10 +358,10 @@ if [[ "$AUTO_PR" == "true" ]]; then
     TASK_BRANCH=$(echo "$SUB" | jq -r '.branch')
     VERIFIED_TREE=$(jq -r 'select(.ok == true) | .tree // empty' "$REPO_PIPELINE_DIR/verification.json")
     BRANCH_TREE=$(git -C "$REPO" rev-parse "$TASK_BRANCH^{tree}")
-    UNCOMMITTED=$(git -C "$REPO" status --porcelain -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees')
+    UNCOMMITTED=$(git -C "$REPO" status --porcelain --untracked-files=no --ignore-submodules=untracked -- ':(top)' ':(top,glob,exclude)**/.pylon/**' ':(top,exclude).claude/worktrees')
     if [[ "$(git -C "$REPO" branch --show-current)" != "$TASK_BRANCH" || -z "$VERIFIED_TREE" \
           || "$VERIFIED_TREE" != "$BRANCH_TREE" || -n "$UNCOMMITTED" ]]; then
-      echo "PR 보류: $REPO — 미커밋 변경이 있거나 검증한 tree가 $TASK_BRANCH와 다릅니다. 커밋 후 /pl:pr로 진행하세요" >&2
+      echo "PR 보류: $REPO — 미커밋 변경이 있거나 검증한 tree가 $TASK_BRANCH와 다릅니다. /pl:pr로 진행하세요" >&2
       continue
     fi
     .pylon/builtin/scripts/bash/create-pr.sh "$REPO_PIPELINE_DIR" --git-root "$REPO" \

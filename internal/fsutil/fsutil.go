@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -136,4 +137,21 @@ func CopyDir(src, dst string) error {
 		}
 		return out.Close()
 	})
+}
+
+// IsWithin reports whether target is root itself or lies under it, comparing absolute paths.
+func IsWithin(root, target string) (bool, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return false, err
+	}
+	relative, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil {
+		return false, err
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))), nil
 }
