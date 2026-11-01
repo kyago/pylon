@@ -133,16 +133,22 @@ func newInternalVerifyCmd() *cobra.Command {
 				}
 			}
 
-			snapshots, closeSnapshots := newTreeSnapshots(workDir)
-			defer closeSnapshots()
-			treeBefore := snapshots.tree()
+			// No steps means ok=false; a tree is recorded only as evidence for a passing run.
+			var snapshots *treeSnapshots
+			treeBefore := ""
+			if len(steps) > 0 {
+				var closeSnapshots func()
+				snapshots, closeSnapshots = newTreeSnapshots(workDir)
+				defer closeSnapshots()
+				treeBefore = snapshots.tree()
+			}
 			executed, err := executeVerification(workDir, steps, time.Now)
 			if err != nil {
 				return err
 			}
 			// A step that rewrites files (formatter) leaves no single tree the checks ran against; files a step
 			// only adds (coverage.out, build output) were not inputs, so the tree from before still holds.
-			if treeBefore != "" && snapshots.onlyAdditionsSince(treeBefore) {
+			if treeBefore != "" && executed.OK && snapshots.onlyAdditionsSince(treeBefore) {
 				executed.Tree = treeBefore
 			}
 			executed.Skipped = skipped
@@ -261,7 +267,8 @@ func executeVerification(workDir string, steps []config.NamedVerifyStep, now fun
 }
 
 // treePathspec selects a repository's project content: .pylon/ (pylon-local state) and agent worktrees under
-// .claude/worktrees/ are left out. pl-pr.md and pl-pipeline.md pass the same pathspec to `git status`.
+// .claude/worktrees/ are left out, so tracked .pylon/ files keep their index state in the tree. pl-pr.md and
+// pl-pipeline.md pass the same pathspec to `git status`.
 var treePathspec = []string{":(top)", ":(top,glob,exclude)**/.pylon/**", ":(top,exclude).claude/worktrees"}
 
 // treeSnapshots hashes workDir's working tree, untracked files included, so a verdict on uncommitted changes
@@ -357,12 +364,6 @@ func (s *treeSnapshots) tree() string {
 	if _, err := s.git("", append([]string{"add", "-A"}, treePathspec...)...); err != nil {
 		return ""
 	}
-	// Tracked .pylon/ files take their committed blobs, so pylon writing its own state never moves the tree.
-	if _, err := s.git("", "rev-parse", "--verify", "-q", "HEAD"); err == nil {
-		if _, err := s.git("", "reset", "-q", "HEAD", "--", ":(top,glob)**/.pylon/**"); err != nil {
-			return ""
-		}
-	}
 	// A tree cannot carry edits inside submodules or nested repositories; their untracked files are not edits.
 	if _, err := s.git("", append([]string{"diff-files", "--quiet", "--ignore-submodules=untracked"}, treePathspec...)...); err != nil {
 		return ""
@@ -385,13 +386,6 @@ func (s *treeSnapshots) onlyAdditionsSince(before string) bool {
 	}
 	changed, err := s.git("", "diff-tree", "-r", "--no-renames", "--name-only", "--diff-filter=a", before, after)
 	return err == nil && changed == ""
-}
-
-// workingTree returns a single snapshot of workDir's working tree; see treeSnapshots.
-func workingTree(workDir string) string {
-	snapshots, closeSnapshots := newTreeSnapshots(workDir)
-	defer closeSnapshots()
-	return snapshots.tree()
 }
 
 func failVerification(cmd *cobra.Command, outputPath, manifestPath string, result verificationResult, eventType string, cause error) error {

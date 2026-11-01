@@ -326,16 +326,17 @@ func TestWorkingTree_NoFalseMatch(t *testing.T) {
 		}
 	})
 
-	t.Run("추적 중인 .pylon 파일은 커밋된 내용으로 담는다", func(t *testing.T) {
+	// stage만 되고 커밋 안 된 .pylon 수정은 브랜치에 없다. 브랜치 tree와 맞으면 /pl:pr이 그대로 통과시킨다(fail-open).
+	t.Run("stage된 .pylon 수정은 커밋된 tree와 일치하지 않는다", func(t *testing.T) {
 		dir, git := newTreeTestRepo(t)
-		writeTreeTestFile(t, dir, ".pylon/memory/app/a.md", "old\n")
+		writeTreeTestFile(t, dir, ".pylon/config.yml", "old\n")
 		git("add", ".pylon")
 		git("commit", "-q", "-m", "init")
-		writeTreeTestFile(t, dir, ".pylon/memory/app/a.md", "new\n")
+		writeTreeTestFile(t, dir, ".pylon/config.yml", "new\n")
 		git("add", ".pylon")
 
-		if tree, want := workingTree(dir), git("rev-parse", "HEAD^{tree}"); tree != want {
-			t.Fatalf("stage만 된 .pylon 수정이 tree를 바꾸면 브랜치 tree와 영영 맞지 않는다: tree=%q head=%q", tree, want)
+		if tree := workingTree(dir); tree == "" || tree == git("rev-parse", "HEAD^{tree}") {
+			t.Fatalf("stage된 .pylon 수정이 tree에 남아야 한다: %q", tree)
 		}
 	})
 }
@@ -356,6 +357,12 @@ func TestPRCommandsUseTreePathspec(t *testing.T) {
 			t.Errorf("%s의 git status가 treePathspec과 다르다: %q 필요", name, want)
 		}
 	}
+}
+
+func workingTree(workDir string) string {
+	snapshots, closeSnapshots := newTreeSnapshots(workDir)
+	defer closeSnapshots()
+	return snapshots.tree()
 }
 
 func newTreeTestRepo(t *testing.T) (string, func(args ...string) string) {

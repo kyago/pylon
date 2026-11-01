@@ -251,11 +251,15 @@ pylon internal trajectory task-report \
 deterministic gate가 통과한 repo만 새 evaluator context로 검토합니다. 구현 agent의 대화·memory·prompt 없이
 Pylon이 허용한 증거만 read-only bundle로 복사합니다:
 
+`verification.json`에 `tree`가 없으면 diff에서 추적되지 않은 새 파일(재현 테스트 등)이 빠집니다. 그때는 Step 7
+검증을 다시 실행합니다(포매터가 고친 파일은 두 번째 실행에서 그대로 남습니다). 그래도 `tree`가 없으면 evaluator로
+넘어가지 않고 멈춰 보고합니다:
+
 ```bash
 BASE_REVISION=$(jq -r '.base_revision' "$REPO_PIPELINE_DIR/status.json")
 # 검증한 tree와 비교해야 아직 추적되지 않는 새 파일(새 테스트 등)도 diff에 들어갑니다
 VERIFIED_TREE=$(jq -r '.tree // empty' "$REPO_PIPELINE_DIR/verification.json")
-git -C "$REPO" diff --binary "$BASE_REVISION" ${VERIFIED_TREE:+"$VERIFIED_TREE"} > "$REPO_PIPELINE_DIR/change.diff"
+git -C "$REPO" diff --binary "$BASE_REVISION" "$VERIFIED_TREE" > "$REPO_PIPELINE_DIR/change.diff"
 
 pylon internal evaluator prepare \
   --task-id "repo-final" \

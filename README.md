@@ -232,7 +232,7 @@ live `verify.yml`만 변경되면 frozen 명령을 실행해 증거를 남긴 �
 실행되며, 그 경로·내용은 구현 agent 프롬프트나 evaluator bundle에 전달하지 않습니다.
 
 `verification.json`에는 검증한 작업 트리의 git tree 해시(`tree`)가 기록됩니다. 미추적 파일과 assume-unchanged·
-skip-worktree로 숨긴 수정도 디스크 내용대로 담고, 추적 중인 `.pylon/` 파일은 커밋된 내용으로 담습니다. 검증 단계가
+skip-worktree로 숨긴 수정도 디스크 내용대로 담고, 추적 중인 `.pylon/` 파일은 index(stage) 상태로 담습니다. 검증 단계가
 기존 파일을 고치면 생략되고, 새 파일(coverage 등)만 만들면 검증 전 tree가 유지됩니다. `/pl:pr`은 이 tree를 브랜치 tree와 대조해 미커밋이면 커밋을 안내하고 다르면
 재검증한 뒤 PR을 만들며, `/pl:cleanup`은 tree가 머지된 PR head와 같을 때만 그 검증 결과를 근거로 씁니다.
 
