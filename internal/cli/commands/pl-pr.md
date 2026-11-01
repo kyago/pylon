@@ -35,7 +35,8 @@ description: "Pull Request 생성"
      `tree`가 `$BRANCH^{tree}`와 같을 때만 진행합니다. 그래도 맞지 않으면 멈추고 이유를 보고합니다:
      `.pylon/builtin/scripts/bash/run-verification.sh "$ARGUMENTS" --git-root "$REPO"`
 3. PR 제목과 본문을 작성합니다
-4. PR을 생성합니다:
+4. PR을 생성합니다. `create-pr.sh`는 브랜치를 항상 push하므로 PR head는 2단계에서 대조한 로컬 브랜치입니다 — 원격이
+   앞서 있으면 push가 거부되고 멈춥니다(강제 push하지 않습니다). 그때는 원격 커밋을 받아 2단계부터 다시 합니다:
 
 ```bash
 .pylon/builtin/scripts/bash/create-pr.sh "$ARGUMENTS" --git-root "$REPO" --branch "$BRANCH" --title "feat: [요약]" --body "[본문]"

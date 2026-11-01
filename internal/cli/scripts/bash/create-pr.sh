@@ -45,10 +45,9 @@ if is_protected_branch "$CURRENT_BRANCH"; then
   die "protected branch '$CURRENT_BRANCH'에서 PR을 생성할 수 없습니다. --branch <브랜치명>을 지정하세요."
 fi
 
-# Push branch to remote if not already pushed
-if ! git ls-remote --exit-code --heads origin "$CURRENT_BRANCH" &>/dev/null; then
-  git push -u origin "$CURRENT_BRANCH" || die "브랜치 push 실패: $CURRENT_BRANCH"
-fi
+# Always push: the PR is opened at the remote head, which must be the local branch that was checked.
+# A diverged remote is rejected (no force) rather than silently used.
+git push -u origin "$CURRENT_BRANCH" || die "브랜치 push 실패: $CURRENT_BRANCH (원격이 앞서 있으면 받아서 다시 검증하세요)"
 
 # Read requirement for default title
 if [[ -z "$TITLE" && -f "$PIPELINE_DIR/requirement.md" ]]; then

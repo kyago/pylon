@@ -236,6 +236,22 @@ func TestInternalVerify_OmitsTreeWhenStepEditsFiles(t *testing.T) {
 	}
 }
 
+// 검증이 새로 만든 파일(coverage.out 등)은 검사 입력이 아니다. 검증 전 tree를 남겨야 Step 7B diff가 새 테스트를 담는다.
+func TestInternalVerify_KeepsTreeWhenStepOnlyAddsFiles(t *testing.T) {
+	dir, git := newTreeTestRepo(t)
+	writeTreeTestFile(t, dir, "main.go", "package main\n")
+	git("add", "main.go")
+	git("commit", "-q", "-m", "init")
+	writeTreeTestFile(t, dir, "repro_test.go", "package main\n")
+
+	result := runTreeTestVerify(t, dir, "echo cover > coverage.out")
+	git("add", "repro_test.go")
+	git("commit", "-q", "-m", "repro")
+	if want := git("rev-parse", "HEAD^{tree}"); result.Tree != want {
+		t.Fatalf("tree = %q, 검증 전 작업 트리(새 테스트 포함, coverage.out 제외) %q와 같아야 한다", result.Tree, want)
+	}
+}
+
 // 기록한 tree가 검증한 내용과 다른 커밋에 일치하면 안 된다(false match).
 func TestWorkingTree_NoFalseMatch(t *testing.T) {
 	t.Run("같은 크기 수정이 index와 같은 초에 일어나도 새 내용을 해시한다", func(t *testing.T) {
@@ -265,18 +281,28 @@ func TestWorkingTree_NoFalseMatch(t *testing.T) {
 		}
 	})
 
-	t.Run("assume-unchanged로 숨긴 수정이 있으면 비운다", func(t *testing.T) {
-		dir, git := newTreeTestRepo(t)
-		writeTreeTestFile(t, dir, "conf.go", "old\n")
-		git("add", "conf.go")
-		git("commit", "-q", "-m", "init")
-		git("update-index", "--assume-unchanged", "conf.go")
-		writeTreeTestFile(t, dir, "conf.go", "new\n")
+	// 검사는 디스크의 내용으로 돈다. index 표시로 숨긴 수정도 tree에 담아야 한다.
+	for _, mark := range []string{"--assume-unchanged", "--skip-worktree"} {
+		t.Run(mark+"로 숨긴 수정도 담는다", func(t *testing.T) {
+			dir, git := newTreeTestRepo(t)
+			writeTreeTestFile(t, dir, "conf.go", "old\n")
+			git("add", "conf.go")
+			git("commit", "-q", "-m", "init")
+			git("update-index", mark, "conf.go")
+			writeTreeTestFile(t, dir, "conf.go", "new\n")
 
-		if tree := workingTree(dir); tree != "" {
-			t.Fatalf("tree에 실을 수 없는 수정이 있으면 비워야 한다: %q", tree)
-		}
-	})
+			tree := workingTree(dir)
+			if flags := git("ls-files", "-v", "conf.go"); flags[0] == 'H' {
+				t.Fatalf("검증이 실제 index의 표시를 지우면 안 된다: %q", flags)
+			}
+			git("update-index", "--no"+strings.TrimPrefix(mark, "-"), "conf.go")
+			git("add", "conf.go")
+			git("commit", "-q", "-m", "fix")
+			if want := git("rev-parse", "HEAD^{tree}"); tree != want {
+				t.Fatalf("tree = %q, 숨긴 수정을 커밋한 tree %q와 같아야 한다", tree, want)
+			}
+		})
+	}
 
 	t.Run("내장 저장소 안의 수정이 있으면 비운다", func(t *testing.T) {
 		dir, git := newTreeTestRepo(t)
@@ -291,7 +317,45 @@ func TestWorkingTree_NoFalseMatch(t *testing.T) {
 		if tree := workingTree(dir); tree != "" {
 			t.Fatalf("gitlink는 내장 저장소의 미커밋 수정을 담지 못하므로 비워야 한다: %q", tree)
 		}
+
+		// 추적 안 된 파일(node_modules, 빌드 결과)만 있으면 수정이 아니다.
+		git("-C", inner, "checkout", "-q", "--", "lib.go")
+		writeTreeTestFile(t, dir, "lib/build.out", "bin\n")
+		if tree := workingTree(dir); tree == "" {
+			t.Fatal("내장 저장소에 추적 안 된 파일만 있으면 tree를 기록해야 한다")
+		}
 	})
+
+	t.Run("추적 중인 .pylon 파일은 커밋된 내용으로 담는다", func(t *testing.T) {
+		dir, git := newTreeTestRepo(t)
+		writeTreeTestFile(t, dir, ".pylon/memory/app/a.md", "old\n")
+		git("add", ".pylon")
+		git("commit", "-q", "-m", "init")
+		writeTreeTestFile(t, dir, ".pylon/memory/app/a.md", "new\n")
+		git("add", ".pylon")
+
+		if tree, want := workingTree(dir), git("rev-parse", "HEAD^{tree}"); tree != want {
+			t.Fatalf("stage만 된 .pylon 수정이 tree를 바꾸면 브랜치 tree와 영영 맞지 않는다: tree=%q head=%q", tree, want)
+		}
+	})
+}
+
+// pl-pr.md와 pl-pipeline.md의 `git status`는 tree와 같은 범위를 봐야 미커밋 판정과 tree 대조가 어긋나지 않는다.
+func TestPRCommandsUseTreePathspec(t *testing.T) {
+	quoted := make([]string, len(treePathspec))
+	for i, spec := range treePathspec {
+		quoted[i] = "'" + spec + "'"
+	}
+	want := "status --porcelain -- " + strings.Join(quoted, " ")
+	for _, name := range []string{"commands/pl-pr.md", "commands/pl-pipeline.md"} {
+		content, err := embeddedCommands.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), want) {
+			t.Errorf("%s의 git status가 treePathspec과 다르다: %q 필요", name, want)
+		}
+	}
 }
 
 func newTreeTestRepo(t *testing.T) (string, func(args ...string) string) {
