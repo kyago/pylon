@@ -55,7 +55,8 @@ func FindWorkspaceRoot(startDir string) (string, error) {
 
 // DiscoverProjects scans the workspace root for project directories.
 // A project is identified as a subdirectory containing its own .pylon/ directory
-// or being added as a standalone git clone in the workspace.
+// or being added as a standalone git clone in the workspace. Linked git worktrees
+// are checkouts of a repository rather than projects, so they are skipped.
 // Spec Reference: Section 4 "Workspace Structure"
 func DiscoverProjects(root string) ([]ProjectInfo, error) {
 	var projects []ProjectInfo
@@ -77,6 +78,9 @@ func DiscoverProjects(root string) ([]ProjectInfo, error) {
 		}
 
 		projectDir := filepath.Join(root, name)
+		if isLinkedWorktree(projectDir) {
+			continue
+		}
 
 		// Check if directory has its own .pylon/ (project-level config)
 		projectPylonDir := filepath.Join(projectDir, ".pylon")
@@ -89,4 +93,23 @@ func DiscoverProjects(root string) ([]ProjectInfo, error) {
 	}
 
 	return projects, nil
+}
+
+// isLinkedWorktree reports whether dir is a linked git worktree: its .git is a gitlink
+// file whose git dir has a commondir file (a submodule's git dir has none). A worktree
+// whose main repository has moved has no git dir to inspect and is reported as false.
+func isLinkedWorktree(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil {
+		return false
+	}
+	gitDir, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir: ")
+	if !ok {
+		return false
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(dir, gitDir)
+	}
+	_, err = os.Stat(filepath.Join(gitDir, "commondir"))
+	return err == nil
 }

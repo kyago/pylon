@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -208,5 +209,51 @@ func TestDiscoverProjects_NoProjects(t *testing.T) {
 
 	if len(projects) != 0 {
 		t.Errorf("expected 0 projects, got %d", len(projects))
+	}
+}
+
+func TestDiscoverProjects_SkipsLinkedWorktrees(t *testing.T) {
+	root := t.TempDir()
+	source := t.TempDir()
+
+	git := func(dir string, args ...string) {
+		t.Helper()
+		base := []string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "protocol.file.allow=always"}
+		cmd := exec.Command("git", append(base, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	for _, dir := range []string{root, source} {
+		git(dir, "init")
+		git(dir, "commit", "--allow-empty", "-m", "init")
+	}
+
+	if err := os.Mkdir(filepath.Join(root, "clone"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	git(filepath.Join(root, "clone"), "init")
+	git(root, "submodule", "add", source, "sub")
+	git(root, "worktree", "add", "wt")
+	git(root, "-c", "worktree.useRelativePaths=true", "worktree", "add", "wt-rel")
+
+	for _, name := range []string{"clone", "plain", "sub", "wt", "wt-rel"} {
+		if err := os.MkdirAll(filepath.Join(root, name, ".pylon"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	projects, err := DiscoverProjects(root)
+	if err != nil {
+		t.Fatalf("DiscoverProjects failed: %v", err)
+	}
+
+	var names []string
+	for _, p := range projects {
+		names = append(names, p.Name)
+	}
+	if got, want := strings.Join(names, ","), "clone,plain,sub"; got != want {
+		t.Errorf("projects = %q, want %q", got, want)
 	}
 }
