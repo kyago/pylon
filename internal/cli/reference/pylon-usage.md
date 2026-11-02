@@ -25,7 +25,7 @@
   저장소에 없는 것이 정상이며 이를 문제로 보고하지 않습니다. 부재 시 `pylon doctor`가
   기술 스택을 감지해 재생성합니다 (`.pylon/`이 있는 프로젝트 기준 — 디렉토리째 없으면
   `pylon add-project <name> --skip-clone`으로 초기화). 그런 워크트리에는 재생성하지 않으니 메인 체크아웃의
-  verify.yml을 씁니다. 팀 공통 검증 기준은 CI 설정/Makefile에 두고
+  verify.yml을 `pylon internal verify --workdir <워크트리> --config <파일>`로 씁니다. 팀 공통 검증 기준은 CI 설정/Makefile에 두고
   verify.yml은 그것을 호출하게 합니다(예: `command: make test`). 파이프라인 run 중에는
   criteria snapshot으로 동결되므로 검증 기준의 단일 출처는 run 단위로 보장됩니다.
 - 프로젝트 메모리: `pylon mem list --project <name>` / `pylon mem search`.

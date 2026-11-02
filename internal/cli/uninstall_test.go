@@ -550,6 +550,12 @@ func TestBuildUninstallPlan_WorktreeKeepsDirButClearsMarker(t *testing.T) {
 		}
 	}
 
+	// A regular file named .pylon is the user's, not a pylon marker.
+	runGit(t, app, "worktree", "add", filepath.Join(root, "wt-file"))
+	if err := os.WriteFile(filepath.Join(root, "wt-file", ".pylon"), []byte("note\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	plan, err := buildUninstallPlan(root, true, false)
 	if err != nil {
 		t.Fatalf("buildUninstallPlan() error: %v", err)

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -106,16 +107,12 @@ func scanPylonDirs(root string, worktrees bool) ([]ProjectInfo, error) {
 }
 
 // IsWorkspaceWorktree reports whether dir is a linked git worktree whose main checkout
-// is the workspace root or one of its direct subdirectories. Any other worktree (main
-// checkout outside the workspace, bare or separate git dir) may be the only checkout
-// here, so it stays a project. shortcut: a worktree whose main repository moved has no
-// git dir to inspect and reports false, fix it with `git worktree repair`.
+// is the workspace root or a non-hidden direct subdirectory, per the discovery contract
+// in AGENTS.md. Anything uncertain reports false, so a real project never disappears.
+// shortcut: a worktree whose main repository moved has no git dir to inspect and reports
+// false, fix it with `git worktree repair`.
 func IsWorkspaceWorktree(root, dir string) bool {
 	// Resolved first: git follows symlinks, while filepath.Join cleans ".." textually.
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return false
-	}
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return false
@@ -144,6 +141,23 @@ func IsWorkspaceWorktree(root, dir string) bool {
 	if err != nil || filepath.Base(commonDir) != ".git" {
 		return false
 	}
+	out, err := exec.Command("git", "--git-dir", commonDir, "rev-parse", "--is-bare-repository").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "false" {
+		return false
+	}
+	// os.SameFile: path spelling differs in case and normalization on APFS.
 	mainDir := filepath.Dir(commonDir)
-	return mainDir == realRoot || filepath.Dir(mainDir) == realRoot
+	if sameDir(mainDir, root) {
+		return true
+	}
+	return !strings.HasPrefix(filepath.Base(mainDir), ".") && sameDir(filepath.Dir(mainDir), root)
+}
+
+func sameDir(a, b string) bool {
+	aInfo, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bInfo, err := os.Stat(b)
+	return err == nil && os.SameFile(aInfo, bInfo)
 }

@@ -157,7 +157,9 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 		return nil, fmt.Errorf("failed to discover worktrees: %w", err)
 	}
 	for _, w := range worktrees {
-		plan.projectPylons = append(plan.projectPylons, layout.PylonDir(w.Path))
+		if dir := layout.PylonDir(w.Path); dirExists(dir) {
+			plan.projectPylons = append(plan.projectPylons, dir)
+		}
 	}
 
 	// 3. Workspace .pylon/
