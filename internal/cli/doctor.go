@@ -703,7 +703,6 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 		dir string
 	}{
 		{embeddedAgents, "agents"},
-		{embeddedSkills, "skills"},
 		{embeddedCommands, "commands"},
 		{embeddedScripts, "scripts/bash"},
 		{embeddedReference, "reference"},

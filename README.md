@@ -109,8 +109,6 @@ mkdir my-workspace && cd my-workspace
 pylon init
 ```
 
-실행 중 PR 리뷰어 GitHub 이름을 묻습니다. Enter로 건너뛸 수 있습니다.
-
 ### 2. 프로젝트 추가
 
 ```bash
@@ -163,7 +161,7 @@ Claude Code 실행 권한을 설정합니다
 2. **리뷰·머지**: 머지 여부는 사용자가 결정합니다.
 3. **마무리**: 머지 후 `/pl:cleanup`. 메모리·도메인 지식을 갱신하고 run을 마감한 뒤, 머지된 브랜치·워크트리를 정리합니다.
 
-파이프라인 없이 대화로 작업한 세션도 `/pl:cleanup`으로 끝냅니다. PR이 없는 리서치·콘텐츠·마케팅 작업은 최종본을 확인한 뒤 바로 3번으로 갑니다.
+파이프라인 없이 대화로 작업한 세션도 `/pl:cleanup`으로 끝냅니다.
 
 ## 동작 방식
 
@@ -227,8 +225,7 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 ```
 
 bugfix·hotfix는 결함 재현을 첫 수용 기준으로 두고, 재현 테스트(수정 전 실패)를 첫 태스크로 실행한 뒤 수정
-태스크가 그것에 의존합니다. 리서치·콘텐츠·마케팅은 조사 → (전략) → 초안 → 팩트 체크·편집 → 수정 루프(최대 3회)
-→ 최종본 흐름을 따릅니다.
+태스크가 그것에 의존합니다.
 
 ### 검증 게이트
 
@@ -298,11 +295,9 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 | `/pl:execute` | 에이전트 병렬 실행 |
 | `/pl:verify` | 빌드/테스트/린트 교차 검증 |
 
-## 내장 에이전트 (20종)
+## 내장 에이전트 (14종)
 
-`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). 루트 세션이 요구사항의 도메인을 판별해 적절한 에이전트를 고릅니다.
-
-### 소프트웨어 개발 (14종)
+`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). 루트 세션이 작업에 맞는 에이전트를 고릅니다.
 
 | 에이전트 | 역할 |
 |----------|------|
@@ -320,17 +315,6 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 | devops | DevOps (인프라, CI, 배포 설정) |
 | git-master | Git 워크플로 |
 | designer | UI/UX 디자이너 |
-
-### 리서치·콘텐츠·마케팅 (6종)
-
-| 에이전트 | 역할 |
-|----------|------|
-| writer | 작가 (콘텐츠, 보고서, 카피) |
-| editor | 편집자 (콘텐츠 QA) |
-| strategist | 전략가 (콘텐츠, 브랜드, 캠페인) |
-| market-researcher | 시장 조사 분석가 |
-| fact-checker | 팩트 체커 (교차 검증) |
-| seo-specialist | SEO 전문가 |
 
 ## CLI 명령어
 
@@ -410,8 +394,7 @@ workspace/
 ├── .pylon/                    # 소스 오브 트루스 (git 추적)
 │   ├── config.yml             # 워크스페이스 설정
 │   ├── builtin/               # 내장 리소스 (git 무시, 실행·doctor마다 파일 단위로 임베드와 동기화)
-│   │   ├── agents/            # 에이전트 정의 (20종)
-│   │   ├── skills/            # 에이전트 스킬
+│   │   ├── agents/            # 에이전트 정의 (14종)
 │   │   ├── commands/          # 파이프라인 슬래시 커맨드 (pl-pipeline.md, ...)
 │   │   ├── scripts/bash/      # 파이프라인 셸 스크립트 (common.sh, init-pipeline.sh, ...)
 │   │   └── reference/         # pylon 사용 매뉴얼 (pylon-usage.md)
@@ -419,16 +402,13 @@ workspace/
 │   ├── skills/                # 사용자 추가 스킬 (pylon add-skill)
 │   ├── commands/              # 사용자 추가 파이프라인 커맨드
 │   ├── domain/                # 팀 도메인 지식 (위키)
-│   ├── tasks/                 # init이 만드는 빈 디렉토리 (현재 미사용)
 │   ├── memory/                # 프로젝트 메모리 (git 추적)
 │   │   └── {project}/          # 프로젝트별 <category>/<slug>.md + INDEX.md
 │   ├── runtime/               # (git 무시)
-│   │   ├── {pipeline-id}/     # 논리 root pipeline 산출물 (requirement.md, tasks.json, execution-log.json, status.json ...)
-│   │   │   └── repos/{repo-id}/  # repo sub-pipeline: criteria.json, verification.json, task-report.json,
-│   │   │                         #   evaluator-input/, evaluator-result.json, pr.json, status.json,
-│   │   │                         #   verify-artifacts/(검증 산출물), leftovers/(커밋 안 한 run 잔여물)
-│   │   └── sessions/          # init이 만드는 빈 디렉토리 (현재 미사용)
-│   ├── conversations/         # init이 만드는 빈 디렉토리 (현재 미사용, git 무시)
+│   │   └── {pipeline-id}/     # 논리 root pipeline 산출물 (requirement.md, tasks.json, execution-log.json, status.json ...)
+│   │       └── repos/{repo-id}/  # repo sub-pipeline: criteria.json, verification.json, task-report.json,
+│   │                             #   evaluator-input/, evaluator-result.json, pr.json, status.json,
+│   │                             #   verify-artifacts/(검증 산출물), leftovers/(커밋 안 한 run 잔여물)
 │   └── history/               # 파일 기반 작업 이력 (git 무시)
 │       └── pipelines/         # {pipeline-id}/{phase}/ 디렉토리 스냅샷
 │
@@ -458,7 +438,6 @@ version: "0.2"
 
 runtime:
   provider: auto               # provider 이름 또는 auto
-  execution_mode: session-native # 미사용
   permission_mode: acceptEdits # default | acceptEdits | bypassPermissions
   # effort: high               # 선택, 기본값 없음 — provider별 허용값 (claude: low|medium|high|xhigh|max, codex: model_reasoning_effort 값)
   # model: opus                # 선택, 기본값 없음 — provider별 모델 이름
@@ -472,27 +451,11 @@ providers:
     enabled: auto
     command: codex
 
-routing:                       # 미사용
-  fallback: serial
-  require_resume_for_background: true
-
 git:
   branch_prefix: task          # 작업 브랜치 접두사 — 사용자 명명 규칙이 없을 때만 씀 (feature/처럼 /로 끝나면 구분자 없이 이어짐)
   default_base: main           # /pl:cleanup이 삭제하지 않는 기본 브랜치 (파이프라인 base는 초기화 시점의 현재 브랜치)
-  auto_push: true              # 미사용
-  worktree:                    # 미사용
-    enabled: true
-    auto_cleanup: true
   pr:
     auto_pr: false             # true면 /pl:pipeline이 검증 후 PR까지 생성 (기본: /pl:pr로 수동)
-    draft: false               # 미사용
-    reviewers: []              # 미사용
-
-wiki:                          # 미사용
-  auto_update: true
-  update_on:
-    - task_complete
-    - pr_merged
 
 memory:
   proactive_injection: true    # 세션 시작 시 프로젝트 메모리 주입 on/off (Claude Code 훅; Codex는 수동 `pylon mem inject`)
@@ -509,9 +472,6 @@ skills:
 기존 `runtime.backend`와 agent frontmatter의 `backend`는 deprecated alias로 읽으며, `provider`가 함께 있으면
 `provider`가 우선합니다. `pylon doctor`는 `config.yml`의 `runtime.backend`를 `runtime.provider`로 바꿔 씁니다.
 
-`runtime.execution_mode`/`auto_approve_task_review`, `routing`, `wiki`, `workflow`, `projects`, `git.auto_push`, `git.worktree`,
-`git.pr.draft`/`reviewers`/`template`은 스키마만 있고 현재 이를 읽는 코드가 없습니다.
-
 작업 브랜치 이름은 `/pl:pipeline`이 repo의 `CLAUDE.md`·`AGENTS.md`·`CONTRIBUTING.md`, 그다음 워크스페이스 `AGENTS.md`와
 사용자 지침에서 찾은 명명 규칙을 먼저 따릅니다. 규칙이 없으면 `git.branch_prefix`로 `<접두사>-<pipeline-id>-<repo-id>`를
 만듭니다(`feature/`처럼 `/`로 끝나면 `<접두사><pipeline-id>-<repo-id>`, 기본은 `task-<pipeline-id>-<repo-id>`).
@@ -519,7 +479,7 @@ skills:
 
 `runtime`의 `effort`/`model`/`env`(비어 있으면 provider 기본값)를 제외한 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 주요 필드와 기본값을 보여주며,
 명시하지 않은 필드는 로드 시 코드 기본값으로 자동 채워집니다. `pylon init`이 처음 생성하는 `config.yml`은
-최소 필드(`runtime`의 `provider`/`execution_mode`/`permission_mode`, `git.pr.reviewers`)만 포함하고, 이후
+최소 필드(`runtime`의 `provider`/`permission_mode`)만 포함하고, 이후
 `pylon doctor`가 누락된 필드를 감지해 기본값으로 동기화합니다.
 
 ## 개발

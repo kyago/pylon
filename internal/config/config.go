@@ -22,12 +22,8 @@ type Config struct {
 	Version   string                    `yaml:"version"`
 	Runtime   RuntimeConfig             `yaml:"runtime"`
 	Providers map[string]ProviderConfig `yaml:"providers,omitempty"`
-	Routing   RoutingConfig             `yaml:"routing,omitempty"`
 	Git       GitConfig                 `yaml:"git"`
-	Projects  map[string]ProjectConfig  `yaml:"projects"`
-	Wiki      WikiConfig                `yaml:"wiki"`
 	Memory    MemoryConfig              `yaml:"memory"`
-	Workflow  WorkflowConfig            `yaml:"workflow"`
 	Skills    SkillsConfig              `yaml:"skills"`
 }
 
@@ -43,24 +39,17 @@ type SkillsConfig struct {
 type RuntimeConfig struct {
 	Provider       string `yaml:"provider,omitempty"`
 	Backend        string `yaml:"backend,omitempty"`
-	ExecutionMode  string `yaml:"execution_mode,omitempty"`
 	PermissionMode string `yaml:"permission_mode"`
 	// Effort는 provider별 허용값을 그대로 전달한다(claude: low|medium|high|xhigh|max,
 	// codex: model_reasoning_effort 값). Effort·Model이 비어 있으면 provider 자체 기본값을 쓴다.
-	Effort                string            `yaml:"effort,omitempty"`
-	Model                 string            `yaml:"model,omitempty"`
-	AutoApproveTaskReview bool              `yaml:"auto_approve_task_review"`
-	Env                   map[string]string `yaml:"env,omitempty"`
+	Effort string            `yaml:"effort,omitempty"`
+	Model  string            `yaml:"model,omitempty"`
+	Env    map[string]string `yaml:"env,omitempty"`
 }
 
 type ProviderConfig struct {
 	Enabled string `yaml:"enabled,omitempty"`
 	Command string `yaml:"command,omitempty"`
-}
-
-type RoutingConfig struct {
-	Fallback                   string `yaml:"fallback,omitempty"`
-	RequireResumeForBackground bool   `yaml:"require_resume_for_background,omitempty"`
 }
 
 func (r RuntimeConfig) EffectiveProvider() (string, bool) {
@@ -76,41 +65,15 @@ func (r RuntimeConfig) EffectiveProvider() (string, bool) {
 // GitConfig defines git integration settings.
 // Spec Reference: Section 16 "git"
 type GitConfig struct {
-	BranchPrefix string         `yaml:"branch_prefix"`
-	DefaultBase  string         `yaml:"default_base"`
-	AutoPush     bool           `yaml:"auto_push"`
-	Worktree     WorktreeConfig `yaml:"worktree"`
-	PR           PRConfig       `yaml:"pr"`
-}
-
-// WorktreeConfig defines git worktree isolation settings.
-// Spec Reference: Section 8 "Git Worktree Isolation"
-type WorktreeConfig struct {
-	Enabled     bool `yaml:"enabled"`
-	AutoCleanup bool `yaml:"auto_cleanup"`
+	BranchPrefix string   `yaml:"branch_prefix"`
+	DefaultBase  string   `yaml:"default_base"`
+	PR           PRConfig `yaml:"pr"`
 }
 
 // PRConfig defines pull request settings.
 // Spec Reference: Section 16 "git.pr"
 type PRConfig struct {
-	AutoPR    bool     `yaml:"auto_pr"`
-	Reviewers []string `yaml:"reviewers"`
-	Draft     bool     `yaml:"draft"`
-	Template  *string  `yaml:"template"`
-}
-
-// ProjectConfig defines per-project settings.
-// Spec Reference: Section 16 "projects"
-type ProjectConfig struct {
-	Stack  string   `yaml:"stack"`
-	Agents []string `yaml:"agents,omitempty"`
-}
-
-// WikiConfig defines domain knowledge update settings.
-// Spec Reference: Section 16 "wiki"
-type WikiConfig struct {
-	AutoUpdate bool     `yaml:"auto_update"`
-	UpdateOn   []string `yaml:"update_on"`
+	AutoPR bool `yaml:"auto_pr"`
 }
 
 // MemoryConfig defines agent memory management settings.
@@ -141,12 +104,6 @@ func (r *retentionPolicy) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*r = m
 	return nil
-}
-
-// WorkflowConfig defines workflow template settings.
-type WorkflowConfig struct {
-	DefaultWorkflow string `yaml:"default_workflow"`
-	TemplateDir     string `yaml:"template_dir"`
 }
 
 // MigrateRuntimeBackend rewrites deprecated runtime.backend to runtime.provider
@@ -566,16 +523,6 @@ func ParseConfig(data []byte) (*Config, error) {
 	// go-yaml v3 only overwrites fields present in the YAML,
 	// so pre-initialized values are preserved when not explicitly set.
 	cfg := &Config{
-		Git: GitConfig{
-			AutoPush: true,
-			Worktree: WorktreeConfig{
-				Enabled:     true,
-				AutoCleanup: true,
-			},
-		},
-		Wiki: WikiConfig{
-			AutoUpdate: true,
-		},
 		Memory: MemoryConfig{
 			ProactiveInjection: true,
 		},
@@ -583,9 +530,6 @@ func ParseConfig(data []byte) (*Config, error) {
 			Enabled:               true,
 			PreloadToAgents:       true,
 			ProgressiveDisclosure: true,
-		},
-		Routing: RoutingConfig{
-			RequireResumeForBackground: true,
 		},
 	}
 
@@ -611,14 +555,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Runtime.Provider == "" && cfg.Runtime.Backend == "" {
 		cfg.Runtime.Provider = "auto"
 	}
-	if cfg.Runtime.ExecutionMode == "" {
-		cfg.Runtime.ExecutionMode = "session-native"
-	}
 	if cfg.Runtime.PermissionMode == "" {
 		cfg.Runtime.PermissionMode = "acceptEdits"
-	}
-	if cfg.Routing.Fallback == "" {
-		cfg.Routing.Fallback = "serial"
 	}
 
 	// Git defaults
@@ -627,13 +565,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Git.DefaultBase == "" {
 		cfg.Git.DefaultBase = "main"
-	}
-	// Bool fields (AutoPush, Worktree.Enabled, etc.) are handled by
-	// pre-initialization in ParseConfig. Only set non-bool defaults here.
-
-	// Wiki defaults: set update_on triggers if auto_update is true but no triggers specified
-	if cfg.Wiki.AutoUpdate && len(cfg.Wiki.UpdateOn) == 0 {
-		cfg.Wiki.UpdateOn = []string{"task_complete", "pr_merged"}
 	}
 
 	// Memory defaults
@@ -645,9 +576,4 @@ func applyDefaults(cfg *Config) {
 	}
 	// ProactiveInjection defaults to true,
 	// handled by pre-initialization in ParseConfig.
-
-	// Workflow defaults
-	if cfg.Workflow.DefaultWorkflow == "" {
-		cfg.Workflow.DefaultWorkflow = "feature"
-	}
 }

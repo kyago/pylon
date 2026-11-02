@@ -63,13 +63,12 @@ go test ./internal/memory/... -race
 
 ### Embedded resources are the source of truth for workspace content
 
-The agents, skills, pipeline commands, and bash scripts that end up in a user's `.pylon/` are **Go-embedded
+The agents, pipeline commands, and bash scripts that end up in a user's `.pylon/` are **Go-embedded
 from `internal/cli/`** (`//go:embed` directives in `init_cmd.go`, `launch_commands.go`, `launch_hooks.go`):
 
-- `internal/cli/agents/*.md`   → 20 agent definitions
+- `internal/cli/agents/*.md`   → 14 agent definitions
 - `internal/cli/commands/*.md`  → `/pl:*` slash commands
 - `internal/cli/scripts/bash/*.sh` → atomic pipeline steps
-- `internal/cli/skills/*.md`    → agent skills
 - `internal/cli/reference/*.md` → the pylon usage manual, copied verbatim into the `AGENTS.md` block
 - `internal/cli/hooks.json`     → Claude Code session hooks
 
@@ -86,7 +85,7 @@ CLAUDE.md, `.claude/agents/` symlinks into `.pylon/builtin/agents/` and `.pylon/
 to `.gitignore`.
 
 **Ownership contract for `.pylon/` resources** (`syncBuiltinResources` in `doctor.go`, shared by launch,
-init, doctor and sync-agents): the embedded agents, skills, commands, scripts and manual live in
+init, doctor and sync-agents): the embedded agents, commands, scripts and manual live in
 **`.pylon/builtin/`** (git-ignored), which is pylon-owned. Every sync compares each file with the embeds,
 rewrites missing or differing ones (restoring script exec bits) and deletes files the embeds no longer have —
 never a wholesale wipe, so concurrent launches converge instead of racing and a damaged builtin heals on the

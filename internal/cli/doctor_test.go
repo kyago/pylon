@@ -244,10 +244,11 @@ func TestRetiredBuiltins_AreLegacyPathsMissingFromEmbeds(t *testing.T) {
 		"agents/academic-analyst.md", "agents/backend-dev.md", "agents/brand-strategist.md",
 		"agents/campaign-planner.md", "agents/code-simplifier.md", "agents/content-reviewer.md",
 		"agents/content-strategist.md", "agents/copywriter.md", "agents/data-analyst.md",
-		"agents/doc-specialist.md", "agents/frontend-dev.md", "agents/lead-researcher.md",
-		"agents/pm.md", "agents/po.md", "agents/report-writer.md", "agents/security-reviewer.md",
-		"agents/tech-writer.md", "agents/test-engineer.md", "agents/tracer.md", "agents/web-searcher.md",
-		"commands/pl-cancel.md", "skills/content-writing-guide.md", "skills/marketing-framework.md",
+		"agents/doc-specialist.md", "agents/editor.md", "agents/fact-checker.md", "agents/frontend-dev.md",
+		"agents/lead-researcher.md", "agents/market-researcher.md",
+		"agents/pm.md", "agents/po.md", "agents/report-writer.md", "agents/security-reviewer.md", "agents/seo-specialist.md",
+		"agents/tech-writer.md", "agents/test-engineer.md", "agents/tracer.md", "agents/web-searcher.md", "agents/writer.md",
+		"commands/pl-cancel.md", "skills/content-writing-guide.md", "skills/marketing-framework.md", "skills/research-methodology.md",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("retiredBuiltins() =\n%v\nwant\n%v", got, want)

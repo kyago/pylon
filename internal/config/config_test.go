@@ -30,11 +30,7 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "acceptEdits"},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "task"},
 		{"git.default_base", cfg.Git.DefaultBase, "main"},
-		{"git.auto_push", cfg.Git.AutoPush, true},
-		{"git.worktree.enabled", cfg.Git.Worktree.Enabled, true},
-		{"git.worktree.auto_cleanup", cfg.Git.Worktree.AutoCleanup, true},
-		{"git.pr.draft", cfg.Git.PR.Draft, false},
-		{"wiki.auto_update", cfg.Wiki.AutoUpdate, true},
+		{"git.pr.auto_pr", cfg.Git.PR.AutoPR, true},
 		{"memory.proactive_injection", cfg.Memory.ProactiveInjection, true},
 		{"memory.proactive_max_tokens", cfg.Memory.ProactiveMaxTokens, 2000},
 	}
@@ -47,27 +43,9 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		})
 	}
 
-	// Check reviewers list
-	if len(cfg.Git.PR.Reviewers) != 1 || cfg.Git.PR.Reviewers[0] != "keiyjay" {
-		t.Errorf("expected reviewers [keiyjay], got %v", cfg.Git.PR.Reviewers)
-	}
-
-	// Check projects
-	if len(cfg.Projects) != 2 {
-		t.Errorf("expected 2 projects, got %d", len(cfg.Projects))
-	}
-	if p, ok := cfg.Projects["project-api"]; !ok || p.Stack != "go" {
-		t.Errorf("expected project-api with stack=go, got %v", cfg.Projects["project-api"])
-	}
-
 	// Check runtime env
 	if v, ok := cfg.Runtime.Env["CLAUDE_CODE_EFFORT_LEVEL"]; !ok || v != "high" {
 		t.Errorf("expected CLAUDE_CODE_EFFORT_LEVEL=high, got %v", cfg.Runtime.Env)
-	}
-
-	// Check wiki update_on
-	if len(cfg.Wiki.UpdateOn) != 2 {
-		t.Errorf("expected 2 update_on triggers, got %d", len(cfg.Wiki.UpdateOn))
 	}
 }
 
@@ -98,10 +76,6 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 	}{
 		{"git.branch_prefix (default)", cfg.Git.BranchPrefix, "task"},
 		{"git.default_base (default)", cfg.Git.DefaultBase, "main"},
-		{"git.auto_push (default)", cfg.Git.AutoPush, true},
-		{"git.worktree.enabled (default)", cfg.Git.Worktree.Enabled, true},
-		{"git.worktree.auto_cleanup (default)", cfg.Git.Worktree.AutoCleanup, true},
-		{"wiki.auto_update (default)", cfg.Wiki.AutoUpdate, true},
 		{"memory.proactive_injection (default)", cfg.Memory.ProactiveInjection, true},
 		{"memory.proactive_max_tokens (default)", cfg.Memory.ProactiveMaxTokens, 2000},
 	}
@@ -226,29 +200,22 @@ func TestParseConfigProviderNeutralRuntime(t *testing.T) {
 	data := []byte(`version: "0.2"
 runtime:
   provider: provider-b
-  execution_mode: managed-adapter
 providers:
   provider-b:
     enabled: auto
     command: provider-b
-routing:
-  fallback: serial
-  require_resume_for_background: false
 `)
 
 	cfg, err := ParseConfig(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Runtime.Provider != "provider-b" || cfg.Runtime.ExecutionMode != "managed-adapter" {
+	if cfg.Runtime.Provider != "provider-b" {
 		t.Fatalf("runtime = %+v", cfg.Runtime)
 	}
 	providerConfig, ok := cfg.Providers["provider-b"]
 	if !ok || providerConfig.Enabled != "auto" || providerConfig.Command != "provider-b" {
 		t.Fatalf("provider config = %+v, exists=%v", providerConfig, ok)
-	}
-	if cfg.Routing.Fallback != "serial" || cfg.Routing.RequireResumeForBackground {
-		t.Fatalf("routing = %+v", cfg.Routing)
 	}
 }
 
@@ -256,38 +223,6 @@ func TestLoadConfig_FileNotFound(t *testing.T) {
 	_, err := LoadConfig("/nonexistent/path/config.yml")
 	if err == nil {
 		t.Fatal("expected error for nonexistent file, got nil")
-	}
-}
-
-func TestParseConfig_WorkflowDefaults(t *testing.T) {
-	data := []byte(`version: "0.1"`)
-	cfg, err := ParseConfig(data)
-	if err != nil {
-		t.Fatalf("ParseConfig failed: %v", err)
-	}
-
-	if cfg.Workflow.DefaultWorkflow != "feature" {
-		t.Errorf("expected default workflow 'feature', got %q", cfg.Workflow.DefaultWorkflow)
-	}
-}
-
-func TestParseConfig_WorkflowCustomValues(t *testing.T) {
-	data := []byte(`
-version: "0.1"
-workflow:
-  default_workflow: bugfix
-  template_dir: .pylon/workflows
-`)
-	cfg, err := ParseConfig(data)
-	if err != nil {
-		t.Fatalf("ParseConfig failed: %v", err)
-	}
-
-	if cfg.Workflow.DefaultWorkflow != "bugfix" {
-		t.Errorf("expected workflow 'bugfix', got %q", cfg.Workflow.DefaultWorkflow)
-	}
-	if cfg.Workflow.TemplateDir != ".pylon/workflows" {
-		t.Errorf("expected template_dir '.pylon/workflows', got %q", cfg.Workflow.TemplateDir)
 	}
 }
 
@@ -334,19 +269,12 @@ conversation:
 }
 
 func TestSyncConfigDefaults_DeepNestedMissing(t *testing.T) {
-	// Config with git.worktree section but missing auto_cleanup,
-	// and git.pr section but missing draft.
-	// These are depth-2 fields that the old code could not detect.
+	// Config with a git.pr section but missing auto_pr: a depth-2 field.
 	content := []byte(`version: "0.1"
 git:
   branch_prefix: custom
   default_base: develop
-  worktree:
-    enabled: true
-  pr:
-    auto_pr: true
-    reviewers:
-      - alice
+  pr: {}
 `)
 
 	tmpDir := t.TempDir()
@@ -360,13 +288,13 @@ git:
 		t.Fatalf("SyncConfigDefaults failed: %v", err)
 	}
 
-	// Should detect git.worktree.auto_cleanup and git.pr.draft as missing
+	// Should detect git.pr.auto_pr as missing
 	addedSet := make(map[string]bool)
 	for _, a := range added {
 		addedSet[a] = true
 	}
 
-	mustExist := []string{"git.worktree.auto_cleanup", "git.pr.draft"}
+	mustExist := []string{"git.pr.auto_pr"}
 	for _, field := range mustExist {
 		if !addedSet[field] {
 			t.Errorf("expected %q in added list, got: %v", field, added)
@@ -380,20 +308,17 @@ git:
 	if cfg.Git.DefaultBase != "develop" {
 		t.Errorf("expected default_base=develop, got %q", cfg.Git.DefaultBase)
 	}
-	if !cfg.Git.Worktree.Enabled {
-		t.Error("expected worktree.enabled=true to be preserved")
-	}
-	if !cfg.Git.PR.AutoPR {
-		t.Error("expected pr.auto_pr=true to be preserved")
-	}
 
 	// Verify the file was rewritten with missing fields
 	reloaded, err := LoadConfig(cfgPath)
 	if err != nil {
 		t.Fatalf("LoadConfig after sync failed: %v", err)
 	}
-	if !reloaded.Git.Worktree.AutoCleanup {
-		t.Error("expected worktree.auto_cleanup=true in rewritten file")
+	if reloaded.Git.BranchPrefix != "custom" {
+		t.Errorf("expected branch_prefix=custom in rewritten file, got %q", reloaded.Git.BranchPrefix)
+	}
+	if raw, _ := os.ReadFile(cfgPath); !strings.Contains(string(raw), "auto_pr: false") {
+		t.Errorf("expected auto_pr default in rewritten file:\n%s", raw)
 	}
 }
 
