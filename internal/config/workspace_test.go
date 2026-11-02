@@ -217,6 +217,25 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+// poisonGitEnv sets everything outside a repository that can change what git reports about it.
+func poisonGitEnv(t *testing.T) {
+	t.Helper()
+	// An invalid boolean: git fails on it, so reading it at all changes the verdict.
+	home := t.TempDir()
+	global := filepath.Join(home, ".gitconfig")
+	if err := os.WriteFile(global, []byte("[core]\n\tbare = maybe\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG", global)
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.bare")
+	t.Setenv("GIT_CONFIG_VALUE_0", "maybe")
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+	t.Setenv("GIT_COMMON_DIR", filepath.Join(t.TempDir(), "missing"))
+}
+
 func TestDiscoverProjects_SkipsWorkspaceWorktrees(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "workspace")
 	if err := os.Mkdir(root, 0755); err != nil {
@@ -250,12 +269,22 @@ func TestDiscoverProjects_SkipsWorkspaceWorktrees(t *testing.T) {
 	git(clone, "worktree", "add", filepath.Join(root, "clone-wt"))
 	git(source, "worktree", "add", filepath.Join(root, "external"))
 	git(bare, "worktree", "add", filepath.Join(root, "bare-wt"))
+	// Hand-edited but valid spellings of a non-bare repository.
+	git(root, "clone", source, "app-no")
+	git(filepath.Join(root, "app-no"), "config", "core.bare", "no")
+	git(filepath.Join(root, "app-no"), "worktree", "add", filepath.Join(root, "no-wt"))
+	git(root, "clone", source, "app-dup")
+	git(filepath.Join(root, "app-dup"), "config", "--add", "core.bare", "false")
+	git(filepath.Join(root, "app-dup"), "worktree", "add", filepath.Join(root, "dup-wt"))
+	// git prints the path verbatim, so a trailing space is part of the main checkout's name.
+	git(root, "clone", source, "app-space ")
+	git(filepath.Join(root, "app-space "), "worktree", "add", filepath.Join(root, "space-wt"))
 	// Written by hand because older git ignores worktree.useRelativePaths.
 	if err := os.WriteFile(filepath.Join(root, "wt-rel", ".git"), []byte("gitdir: ../.git/worktrees/wt-rel\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"bare-wt", "clone", "clone-wt", "external", "plain", "sub", "wt", "wt-rel"} {
+	for _, name := range []string{"app-dup", "app-no", "app-space ", "bare-wt", "clone", "clone-wt", "dup-wt", "external", "no-wt", "plain", "space-wt", "sub", "wt", "wt-rel"} {
 		if err := os.MkdirAll(filepath.Join(root, name, ".pylon"), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -278,22 +307,28 @@ func TestDiscoverProjects_SkipsWorkspaceWorktrees(t *testing.T) {
 	if variant := filepath.Join(filepath.Dir(root), "WORKSPACE"); fileExists(variant) {
 		dirs = append(dirs, variant)
 	}
-	for _, dir := range dirs {
-		projects, err := DiscoverProjects(dir)
-		if err != nil {
-			t.Fatalf("DiscoverProjects(%s) failed: %v", dir, err)
-		}
-		if got, want := join(projects), "bare-wt,clone,external,plain,sub"; got != want {
-			t.Errorf("DiscoverProjects(%s) = %q, want %q", dir, got, want)
-		}
-		worktrees, err := DiscoverWorktrees(dir)
-		if err != nil {
-			t.Fatalf("DiscoverWorktrees(%s) failed: %v", dir, err)
-		}
-		if got, want := join(worktrees), "clone-wt,wt,wt-rel"; got != want {
-			t.Errorf("DiscoverWorktrees(%s) = %q, want %q", dir, got, want)
+	check := func() {
+		t.Helper()
+		for _, dir := range dirs {
+			projects, err := DiscoverProjects(dir)
+			if err != nil {
+				t.Fatalf("DiscoverProjects(%s) failed: %v", dir, err)
+			}
+			if got, want := join(projects), "app-dup,app-no,app-space ,bare-wt,clone,external,plain,sub"; got != want {
+				t.Errorf("DiscoverProjects(%s) = %q, want %q", dir, got, want)
+			}
+			worktrees, err := DiscoverWorktrees(dir)
+			if err != nil {
+				t.Fatalf("DiscoverWorktrees(%s) failed: %v", dir, err)
+			}
+			if got, want := join(worktrees), "clone-wt,dup-wt,no-wt,space-wt,wt,wt-rel"; got != want {
+				t.Errorf("DiscoverWorktrees(%s) = %q, want %q", dir, got, want)
+			}
 		}
 	}
+	check()
+	poisonGitEnv(t)
+	check()
 }
 
 func TestDiscoverProjects_KeepsWorktreesWithoutWorkspaceCheckout(t *testing.T) {
@@ -326,14 +361,19 @@ func TestDiscoverProjects_KeepsWorktreesWithoutWorkspaceCheckout(t *testing.T) {
 	git(filepath.Join(root, "core-wt"), "worktree", "add", filepath.Join(root, "from-core-wt"))
 	git(filepath.Join(root, "core-wt"), "config", "core.worktree", t.TempDir())
 
-	for _, name := range []string{"from-root-bare", "from-sub-bare", "from-hidden", "from-core-wt"} {
+	// A separate git dir: its checkout is elsewhere.
+	separate := t.TempDir()
+	git(separate, "init", "--separate-git-dir", filepath.Join(root, "other.git"), ".")
+	git(separate, "commit", "--allow-empty", "-m", "init")
+	git(separate, "worktree", "add", filepath.Join(root, "from-separate"))
+
+	for _, name := range []string{"from-root-bare", "from-sub-bare", "from-hidden", "from-core-wt", "from-separate"} {
 		if err := os.MkdirAll(filepath.Join(root, name, ".pylon"), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// The verdict must not follow the caller's git environment.
-	t.Setenv("GIT_WORK_TREE", t.TempDir())
+	poisonGitEnv(t)
 
 	projects, err := DiscoverProjects(root)
 	if err != nil {
@@ -343,7 +383,7 @@ func TestDiscoverProjects_KeepsWorktreesWithoutWorkspaceCheckout(t *testing.T) {
 	for _, p := range projects {
 		names = append(names, p.Name)
 	}
-	if got, want := strings.Join(names, ","), "from-core-wt,from-hidden,from-root-bare,from-sub-bare"; got != want {
+	if got, want := strings.Join(names, ","), "from-core-wt,from-hidden,from-root-bare,from-separate,from-sub-bare"; got != want {
 		t.Errorf("projects = %q, want %q", got, want)
 	}
 }
