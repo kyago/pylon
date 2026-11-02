@@ -102,8 +102,7 @@
 Codex 등 Claude Code 외 provider에서 pylon 에이전트를 호출할 때는 에이전트 정의의 본문과
 YAML `skills` 목록을 확인합니다. `.pylon/config.yml`의 `skills.enabled`와
 `skills.preload_to_agents`가 모두 활성화되어 있으면 목록의 각 스킬 본문도 프롬프트에 붙입니다.
-스킬은 YAML `name`으로 찾으며 `.pylon/builtin/skills/`를 먼저 찾고 없으면 `.pylon/skills/`를
-찾습니다. 목록에 없는 스킬이나 찾을 수 없는 스킬은 생략합니다. 두 설정의 기본값은 모두 `true`입니다.
+스킬은 YAML `name`으로 `.pylon/skills/`에서 찾습니다. 목록에 없는 스킬이나 찾을 수 없는 스킬은 생략합니다. 두 설정의 기본값은 모두 `true`입니다.
 
 ### 서브 에이전트 선택 기준
 
