@@ -23,8 +23,8 @@ description: "세션 마무리 — 파이프라인 사용 여부와 무관. 검�
   아닙니다. 대화에 pipeline id가 나온 run이 **이번 세션의 run**입니다. `status`가 `awaiting_cleanup`이면
   `/pl:pipeline`이 끝나 마감을 기다리는 run입니다
 
-메모리는 프로젝트별로 저장되므로 대상은 정식 프로젝트 이름(`/pl:project-list`, `.pylon/config.yml`의
-`projects`)을 그대로 씁니다. 다른 이름으로 저장하면 `pylon mem search --project <정식이름>`에 잡히지 않습니다.
+메모리는 프로젝트별로 저장되므로 대상은 정식 프로젝트 이름(`/pl:project-list`, `AGENTS.md`의 프로젝트 목록)을
+그대로 씁니다. 다른 이름으로 저장하면 `pylon mem search --project <정식이름>`에 잡히지 않습니다.
 - 세션이 여러 프로젝트를 다뤘으면 항목마다 해당 프로젝트에 나눠 저장합니다.
 - 정식 프로젝트가 없으면(단일 repo 워크스페이스) 워크스페이스 디렉토리 이름을 쓰고 보고에 밝힙니다.
 - 근거가 전혀 없을 때만 사용자에게 대상을 묻습니다.
