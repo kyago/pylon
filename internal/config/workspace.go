@@ -151,7 +151,7 @@ func IsWorkspaceWorktree(root, dir string) bool {
 		return strings.HasPrefix(env, "GIT_")
 	}), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.Output()
-	if err != nil || !sameDir(strings.TrimSpace(string(out)), mainDir) {
+	if err != nil || !sameDir(strings.TrimSuffix(string(out), "\n"), mainDir) {
 		return false
 	}
 	// os.SameFile: path spelling differs in case and normalization on APFS.

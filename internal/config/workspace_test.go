@@ -220,15 +220,18 @@ func fileExists(path string) bool {
 // poisonGitEnv sets everything outside a repository that can change what git reports about it.
 func poisonGitEnv(t *testing.T) {
 	t.Helper()
-	global := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(global, []byte("[core]\n\tbare = false\n"), 0644); err != nil {
+	// An invalid boolean: git fails on it, so reading it at all changes the verdict.
+	home := t.TempDir()
+	global := filepath.Join(home, ".gitconfig")
+	if err := os.WriteFile(global, []byte("[core]\n\tbare = maybe\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("HOME", home)
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_CONFIG", global)
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "core.bare")
-	t.Setenv("GIT_CONFIG_VALUE_0", "false")
+	t.Setenv("GIT_CONFIG_VALUE_0", "maybe")
 	t.Setenv("GIT_WORK_TREE", t.TempDir())
 	t.Setenv("GIT_COMMON_DIR", filepath.Join(t.TempDir(), "missing"))
 }
@@ -273,12 +276,15 @@ func TestDiscoverProjects_SkipsWorkspaceWorktrees(t *testing.T) {
 	git(root, "clone", source, "app-dup")
 	git(filepath.Join(root, "app-dup"), "config", "--add", "core.bare", "false")
 	git(filepath.Join(root, "app-dup"), "worktree", "add", filepath.Join(root, "dup-wt"))
+	// git prints the path verbatim, so a trailing space is part of the main checkout's name.
+	git(root, "clone", source, "app-space ")
+	git(filepath.Join(root, "app-space "), "worktree", "add", filepath.Join(root, "space-wt"))
 	// Written by hand because older git ignores worktree.useRelativePaths.
 	if err := os.WriteFile(filepath.Join(root, "wt-rel", ".git"), []byte("gitdir: ../.git/worktrees/wt-rel\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"app-dup", "app-no", "bare-wt", "clone", "clone-wt", "dup-wt", "external", "no-wt", "plain", "sub", "wt", "wt-rel"} {
+	for _, name := range []string{"app-dup", "app-no", "app-space ", "bare-wt", "clone", "clone-wt", "dup-wt", "external", "no-wt", "plain", "space-wt", "sub", "wt", "wt-rel"} {
 		if err := os.MkdirAll(filepath.Join(root, name, ".pylon"), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -308,14 +314,14 @@ func TestDiscoverProjects_SkipsWorkspaceWorktrees(t *testing.T) {
 			if err != nil {
 				t.Fatalf("DiscoverProjects(%s) failed: %v", dir, err)
 			}
-			if got, want := join(projects), "app-dup,app-no,bare-wt,clone,external,plain,sub"; got != want {
+			if got, want := join(projects), "app-dup,app-no,app-space ,bare-wt,clone,external,plain,sub"; got != want {
 				t.Errorf("DiscoverProjects(%s) = %q, want %q", dir, got, want)
 			}
 			worktrees, err := DiscoverWorktrees(dir)
 			if err != nil {
 				t.Fatalf("DiscoverWorktrees(%s) failed: %v", dir, err)
 			}
-			if got, want := join(worktrees), "clone-wt,dup-wt,no-wt,wt,wt-rel"; got != want {
+			if got, want := join(worktrees), "clone-wt,dup-wt,no-wt,space-wt,wt,wt-rel"; got != want {
 				t.Errorf("DiscoverWorktrees(%s) = %q, want %q", dir, got, want)
 			}
 		}
