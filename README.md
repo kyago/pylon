@@ -1,6 +1,6 @@
 # Pylon
 
-**사람은 요구사항만 전달하고, AI 에이전트 팀이 알아서 수행합니다.**
+**요구사항은 대화로 전달하고, 구현과 검증은 AI 에이전트 팀이 수행합니다. 사람은 큰 작업의 시작, PR 생성·머지, 마무리를 맡습니다.**
 
 Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `pylon`을 실행하면 설정과 capability에 맞는 interactive provider adapter가 선택되고, 루트 에이전트(루트 세션)가 사용자의 요구사항을 분석하여 적절한 도메인과 전문 에이전트 팀을 오케스트레이션합니다. 기본 제공 adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
 
@@ -11,14 +11,15 @@ Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `py
 | **git** | 버전 관리 | 기본 설치 |
 | **gh** | GitHub PR 생성 | `brew install gh` |
 | **jq** | 파이프라인 스크립트의 JSON 처리 | `brew install jq` |
+| **yq** 또는 **python3 + PyYAML** | 파이프라인 스크립트의 `config.yml` 읽기 | `brew install yq` 또는 `pip3 install pyyaml` |
 | **Claude Code** 또는 **Codex** | AI 에이전트 provider (하나 이상) | https://docs.anthropic.com/en/docs/claude-code · https://github.com/openai/codex |
 | **Go** 1.24+ | `go install`·소스 빌드 시에만 | https://go.dev/dl/ |
 
-`pylon doctor`로 git·gh·provider 설치 상태를 확인할 수 있습니다 (jq는 파이프라인 스크립트가 실행 시 확인).
+`pylon doctor`로 git·gh·provider 설치 상태를 확인할 수 있습니다 (jq와 yq/python3은 파이프라인 스크립트가 실행 시 확인). yq와 python3이 모두 없으면 파이프라인이 중단되고, python3만 있고 PyYAML이 없으면 `git.branch_prefix`, `git.pr.auto_pr` 설정을 읽지 못해 기본값으로 동작합니다.
 
 ## 설치
 
-Pylon은 [CalVer](https://calver.org/)(`YYYY.M.SEQ`, 예: `2026.6.3`) 버전 체계를 사용하며,
+Pylon은 [CalVer](https://calver.org/)(`YYYY.M.SEQ`) 버전 체계를 사용하며,
 플랫폼별 사전 빌드 바이너리를 [GitHub Releases](https://github.com/kyago/pylon/releases)로 배포합니다.
 
 ### 1) 사전 빌드 바이너리 (권장)
@@ -27,9 +28,9 @@ Pylon은 [CalVer](https://calver.org/)(`YYYY.M.SEQ`, 예: `2026.6.3`) 버전 체
 파일명 형식: `pylon_<버전>_<OS>_<ARCH>.tar.gz` (Windows는 `.zip`).
 
 ```bash
-# 예시: macOS arm64, 최신 버전이 2026.6.3인 경우
+# 예시: macOS arm64 (x.x.x는 설치할 버전으로 교체)
 curl -L -o pylon.tar.gz \
-  https://github.com/kyago/pylon/releases/latest/download/pylon_2026.6.3_darwin_arm64.tar.gz
+  https://github.com/kyago/pylon/releases/download/x.x.x/pylon_x.x.x_darwin_arm64.tar.gz
 tar -xzf pylon.tar.gz
 sudo mv pylon /usr/local/bin/    # 또는 PATH에 포함된 임의 디렉토리로 이동
 pylon version
@@ -43,9 +44,9 @@ pylon version
 go install github.com/kyago/pylon/cmd/pylon@latest
 ```
 
-> **참고:** 릴리스 태그(`2026.6.3`)는 Go 모듈 버전 형식(`vX.Y.Z`)이 아니므로 `go install`은
+> **참고:** 릴리스 태그(`YYYY.M.SEQ`)는 Go 모듈 버전 형식(`vX.Y.Z`)이 아니므로 `go install`은
 > 항상 `main` 최신 커밋을 빌드하며 `@<버전>` 지정은 동작하지 않습니다. 이 경우 `pylon version`은
-> 릴리스 번호 대신 커밋 기반 의사 버전을 표시합니다. 특정 릴리스가 필요하면 사전 빌드 바이너리를 사용하세요.
+> 릴리스 번호 대신 `dev`를 표시합니다. 특정 릴리스가 필요하면 사전 빌드 바이너리를 사용하세요.
 >
 > `go install`은 바이너리를 `$GOPATH/bin`(기본값: `~/go/bin`)에 설치합니다. 해당 디렉토리가
 > `PATH`에 포함되어 있는지 확인하세요: `export PATH="$PATH:$(go env GOPATH)/bin"`
@@ -67,7 +68,7 @@ make install  # $(go env GOPATH)/bin/pylon 설치
 
 ```bash
 pylon update              # 최신 버전 설치
-pylon update 2026.6.3     # 특정 버전 설치 (CalVer)
+pylon update x.x.x        # 특정 버전 설치 (CalVer)
 ```
 
 `pylon update`는 플랫폼에 맞는 바이너리를 내려받아 현재 실행 파일을 교체한 뒤, 자동으로
@@ -108,6 +109,8 @@ mkdir my-workspace && cd my-workspace
 pylon init
 ```
 
+실행 중 PR 리뷰어 GitHub 이름을 묻습니다. Enter로 건너뛸 수 있습니다.
+
 ### 2. 프로젝트 추가
 
 ```bash
@@ -131,15 +134,9 @@ Claude Code 실행 권한을 설정합니다
   bypassPermissions — 모든 권한 자동 허용
 ```
 
-### 4. 파이프라인 실행
+### 4. 요구사항 전달
 
-TUI 세션에서 슬래시 커맨드 또는 자연어로 요구사항을 전달합니다:
-
-```
-> /pl:pipeline 로그인 기능 구현해줘
-```
-
-또는 직접 대화:
+세션에서 자연어로 요구사항을 전달합니다. 모호한 부분은 루트 세션이 되묻습니다:
 
 ```
 > 로그인 기능 구현해줘
@@ -150,7 +147,23 @@ TUI 세션에서 슬래시 커맨드 또는 자연어로 요구사항을 전달�
   ...
 ```
 
-Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 셸 스크립트를 조합하여 전체 파이프라인(분석 → 설계 → 구현 → PR)을 자동 수행합니다.
+루트 세션은 요구사항 규모를 보고 직접 처리할지 파이프라인을 돌릴지 판단합니다. 단일 파일 수정이나 질문 답변은 파이프라인 없이 처리합니다. 큰 작업은 커맨드로 파이프라인을 바로 시작할 수 있습니다 (Codex는 `$pl-pipeline`):
+
+```
+> /pl:pipeline 로그인 기능 구현해줘
+```
+
+파이프라인은 슬래시 커맨드와 셸 스크립트를 조합해 분석 → 설계 → 구현 → 검증을 수행한 뒤, 결과와 남은 일을 보고합니다.
+
+### 5. PR·머지·마무리
+
+검증이 끝나면 다음 단계는 사용자가 진행합니다. 커맨드 대신 대화로 요청해도 됩니다 (Codex는 `$pl-pr`, `$pl-cleanup`):
+
+1. **PR 생성**: 파이프라인 run은 `/pl:pr`, 대화로 작업한 세션은 대화로 요청합니다. `git.pr.auto_pr: true`면 파이프라인이 검증 후 직접 만듭니다.
+2. **리뷰·머지**: 머지 여부는 사용자가 결정합니다.
+3. **마무리**: 머지 후 `/pl:cleanup`. 메모리·도메인 지식을 갱신하고 run을 마감한 뒤, 머지된 브랜치·워크트리를 정리합니다.
+
+파이프라인 없이 대화로 작업한 세션도 `/pl:cleanup`으로 끝냅니다. PR이 없는 리서치·콘텐츠·마케팅 작업은 최종본을 확인한 뒤 바로 3번으로 갑니다.
 
 ## 동작 방식
 
@@ -171,7 +184,7 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
               │   ├── /pl:index ─── 코드베이스 인덱싱
               │   ├── /pl:project-list ─ 프로젝트 목록 조회
               │   ├── /pl:add-project ─ 프로젝트 추가
-              │   └── /pl:migrate ─── 레거시 마이그레이션 안내
+              │   └── /pl:migrate ─── 레거시 저장소 폐기 안내
               │
               └── 셸 스크립트 (.pylon/builtin/scripts/bash/)
                    ├── init-pipeline.sh
@@ -180,7 +193,7 @@ Claude Code TUI가 LLM-as-Orchestrator로 동작하며, 슬래시 커맨드와 �
                    └── ... (원자적 작업)
 ```
 
-Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 interactive adapter를 선택하고, adapter가 만든 실행 계획을 `syscall.Exec`으로 시작합니다. 현재 Claude Code adapter는 TUI를 LLM-as-Orchestrator로 실행하며, 슬래시 커맨드와 셸 스크립트를 조합해 파이프라인을 수행합니다.
+Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 interactive adapter를 선택하고, adapter가 만든 실행 계획을 `syscall.Exec`으로 시작합니다. 현재 Claude Code adapter는 TUI를 LLM-as-Orchestrator로 실행하며, 슬래시 커맨드와 셸 스크립트를 조합해 파이프라인을 수행합니다. Codex adapter는 같은 절차를 `$pl-*` 스킬로 수행합니다.
 
 ### 핵심 개념
 
@@ -189,7 +202,7 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 | **`.pylon/`** | 워크스페이스 소스 오브 트루스 (설정, 에이전트 정의, 도메인 지식) |
 | **`.claude/`** | `pylon` 실행 시 `.pylon/`에서 동적 생성되는 Claude Code 설정 (agents 심링크, commands, hooks) |
 | **AGENTS.md** | 루트 에이전트 운영 가이드. pylon 블록(매뉴얼 + 워크스페이스 정보)은 실행마다 재생성되고, 블록 밖은 사용자 규칙 영역 (`CLAUDE.md`는 `@AGENTS.md` import 마커) |
-| **슬래시 커맨드** | AI가 사용하는 내부 스킬 (`.pylon/builtin/commands/`, 사용자 추가분은 `.pylon/commands/`) |
+| **슬래시 커맨드** | 사용자가 입력하거나 루트 세션이 실행하는 워크플로우 (`.pylon/builtin/commands/`, 사용자 추가분은 `.pylon/commands/`, Codex는 `$pl-*` 스킬) |
 | **파이프라인** | 파일 기반 워크플로우 (산출물 존재 = 단계 완료) |
 | **검증 게이트** | 고정된 criteria snapshot으로 돌린 deterministic 검증 + 격리 evaluator 판정이 모두 통과해야 완료 |
 | **프로젝트 메모리** | `.pylon/memory/` 마크다운 파일 기반 지식 저장소 (git 추적) |
@@ -258,23 +271,32 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 
 ## 슬래시 커맨드
 
-TUI 세션 내에서 AI가 사용하는 내부 스킬입니다. Codex에서는 같은 커맨드가 `$pl-<이름>` 스킬로 생성됩니다
+세션에서 사용자가 직접 입력하거나 루트 세션이 판단해 실행합니다. Codex에서는 같은 커맨드가 `$pl-<이름>` 스킬로 생성됩니다
 (`/pl:index`·`/pl:project-list`는 Claude Code 전용).
+
+### 주로 직접 실행하는 커맨드
 
 | 커맨드 | 설명 |
 |--------|------|
 | `/pl:pipeline` | 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → 검증). 끝나면 run을 `/pl:cleanup`에 넘김 |
 | `/pl:cleanup` | 세션 마무리 (파이프라인 사용 여부와 무관): 검증 근거, 메모리·도메인 지식 갱신, 머지된 파이프라인 run 마감, 머지된 브랜치·워크트리 정리 |
-| `/pl:architect` | 아키텍처 분석 단독 실행 |
-| `/pl:breakdown` | 태스크 분해 |
-| `/pl:execute` | 에이전트 병렬 실행 |
-| `/pl:verify` | 빌드/테스트/린트 교차 검증 |
-| `/pl:pr` | PR 생성 |
+| `/pl:pr` | 파이프라인 run의 PR 생성 (repo sub-pipeline 단위) |
 | `/pl:status` | 파이프라인 상태 조회 (파일 기반) |
 | `/pl:index` | 프로젝트 코드베이스 인덱싱 |
 | `/pl:project-list` | 프로젝트 목록 및 인덱싱 상태 조회 |
 | `/pl:add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
-| `/pl:migrate` | 레거시 워크스페이스(SQLite/Fossil) 폐기·이전 절차 안내 |
+| `/pl:migrate` | 레거시 워크스페이스(SQLite/Fossil) 폐기 절차 안내 |
+
+### 파이프라인 단계 단독 실행
+
+`/pl:pipeline`이 수행하는 단계를 따로 돌릴 때 씁니다.
+
+| 커맨드 | 설명 |
+|--------|------|
+| `/pl:architect` | 아키텍처 분석 단독 실행 |
+| `/pl:breakdown` | 태스크 분해 |
+| `/pl:execute` | 에이전트 병렬 실행 |
+| `/pl:verify` | 빌드/테스트/린트 교차 검증 |
 
 ## 내장 에이전트 (20종)
 
@@ -312,7 +334,7 @@ TUI 세션 내에서 AI가 사용하는 내부 스킬입니다. Codex에서는 �
 
 ## CLI 명령어
 
-Go 바이너리가 제공하는 유틸리티 명령입니다. 루트 에이전트가 파이프라인 제어와 메모리 접근에 사용합니다.
+Go 바이너리가 제공하는 명령입니다. 기본 명령은 주로 사용자가 실행하고, 메모리·이력·내부 명령은 주로 루트 에이전트와 파이프라인이 사용합니다.
 
 ### 기본 명령
 
@@ -327,7 +349,7 @@ Go 바이너리가 제공하는 유틸리티 명령입니다. 루트 에이전�
 | `pylon delete-project <name>` | 프로젝트 등록 해제 (`--purge`로 디렉터리까지 삭제, `--force`로 확인 생략) |
 | `pylon add-agent <name>` | 커스텀 에이전트 추가 (`--domain`, `--role`) |
 | `pylon add-skill <name>` | 커스텀 스킬 추가 |
-| `pylon status` | 파이프라인 및 에이전트 상태 조회 |
+| `pylon status` | 파이프라인 상태 조회 |
 | `pylon uninstall` | 워크스페이스 완전 제거 (`--dry-run`, `--force`, `--remove-projects`, `--remove-binary`) |
 
 ### 프로젝트 메모리
@@ -379,7 +401,7 @@ pylon history checkpoint --pipeline <id> --phase <planned|executed|completed|can
 | `pylon internal evaluator prepare\|record` | 격리 evaluator bundle 생성 / 판정 검증·기록 |
 | `pylon internal trajectory task-report\|failure` | task report / failure record 기록 (failure는 `failed` 체크포인트까지) |
 
-모든 명령에 `--json` 플래그를 추가하면 JSON 형식으로 출력됩니다.
+`mem`(`inject` 제외), `history`, `delete-project`는 `--json` 플래그를 추가하면 JSON 형식으로 출력합니다. 다른 명령은 이 플래그를 받아도 출력이 바뀌지 않습니다.
 
 ## 워크스페이스 구조
 
@@ -397,7 +419,7 @@ workspace/
 │   ├── skills/                # 사용자 추가 스킬 (pylon add-skill)
 │   ├── commands/              # 사용자 추가 파이프라인 커맨드
 │   ├── domain/                # 팀 도메인 지식 (위키)
-│   ├── tasks/                 # 확정된 태스크 스펙
+│   ├── tasks/                 # init이 만드는 빈 디렉토리 (현재 미사용)
 │   ├── memory/                # 프로젝트 메모리 (git 추적)
 │   │   └── {project}/          # 프로젝트별 <category>/<slug>.md + INDEX.md
 │   ├── runtime/               # (git 무시)
@@ -405,8 +427,8 @@ workspace/
 │   │   │   └── repos/{repo-id}/  # repo sub-pipeline: criteria.json, verification.json, task-report.json,
 │   │   │                         #   evaluator-input/, evaluator-result.json, pr.json, status.json,
 │   │   │                         #   verify-artifacts/(검증 산출물), leftovers/(커밋 안 한 run 잔여물)
-│   │   └── sessions/          # 세션 상태
-│   ├── conversations/         # 대화 이력 (git 무시)
+│   │   └── sessions/          # init이 만드는 빈 디렉토리 (현재 미사용)
+│   ├── conversations/         # init이 만드는 빈 디렉토리 (현재 미사용, git 무시)
 │   └── history/               # 파일 기반 작업 이력 (git 무시)
 │       └── pipelines/         # {pipeline-id}/{phase}/ 디렉토리 스냅샷
 │
@@ -421,7 +443,9 @@ workspace/
 ├── CLAUDE.md                  # @AGENTS.md import 마커 (동적 생성)
 │
 ├── project-a/                 # 프로젝트 디렉토리
-│   └── .pylon/context.md      # 프로젝트 컨텍스트
+│   └── .pylon/                # 프로젝트 repo의 git exclude 대상 (커밋되지 않음)
+│       ├── context.md         # 프로젝트 컨텍스트
+│       └── verify.yml         # 프로젝트 검증 명령 (add-project·doctor가 생성)
 └── project-b/                 # 프로젝트 디렉토리
 ```
 
@@ -434,10 +458,11 @@ version: "0.2"
 
 runtime:
   provider: auto               # provider 이름 또는 auto
-  execution_mode: session-native
+  execution_mode: session-native # 미사용
   permission_mode: acceptEdits # default | acceptEdits | bypassPermissions
   # effort: high               # 선택, 기본값 없음 — provider별 허용값 (claude: low|medium|high|xhigh|max, codex: model_reasoning_effort 값)
   # model: opus                # 선택, 기본값 없음 — provider별 모델 이름
+  # env: { KEY: value }        # 선택, 기본값 없음 — provider 프로세스에 적용할 환경 변수
 
 providers:
   claude-code:
@@ -447,24 +472,24 @@ providers:
     enabled: auto
     command: codex
 
-routing:
+routing:                       # 미사용
   fallback: serial
   require_resume_for_background: true
 
 git:
   branch_prefix: task          # 작업 브랜치 접두사 — 사용자 명명 규칙이 없을 때만 씀 (feature/처럼 /로 끝나면 구분자 없이 이어짐)
-  default_base: main           # 기본 베이스 브랜치
-  auto_push: true              # 자동 푸시
-  worktree:
-    enabled: true              # git worktree 격리
-    auto_cleanup: true         # 완료 후 자동 정리
+  default_base: main           # /pl:cleanup이 삭제하지 않는 기본 브랜치 (파이프라인 base는 초기화 시점의 현재 브랜치)
+  auto_push: true              # 미사용
+  worktree:                    # 미사용
+    enabled: true
+    auto_cleanup: true
   pr:
     auto_pr: false             # true면 /pl:pipeline이 검증 후 PR까지 생성 (기본: /pl:pr로 수동)
-    draft: false
-    reviewers: []
+    draft: false               # 미사용
+    reviewers: []              # 미사용
 
-wiki:
-  auto_update: true            # 위키 자동 갱신
+wiki:                          # 미사용
+  auto_update: true
   update_on:
     - task_complete
     - pr_merged
@@ -484,18 +509,17 @@ skills:
 기존 `runtime.backend`와 agent frontmatter의 `backend`는 deprecated alias로 읽으며, `provider`가 함께 있으면
 `provider`가 우선합니다. `pylon doctor`는 `config.yml`의 `runtime.backend`를 `runtime.provider`로 바꿔 씁니다.
 
-`runtime.execution_mode`, `routing`, `wiki`, `workflow`, `git.auto_push`, `git.worktree`,
-`git.pr.draft`/`reviewers`는 스키마와 기본값만 있고
-현재 이를 읽는 코드가 없습니다 (base는 초기화 시점의 현재 브랜치).
+`runtime.execution_mode`/`auto_approve_task_review`, `routing`, `wiki`, `workflow`, `projects`, `git.auto_push`, `git.worktree`,
+`git.pr.draft`/`reviewers`/`template`은 스키마만 있고 현재 이를 읽는 코드가 없습니다.
 
 작업 브랜치 이름은 `/pl:pipeline`이 repo의 `CLAUDE.md`·`AGENTS.md`·`CONTRIBUTING.md`, 그다음 워크스페이스 `AGENTS.md`와
 사용자 지침에서 찾은 명명 규칙을 먼저 따릅니다. 규칙이 없으면 `git.branch_prefix`로 `<접두사>-<pipeline-id>-<repo-id>`를
 만듭니다(`feature/`처럼 `/`로 끝나면 `<접두사><pipeline-id>-<repo-id>`, 기본은 `task-<pipeline-id>-<repo-id>`).
-접두사를 읽으려면 `yq` 또는 PyYAML이 필요합니다. `python3`만 있고 PyYAML이 없으면 기본 접두사를 씁니다.
+접두사를 읽으려면 `yq` 또는 PyYAML이 필요합니다 ([요구 사항](#요구-사항) 참고).
 
-`runtime`의 `effort`/`model`/`env`(비어 있으면 provider 기본값)를 제외한 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 전체 필드와 기본값을 보여주며,
+`runtime`의 `effort`/`model`/`env`(비어 있으면 provider 기본값)를 제외한 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 주요 필드와 기본값을 보여주며,
 명시하지 않은 필드는 로드 시 코드 기본값으로 자동 채워집니다. `pylon init`이 처음 생성하는 `config.yml`은
-최소 필드(`runtime`의 `provider`/`execution_mode`/`permission_mode`)만 포함하고, 이후
+최소 필드(`runtime`의 `provider`/`execution_mode`/`permission_mode`, `git.pr.reviewers`)만 포함하고, 이후
 `pylon doctor`가 누락된 필드를 감지해 기본값으로 동기화합니다.
 
 ## 개발
