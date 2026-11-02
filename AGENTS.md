@@ -137,6 +137,26 @@ files stay where they are). Non-goals: unstaged edits to tracked `.pylon/` files
 in the worktree during verification (moved with the artifacts, recoverable there). A review finding outside these
 two rules is a known limit, not a bug; prefer failing closed over new handling code.
 
+### Project discovery contract (`internal/config/workspace.go`)
+
+A workspace subdirectory with `.pylon/` is a project unless it is a **workspace worktree**: a linked git worktree
+whose main checkout is non-bare and is either the workspace root or a non-hidden direct subdirectory. Such a
+worktree is just another checkout of something already here. Two things must never happen, and changes here are
+judged against them:
+
+1. **A real project disappears.** Whatever cannot be shown to be a workspace worktree stays a project: main
+   checkout outside the workspace, `core.worktree` set, bare or separate git dir, submodule, a git error, or a main
+   repository that moved. The one exception git cannot reveal: a separate git dir literally named `.git` inside the
+   workspace is taken for its parent's checkout.
+2. **A command destroys user files in a workspace worktree, or claims to have handled one it skipped.** Uninstall
+   deletes only its `.pylon/` directory and keeps the worktree; `add-project` and `delete-project` refuse it; doctor
+   neither regenerates anything in it nor suggests `add-project` for it.
+
+The verdict must not depend on how the workspace path is spelled (symlink, case, Unicode normalization). Non-goals:
+`/pl:pipeline` targeting a workspace worktree (`pylon internal verify --config` checks one), cleaning state left from
+when a worktree counted as a project, repairing a worktree whose main checkout `uninstall --remove-projects` removed,
+and worktrees whose main checkout is nested deeper. A review finding outside these rules is a known limit, not a bug.
+
 ### Package layout
 
 - `cmd/pylon/main.go` — entry point; sets version, calls `cli.Execute()`.

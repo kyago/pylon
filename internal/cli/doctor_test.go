@@ -1307,3 +1307,20 @@ func TestCheckProjectVerifyConfigs_UnknownStackRootIsSkipped(t *testing.T) {
 		t.Fatal("unknown-stack root must not get a verify.yml")
 	}
 }
+
+func TestHintUnscaffoldedProjects_SkipsWorkspaceWorktree(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	app := filepath.Join(root, "app")
+	runGit(t, root, "init", "app")
+	runGit(t, app, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	runGit(t, app, "worktree", "add", filepath.Join(root, "wt"))
+
+	out := captureStdout(t, func() { hintUnscaffoldedProjects(root, nil) })
+	if !strings.Contains(out, "app:") {
+		t.Errorf("expected hint for app, got %q", out)
+	}
+	if strings.Contains(out, "wt:") {
+		t.Errorf("unexpected hint for worktree: %q", out)
+	}
+}

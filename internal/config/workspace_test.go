@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -208,5 +209,141 @@ func TestDiscoverProjects_NoProjects(t *testing.T) {
 
 	if len(projects) != 0 {
 		t.Errorf("expected 0 projects, got %d", len(projects))
+	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func TestDiscoverProjects_SkipsWorkspaceWorktrees(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	source := t.TempDir()
+	bare := filepath.Join(t.TempDir(), "bare.git")
+
+	git := func(dir string, args ...string) {
+		t.Helper()
+		base := []string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "protocol.file.allow=always"}
+		cmd := exec.Command("git", append(base, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	clone := filepath.Join(root, "clone")
+	if err := os.Mkdir(clone, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{root, source, clone} {
+		git(dir, "init")
+		git(dir, "commit", "--allow-empty", "-m", "init")
+	}
+	git(source, "clone", "--bare", source, bare)
+
+	git(root, "submodule", "add", source, "sub")
+	git(root, "worktree", "add", "wt")
+	git(root, "worktree", "add", "wt-rel")
+	git(clone, "worktree", "add", filepath.Join(root, "clone-wt"))
+	git(source, "worktree", "add", filepath.Join(root, "external"))
+	git(bare, "worktree", "add", filepath.Join(root, "bare-wt"))
+	// Written by hand because older git ignores worktree.useRelativePaths.
+	if err := os.WriteFile(filepath.Join(root, "wt-rel", ".git"), []byte("gitdir: ../.git/worktrees/wt-rel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"bare-wt", "clone", "clone-wt", "external", "plain", "sub", "wt", "wt-rel"} {
+		if err := os.MkdirAll(filepath.Join(root, name, ".pylon"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	join := func(projects []ProjectInfo) string {
+		var names []string
+		for _, p := range projects {
+			names = append(names, p.Name)
+		}
+		return strings.Join(names, ",")
+	}
+	dirs := []string{root, alias}
+	// The same directory spelled differently on a case-insensitive filesystem (APFS default).
+	if variant := filepath.Join(filepath.Dir(root), "WORKSPACE"); fileExists(variant) {
+		dirs = append(dirs, variant)
+	}
+	for _, dir := range dirs {
+		projects, err := DiscoverProjects(dir)
+		if err != nil {
+			t.Fatalf("DiscoverProjects(%s) failed: %v", dir, err)
+		}
+		if got, want := join(projects), "bare-wt,clone,external,plain,sub"; got != want {
+			t.Errorf("DiscoverProjects(%s) = %q, want %q", dir, got, want)
+		}
+		worktrees, err := DiscoverWorktrees(dir)
+		if err != nil {
+			t.Fatalf("DiscoverWorktrees(%s) failed: %v", dir, err)
+		}
+		if got, want := join(worktrees), "clone-wt,wt,wt-rel"; got != want {
+			t.Errorf("DiscoverWorktrees(%s) = %q, want %q", dir, got, want)
+		}
+	}
+}
+
+func TestDiscoverProjects_KeepsWorktreesWithoutWorkspaceCheckout(t *testing.T) {
+	root := t.TempDir()
+	source := t.TempDir()
+
+	git := func(dir string, args ...string) {
+		t.Helper()
+		base := []string{"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}
+		cmd := exec.Command("git", append(base, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git(source, "init")
+	git(source, "commit", "--allow-empty", "-m", "init")
+
+	// Bare repositories named .git, at the root and in a subdirectory: their worktrees are the only checkouts.
+	git(root, "clone", "--bare", source, ".git")
+	git(root, "worktree", "add", "from-root-bare")
+	git(root, "clone", "--bare", source, filepath.Join("app", ".git"))
+	git(filepath.Join(root, "app", ".git"), "worktree", "add", filepath.Join(root, "from-sub-bare"))
+	// A hidden directory is never discovered as a project, so its worktree stays one.
+	git(root, "clone", source, ".hub")
+	git(filepath.Join(root, ".hub"), "worktree", "add", filepath.Join(root, "from-hidden"))
+
+	// core.worktree puts the only other checkout outside the workspace.
+	git(root, "clone", source, "core-wt")
+	git(filepath.Join(root, "core-wt"), "worktree", "add", filepath.Join(root, "from-core-wt"))
+	git(filepath.Join(root, "core-wt"), "config", "core.worktree", t.TempDir())
+
+	for _, name := range []string{"from-root-bare", "from-sub-bare", "from-hidden", "from-core-wt"} {
+		if err := os.MkdirAll(filepath.Join(root, name, ".pylon"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The verdict must not follow the caller's git environment.
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+
+	projects, err := DiscoverProjects(root)
+	if err != nil {
+		t.Fatalf("DiscoverProjects failed: %v", err)
+	}
+	var names []string
+	for _, p := range projects {
+		names = append(names, p.Name)
+	}
+	if got, want := strings.Join(names, ","), "from-core-wt,from-hidden,from-root-bare,from-sub-bare"; got != want {
+		t.Errorf("projects = %q, want %q", got, want)
 	}
 }

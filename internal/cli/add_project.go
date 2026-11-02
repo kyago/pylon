@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
 )
 
@@ -62,6 +63,11 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 	// Validate project name to prevent path traversal
 	if err := validateProjectName(projectName); err != nil {
 		return err
+	}
+
+	// Before prepareProjectDirectory: --force would delete the worktree.
+	if config.IsWorkspaceWorktree(root, filepath.Join(root, projectName)) {
+		return fmt.Errorf("%s is a git worktree of a checkout in this workspace, not a project", projectName)
 	}
 
 	projectDir, err := prepareProjectDirectory(root, projectName, force, skipClone)
