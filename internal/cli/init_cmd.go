@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"embed"
 	"fmt"
 	"os"
@@ -19,9 +18,6 @@ var embeddedAgents embed.FS
 
 //go:embed scripts/bash/*.sh
 var embeddedScripts embed.FS
-
-//go:embed skills/*.md
-var embeddedSkills embed.FS
 
 //go:embed reference/*.md
 var embeddedReference embed.FS
@@ -73,18 +69,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 3: Interactive input
-	reader := bufio.NewReader(os.Stdin)
-
 	fmt.Println("Pylon Workspace Initialization")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
 	providerInput := "auto"
 	fmt.Printf("Runtime provider: %s\n", providerInput)
-
-	// PR reviewer
-	fmt.Printf("PR reviewer GitHub username (Enter to skip): ")
-	reviewerInput, _ := reader.ReadString('\n')
-	reviewerInput = strings.TrimSpace(reviewerInput)
 
 	// Step 4: Create directory structure
 	// Spec Reference: Section 4 "Workspace Structure", Section 7 "pylon init"
@@ -93,10 +82,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		filepath.Join(pylonDir, "agents"),
 		filepath.Join(pylonDir, "skills"),
 		filepath.Join(pylonDir, "commands"),
-		filepath.Join(pylonDir, "runtime", "memory"),
-		filepath.Join(pylonDir, "runtime", "sessions"),
-		filepath.Join(pylonDir, "conversations"),
-		filepath.Join(pylonDir, "tasks"),
+		filepath.Join(pylonDir, "runtime"),
 	}
 
 	for _, dir := range dirs {
@@ -106,22 +92,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create config.yml (Spec Section 16: minimal config after init)
-	reviewerSection := "    reviewers: []"
-	if reviewerInput != "" {
-		reviewerSection = fmt.Sprintf("    reviewers:\n      - %s", reviewerInput)
-	}
-
 	configContent := fmt.Sprintf(`version: "0.2"
 
 runtime:
   provider: %s
-  execution_mode: session-native
   permission_mode: acceptEdits
-
-git:
-  pr:
-%s
-`, providerInput, reviewerSection)
+`, providerInput)
 
 	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to create config.yml: %w", err)
@@ -142,7 +118,7 @@ git:
 	}
 
 	// Built-in agents, skills, commands, scripts and the usage manual (.pylon/builtin/)
-	if _, _, err := syncBuiltinResources(workDir); err != nil {
+	if _, err := syncBuiltinResources(workDir); err != nil {
 		return err
 	}
 
@@ -156,7 +132,6 @@ git:
 	gitignoreEntries := []string{
 		"# Pylon runtime (agent communication, state)",
 		".pylon/runtime/",
-		".pylon/conversations/",
 		".pylon/history/",
 		// .pylon/memory/ 는 의도적으로 제외 — 메모리는 git으로 추적/리뷰한다 (D1).
 		"",
@@ -224,15 +199,13 @@ git:
 	fmt.Println("Created:")
 	fmt.Println("  .pylon/config.yml          - workspace configuration")
 	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
-	fmt.Println("  .pylon/builtin/            - built-in agents, skills, commands, scripts, manual (regenerated)")
+	fmt.Println("  .pylon/builtin/            - built-in agents, commands, scripts, manual (regenerated)")
 	fmt.Println("  .pylon/agents/             - your own agents (pylon add-agent)")
 	fmt.Println("  .pylon/skills/             - your own skills (pylon add-skill)")
 	fmt.Println("  .pylon/commands/           - your own pipeline commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
 	fmt.Println("  .pylon/history/            - pipeline work history (file-based)")
 	fmt.Println("  .pylon/memory/             - project memory (git-tracked)")
-	fmt.Println("  .pylon/conversations/      - conversation history")
-	fmt.Println("  .pylon/tasks/              - confirmed task specs")
 	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/builtin/agents/, .pylon/agents/)")
 	fmt.Println("  CLAUDE.md                  - @AGENTS.md import marker")
 	fmt.Println("  AGENTS.md                  - operating guide (pylon block regenerated; write your own rules outside it)")
@@ -240,7 +213,7 @@ git:
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
 	fmt.Println("  2. Add projects: pylon add-project <name>")
-	fmt.Println("  3. Start working: run 'pylon', then use /pl:pipeline")
+	fmt.Println("  3. Start working: run 'pylon', or open the workspace in Paseo")
 
 	return nil
 }

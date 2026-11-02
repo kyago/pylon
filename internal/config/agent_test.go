@@ -20,7 +20,7 @@ func TestParseAgentFile_FullAgent(t *testing.T) {
 		{"name", agent.Name, "backend-dev"},
 		{"description", agent.Description, "Implements project-api backend features following Go standard project layout"},
 		{"role", agent.Role, "Backend Developer"},
-		{"backend", agent.Backend, "claude-code"},
+		{"provider", agent.Provider, "claude-code"},
 		{"filePath", agent.FilePath, path},
 	}
 
@@ -146,8 +146,8 @@ func TestParseAgentFile_MinimalAgent(t *testing.T) {
 	if agent.Description != "" {
 		t.Errorf("description should be empty, got %q", agent.Description)
 	}
-	if agent.Backend != "" {
-		t.Errorf("backend should be empty, got %q", agent.Backend)
+	if agent.Provider != "" {
+		t.Errorf("provider should be empty, got %q", agent.Provider)
 	}
 	if len(agent.Scope) != 0 {
 		t.Errorf("scope should be empty, got %v", agent.Scope)
@@ -224,10 +224,6 @@ requiredCapabilities:
 	agent, err := ParseAgentData(data)
 	if err != nil {
 		t.Fatal(err)
-	}
-	providerName, deprecated := agent.EffectiveProvider()
-	if providerName != "auto" || deprecated {
-		t.Fatalf("effective provider = %q, deprecated=%v", providerName, deprecated)
 	}
 	capabilities, err := agent.RequiredCapabilitySet()
 	if err != nil {

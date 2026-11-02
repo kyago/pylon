@@ -2,7 +2,7 @@
 name: architect
 description: Read-only solution architect that produces design documents and ADRs
 role: Solution Architect
-backend: claude-code
+provider: claude-code
 scope:
   - project-api
   - project-web

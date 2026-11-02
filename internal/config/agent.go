@@ -19,7 +19,6 @@ type AgentConfig struct {
 	Role                 string   `yaml:"role"`
 	Type                 string   `yaml:"type"`
 	Provider             string   `yaml:"provider,omitempty"`
-	Backend              string   `yaml:"backend,omitempty"`
 	RequiredCapabilities []string `yaml:"requiredCapabilities,omitempty"`
 	EvaluationRole       string   `yaml:"evaluationRole,omitempty"`
 	AccessMode           string   `yaml:"accessMode,omitempty"`
@@ -45,16 +44,6 @@ const (
 	InputPolicyScopedContext    = "scoped_context"
 	InputPolicyIsolatedEvidence = "isolated_evidence"
 )
-
-func (a AgentConfig) EffectiveProvider() (string, bool) {
-	if providerName := strings.TrimSpace(a.Provider); providerName != "" {
-		return providerName, false
-	}
-	if backendName := strings.TrimSpace(a.Backend); backendName != "" {
-		return backendName, true
-	}
-	return "auto", false
-}
 
 func (a AgentConfig) RequiredCapabilitySet() (provider.CapabilitySet, error) {
 	return provider.ParseCapabilities(a.RequiredCapabilities)

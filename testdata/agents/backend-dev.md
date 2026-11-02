@@ -2,7 +2,7 @@
 name: backend-dev
 description: Implements project-api backend features following Go standard project layout
 role: Backend Developer
-backend: claude-code
+provider: claude-code
 scope:
   - project-api
 tools:

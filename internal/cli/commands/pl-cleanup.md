@@ -117,8 +117,6 @@ pylon mem store --project <프로젝트> --category decision --key <슬러그> -
   머지되지 않은 브랜치는 Step 6에서 지우지 않고 보고에 남깁니다.
 - 그 sub의 워크트리(`git worktree list`에서 run 브랜치에 있는 것)에 미커밋·추적 안 된 파일이 없습니다(`git status
   --porcelain`). 정리 스크립트도 그런 워크트리는 지우지 않고 출력의 `kept`에 남깁니다. `kept`가 있으면 보고합니다.
-- repo가 없는 비소프트웨어 run: 체크포인트는 `final.md`·`seo.md` 같은 산출물을 보존하지 않으므로, 사용자가 정한
-  위치에 저장했거나 커밋한 것을 확인했을 때만 마감합니다. 확인하지 못하면 runtime 경로를 알려 주고 남깁니다.
 
 **정리 전 준비.**
 - 각 sub의 `repo`, `branch`, `base_revision`(root `status.json`)과 `base_branch`(sub의 `status.json`)를 기록해 둡니다.

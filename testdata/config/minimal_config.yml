@@ -1,12 +1,5 @@
 version: "0.1"
 
 runtime:
-  backend: claude-code
-  max_concurrent: 5
-  max_turns: 50
+  provider: claude-code
   permission_mode: acceptEdits
-
-git:
-  pr:
-    reviewers:
-      - keiyjay

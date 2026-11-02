@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func TestParseConfig_FullConfig(t *testing.T) {
@@ -26,15 +24,11 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		expected interface{}
 	}{
 		{"version", cfg.Version, "0.1"},
-		{"runtime.backend", cfg.Runtime.Backend, "claude-code"},
+		{"runtime.provider", cfg.Runtime.Provider, "claude-code"},
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "acceptEdits"},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "task"},
 		{"git.default_base", cfg.Git.DefaultBase, "main"},
-		{"git.auto_push", cfg.Git.AutoPush, true},
-		{"git.worktree.enabled", cfg.Git.Worktree.Enabled, true},
-		{"git.worktree.auto_cleanup", cfg.Git.Worktree.AutoCleanup, true},
-		{"git.pr.draft", cfg.Git.PR.Draft, false},
-		{"wiki.auto_update", cfg.Wiki.AutoUpdate, true},
+		{"git.pr.auto_pr", cfg.Git.PR.AutoPR, true},
 		{"memory.proactive_injection", cfg.Memory.ProactiveInjection, true},
 		{"memory.proactive_max_tokens", cfg.Memory.ProactiveMaxTokens, 2000},
 	}
@@ -47,27 +41,9 @@ func TestParseConfig_FullConfig(t *testing.T) {
 		})
 	}
 
-	// Check reviewers list
-	if len(cfg.Git.PR.Reviewers) != 1 || cfg.Git.PR.Reviewers[0] != "keiyjay" {
-		t.Errorf("expected reviewers [keiyjay], got %v", cfg.Git.PR.Reviewers)
-	}
-
-	// Check projects
-	if len(cfg.Projects) != 2 {
-		t.Errorf("expected 2 projects, got %d", len(cfg.Projects))
-	}
-	if p, ok := cfg.Projects["project-api"]; !ok || p.Stack != "go" {
-		t.Errorf("expected project-api with stack=go, got %v", cfg.Projects["project-api"])
-	}
-
 	// Check runtime env
 	if v, ok := cfg.Runtime.Env["CLAUDE_CODE_EFFORT_LEVEL"]; !ok || v != "high" {
 		t.Errorf("expected CLAUDE_CODE_EFFORT_LEVEL=high, got %v", cfg.Runtime.Env)
-	}
-
-	// Check wiki update_on
-	if len(cfg.Wiki.UpdateOn) != 2 {
-		t.Errorf("expected 2 update_on triggers, got %d", len(cfg.Wiki.UpdateOn))
 	}
 }
 
@@ -86,8 +62,8 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 	if cfg.Version != "0.1" {
 		t.Errorf("version: got %q, expected %q", cfg.Version, "0.1")
 	}
-	if cfg.Runtime.Backend != "claude-code" {
-		t.Errorf("runtime.backend: got %q, expected %q", cfg.Runtime.Backend, "claude-code")
+	if cfg.Runtime.Provider != "claude-code" {
+		t.Errorf("runtime.provider: got %q, expected %q", cfg.Runtime.Provider, "claude-code")
 	}
 
 	// Verify defaults were applied
@@ -98,10 +74,6 @@ func TestParseConfig_MinimalConfig(t *testing.T) {
 	}{
 		{"git.branch_prefix (default)", cfg.Git.BranchPrefix, "task"},
 		{"git.default_base (default)", cfg.Git.DefaultBase, "main"},
-		{"git.auto_push (default)", cfg.Git.AutoPush, true},
-		{"git.worktree.enabled (default)", cfg.Git.Worktree.Enabled, true},
-		{"git.worktree.auto_cleanup (default)", cfg.Git.Worktree.AutoCleanup, true},
-		{"wiki.auto_update (default)", cfg.Wiki.AutoUpdate, true},
 		{"memory.proactive_injection (default)", cfg.Memory.ProactiveInjection, true},
 		{"memory.proactive_max_tokens (default)", cfg.Memory.ProactiveMaxTokens, 2000},
 	}
@@ -173,8 +145,8 @@ func TestParseConfig_VersionOnly(t *testing.T) {
 	}
 
 	// All defaults should be applied
-	if cfg.Runtime.Provider != "auto" || cfg.Runtime.Backend != "" {
-		t.Errorf("expected default provider auto without backend alias, got provider=%q backend=%q", cfg.Runtime.Provider, cfg.Runtime.Backend)
+	if cfg.Runtime.Provider != "auto" {
+		t.Errorf("expected default provider auto, got %q", cfg.Runtime.Provider)
 	}
 }
 
@@ -200,55 +172,26 @@ func TestParseConfig_RuntimeKnobsHaveNoDefaults(t *testing.T) {
 	}
 }
 
-func TestRuntimeConfigEffectiveProviderCompatibility(t *testing.T) {
-	tests := []struct {
-		name       string
-		runtime    RuntimeConfig
-		provider   string
-		deprecated bool
-	}{
-		{name: "provider wins", runtime: RuntimeConfig{Provider: "provider-b", Backend: "claude-code"}, provider: "provider-b"},
-		{name: "backend alias", runtime: RuntimeConfig{Backend: "claude-code"}, provider: "claude-code", deprecated: true},
-		{name: "implicit auto", runtime: RuntimeConfig{}, provider: "auto"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider, deprecated := tt.runtime.EffectiveProvider()
-			if provider != tt.provider || deprecated != tt.deprecated {
-				t.Fatalf("EffectiveProvider() = %q, %v; want %q, %v", provider, deprecated, tt.provider, tt.deprecated)
-			}
-		})
-	}
-}
-
 func TestParseConfigProviderNeutralRuntime(t *testing.T) {
 	data := []byte(`version: "0.2"
 runtime:
   provider: provider-b
-  execution_mode: managed-adapter
 providers:
   provider-b:
     enabled: auto
     command: provider-b
-routing:
-  fallback: serial
-  require_resume_for_background: false
 `)
 
 	cfg, err := ParseConfig(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Runtime.Provider != "provider-b" || cfg.Runtime.ExecutionMode != "managed-adapter" {
+	if cfg.Runtime.Provider != "provider-b" {
 		t.Fatalf("runtime = %+v", cfg.Runtime)
 	}
 	providerConfig, ok := cfg.Providers["provider-b"]
 	if !ok || providerConfig.Enabled != "auto" || providerConfig.Command != "provider-b" {
 		t.Fatalf("provider config = %+v, exists=%v", providerConfig, ok)
-	}
-	if cfg.Routing.Fallback != "serial" || cfg.Routing.RequireResumeForBackground {
-		t.Fatalf("routing = %+v", cfg.Routing)
 	}
 }
 
@@ -259,43 +202,11 @@ func TestLoadConfig_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestParseConfig_WorkflowDefaults(t *testing.T) {
-	data := []byte(`version: "0.1"`)
-	cfg, err := ParseConfig(data)
-	if err != nil {
-		t.Fatalf("ParseConfig failed: %v", err)
-	}
-
-	if cfg.Workflow.DefaultWorkflow != "feature" {
-		t.Errorf("expected default workflow 'feature', got %q", cfg.Workflow.DefaultWorkflow)
-	}
-}
-
-func TestParseConfig_WorkflowCustomValues(t *testing.T) {
-	data := []byte(`
-version: "0.1"
-workflow:
-  default_workflow: bugfix
-  template_dir: .pylon/workflows
-`)
-	cfg, err := ParseConfig(data)
-	if err != nil {
-		t.Fatalf("ParseConfig failed: %v", err)
-	}
-
-	if cfg.Workflow.DefaultWorkflow != "bugfix" {
-		t.Errorf("expected workflow 'bugfix', got %q", cfg.Workflow.DefaultWorkflow)
-	}
-	if cfg.Workflow.TemplateDir != ".pylon/workflows" {
-		t.Errorf("expected template_dir '.pylon/workflows', got %q", cfg.Workflow.TemplateDir)
-	}
-}
-
 func TestParseConfig_CustomValues(t *testing.T) {
 	data := []byte(`
 version: "0.2"
 runtime:
-  backend: openai
+  provider: openai
   permission_mode: bypassPermissions
 git:
   branch_prefix: feature
@@ -317,7 +228,7 @@ conversation:
 		expected interface{}
 	}{
 		{"version", cfg.Version, "0.2"},
-		{"runtime.backend", cfg.Runtime.Backend, "openai"},
+		{"runtime.provider", cfg.Runtime.Provider, "openai"},
 		{"runtime.permission_mode", cfg.Runtime.PermissionMode, "bypassPermissions"},
 		{"git.branch_prefix", cfg.Git.BranchPrefix, "feature"},
 		{"git.default_base", cfg.Git.DefaultBase, "develop"},
@@ -334,19 +245,12 @@ conversation:
 }
 
 func TestSyncConfigDefaults_DeepNestedMissing(t *testing.T) {
-	// Config with git.worktree section but missing auto_cleanup,
-	// and git.pr section but missing draft.
-	// These are depth-2 fields that the old code could not detect.
+	// Config with a git.pr section but missing auto_pr: a depth-2 field.
 	content := []byte(`version: "0.1"
 git:
   branch_prefix: custom
   default_base: develop
-  worktree:
-    enabled: true
-  pr:
-    auto_pr: true
-    reviewers:
-      - alice
+  pr: {}
 `)
 
 	tmpDir := t.TempDir()
@@ -360,13 +264,13 @@ git:
 		t.Fatalf("SyncConfigDefaults failed: %v", err)
 	}
 
-	// Should detect git.worktree.auto_cleanup and git.pr.draft as missing
+	// Should detect git.pr.auto_pr as missing
 	addedSet := make(map[string]bool)
 	for _, a := range added {
 		addedSet[a] = true
 	}
 
-	mustExist := []string{"git.worktree.auto_cleanup", "git.pr.draft"}
+	mustExist := []string{"git.pr.auto_pr"}
 	for _, field := range mustExist {
 		if !addedSet[field] {
 			t.Errorf("expected %q in added list, got: %v", field, added)
@@ -380,20 +284,17 @@ git:
 	if cfg.Git.DefaultBase != "develop" {
 		t.Errorf("expected default_base=develop, got %q", cfg.Git.DefaultBase)
 	}
-	if !cfg.Git.Worktree.Enabled {
-		t.Error("expected worktree.enabled=true to be preserved")
-	}
-	if !cfg.Git.PR.AutoPR {
-		t.Error("expected pr.auto_pr=true to be preserved")
-	}
 
 	// Verify the file was rewritten with missing fields
 	reloaded, err := LoadConfig(cfgPath)
 	if err != nil {
 		t.Fatalf("LoadConfig after sync failed: %v", err)
 	}
-	if !reloaded.Git.Worktree.AutoCleanup {
-		t.Error("expected worktree.auto_cleanup=true in rewritten file")
+	if reloaded.Git.BranchPrefix != "custom" {
+		t.Errorf("expected branch_prefix=custom in rewritten file, got %q", reloaded.Git.BranchPrefix)
+	}
+	if raw, _ := os.ReadFile(cfgPath); !strings.Contains(string(raw), "auto_pr: false") {
+		t.Errorf("expected auto_pr default in rewritten file:\n%s", raw)
 	}
 }
 
@@ -402,7 +303,7 @@ func TestSyncConfigDefaults_EntireSectionMissing(t *testing.T) {
 	// Should be appended (not rewrite) and detected.
 	content := []byte(`version: "0.1"
 runtime:
-  backend: claude-code
+  provider: claude-code
   max_concurrent: 5
   task_timeout: 30m
   max_attempts: 2
@@ -455,36 +356,6 @@ workflow:
 
 	if !addedSet["skills"] {
 		t.Errorf("expected 'skills' in added list, got: %v", added)
-	}
-}
-
-func TestSyncConfigDefaultsDoesNotRewriteBackendAliasToProvider(t *testing.T) {
-	content := []byte(`version: "0.1"
-runtime:
-  backend: claude-code
-  max_concurrent: 5
-  max_turns: 50
-  permission_mode: acceptEdits
-`)
-
-	path := filepath.Join(t.TempDir(), "config.yml")
-	if err := os.WriteFile(path, content, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := SyncConfigDefaults(path); err != nil {
-		t.Fatal(err)
-	}
-	updated, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw map[string]any
-	if err := yaml.Unmarshal(updated, &raw); err != nil {
-		t.Fatal(err)
-	}
-	runtime := raw["runtime"].(map[string]any)
-	if _, exists := runtime["provider"]; exists {
-		t.Fatalf("deprecated backend alias was rewritten to provider: %s", updated)
 	}
 }
 
@@ -634,257 +505,6 @@ func TestMemoryRetentionDaysLegacyScalar(t *testing.T) {
 	}
 }
 
-func TestMigrateRuntimeBackend_RenamesKey(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yml")
-	content := `version: "0.2"
-# runtime settings
-runtime:
-  backend: claude-code # my provider
-  permission_mode: bypassPermissions
-`
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := MigrateRuntimeBackend(path)
-	if err != nil || !migrated {
-		t.Fatalf("migrated=%v err=%v", migrated, err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	if strings.Contains(text, "backend:") {
-		t.Fatalf("backend key must be gone:\n%s", text)
-	}
-	if !strings.Contains(text, "provider: claude-code") {
-		t.Fatalf("provider key missing:\n%s", text)
-	}
-	if !strings.Contains(text, "# runtime settings") || !strings.Contains(text, "# my provider") {
-		t.Fatalf("comments must be preserved:\n%s", text)
-	}
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	providerName, deprecated := cfg.Runtime.EffectiveProvider()
-	if providerName != "claude-code" || deprecated {
-		t.Fatalf("effective provider = %q deprecated=%v", providerName, deprecated)
-	}
-	if cfg.Runtime.PermissionMode != "bypassPermissions" {
-		t.Fatalf("sibling keys must survive: %+v", cfg.Runtime)
-	}
-}
-
-func TestMigrateRuntimeBackend_DropsBackendWhenProviderExists(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yml")
-	content := "version: \"0.2\"\nruntime:\n  provider: codex\n  backend: claude-code\n"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := MigrateRuntimeBackend(path)
-	if err != nil || !migrated {
-		t.Fatalf("migrated=%v err=%v", migrated, err)
-	}
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// provider가 우선이었으므로 backend 제거는 의미 변화가 없어야 한다.
-	if providerName, deprecated := cfg.Runtime.EffectiveProvider(); providerName != "codex" || deprecated {
-		t.Fatalf("effective provider = %q deprecated=%v", providerName, deprecated)
-	}
-	if cfg.Runtime.Backend != "" {
-		t.Fatalf("backend must be removed: %+v", cfg.Runtime)
-	}
-}
-
-func TestMigrateRuntimeBackend_NoopWithoutBackend(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yml")
-	content := "version: \"0.2\"\nruntime:\n  provider: claude-code\n"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := MigrateRuntimeBackend(path)
-	if err != nil || migrated {
-		t.Fatalf("expected noop: migrated=%v err=%v", migrated, err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != content {
-		t.Fatalf("file must be untouched on noop:\n%s", data)
-	}
-}
-
-func TestMigrateRuntimeBackend_BailsOnMultiDocument(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yml")
-	content := "version: \"0.2\"\nruntime:\n  backend: codex\n---\nsecond: doc\n"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := MigrateRuntimeBackend(path)
-	if err != nil || migrated {
-		t.Fatalf("multi-document file must not be migrated: migrated=%v err=%v", migrated, err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != content {
-		t.Fatalf("multi-document file must be untouched:\n%s", data)
-	}
-}
-
-func TestMigrateRuntimeBackend_EmptyProviderDoesNotLoseBackend(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yml")
-	content := "version: \"0.2\"\nruntime:\n  provider: \"\"\n  backend: codex\n"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := MigrateRuntimeBackend(path)
-	if err != nil || !migrated {
-		t.Fatalf("migrated=%v err=%v", migrated, err)
-	}
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 기존 유효값(backend=codex)이 보존되어야 한다 — auto로 바뀌면 의미 변경.
-	if providerName, deprecated := cfg.Runtime.EffectiveProvider(); providerName != "codex" || deprecated {
-		t.Fatalf("effective provider = %q deprecated=%v", providerName, deprecated)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Count(string(data), "provider:") != 1 || strings.Contains(string(data), "backend:") {
-		t.Fatalf("expected single provider key and no backend:\n%s", data)
-	}
-}
-
-func TestMigrateRuntimeBackend_NoopWhenConfigMissing(t *testing.T) {
-	migrated, err := MigrateRuntimeBackend(filepath.Join(t.TempDir(), "config.yml"))
-	if err != nil || migrated {
-		t.Fatalf("missing config must be a silent noop: migrated=%v err=%v", migrated, err)
-	}
-}
-
-func TestStripLegacyRuntimeEnv(t *testing.T) {
-	if got := StripLegacyRuntimeEnv(nil); got != nil {
-		t.Fatalf("nil env = %v, want nil", got)
-	}
-	env := map[string]string{
-		"CLAUDE_CODE_EFFORT_LEVEL":        "high",
-		"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
-		"MY_VAR":                          "keep",
-	}
-	got := StripLegacyRuntimeEnv(env)
-	if len(got) != 1 || got["MY_VAR"] != "keep" {
-		t.Fatalf("stripped = %v, want only MY_VAR", got)
-	}
-	if len(env) != 3 {
-		t.Fatalf("input map must not be mutated: %v", env)
-	}
-	custom := map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "max", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70"}
-	if got := StripLegacyRuntimeEnv(custom); len(got) != 2 || got["CLAUDE_CODE_EFFORT_LEVEL"] != "max" || got["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] != "70" {
-		t.Fatalf("custom values must stay, got %v", got)
-	}
-}
-
-func TestMigrateRuntimeEnvDefaults(t *testing.T) {
-	write := func(t *testing.T, content string) string {
-		t.Helper()
-		path := filepath.Join(t.TempDir(), "config.yml")
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-
-	t.Run("removes old defaults and drops empty env", func(t *testing.T) {
-		path := write(t, `version: "0.2"
-# runtime settings
-runtime:
-  provider: claude-code # my provider
-  env:
-    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
-    CLAUDE_CODE_EFFORT_LEVEL: high
-`)
-		removed, err := MigrateRuntimeEnvDefaults(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if want := []string{"CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"}; strings.Join(removed, ",") != strings.Join(want, ",") {
-			t.Fatalf("removed = %v, want %v", removed, want)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		text := string(data)
-		if strings.Contains(text, "env") {
-			t.Fatalf("empty env key must be dropped:\n%s", text)
-		}
-		if !strings.Contains(text, "# runtime settings") || !strings.Contains(text, "# my provider") {
-			t.Fatalf("comments must be preserved:\n%s", text)
-		}
-		cfg, err := LoadConfig(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.Runtime.Env != nil || cfg.Runtime.Provider != "claude-code" {
-			t.Fatalf("runtime = %+v", cfg.Runtime)
-		}
-	})
-
-	t.Run("keeps custom values", func(t *testing.T) {
-		path := write(t, `version: "0.2"
-runtime:
-  env:
-    CLAUDE_CODE_EFFORT_LEVEL: max
-    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"
-    MY_VAR: keep
-`)
-		removed, err := MigrateRuntimeEnvDefaults(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(removed) != 1 || removed[0] != "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" {
-			t.Fatalf("removed = %v, want only CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", removed)
-		}
-		cfg, err := LoadConfig(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "max", "MY_VAR": "keep"}
-		if len(cfg.Runtime.Env) != len(want) || cfg.Runtime.Env["CLAUDE_CODE_EFFORT_LEVEL"] != "max" || cfg.Runtime.Env["MY_VAR"] != "keep" {
-			t.Fatalf("env = %v, want %v", cfg.Runtime.Env, want)
-		}
-	})
-
-	t.Run("noop without legacy entries", func(t *testing.T) {
-		content := "version: \"0.2\"\nruntime:\n  env:\n    MY_VAR: keep\n"
-		path := write(t, content)
-		removed, err := MigrateRuntimeEnvDefaults(path)
-		if err != nil || len(removed) != 0 {
-			t.Fatalf("removed=%v err=%v", removed, err)
-		}
-		if data, _ := os.ReadFile(path); string(data) != content {
-			t.Fatalf("file must be untouched:\n%s", data)
-		}
-		if removed, err := MigrateRuntimeEnvDefaults(filepath.Join(t.TempDir(), "missing.yml")); err != nil || len(removed) != 0 {
-			t.Fatalf("missing config must be a silent noop: removed=%v err=%v", removed, err)
-		}
-	})
-}
-
 func TestSetRuntimeProvider(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yml")
@@ -911,7 +531,7 @@ runtime:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if providerName, _ := cfg.Runtime.EffectiveProvider(); providerName != "codex" {
+	if providerName := cfg.Runtime.EffectiveProvider(); providerName != "codex" {
 		t.Fatalf("effective provider = %q", providerName)
 	}
 	if cfg.Runtime.PermissionMode != "bypassPermissions" {
@@ -932,7 +552,7 @@ func TestSetRuntimeProvider_CreatesMissingSectionAndKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if providerName, _ := cfg.Runtime.EffectiveProvider(); providerName != "claude-code" {
+	if providerName := cfg.Runtime.EffectiveProvider(); providerName != "claude-code" {
 		t.Fatalf("effective provider = %q", providerName)
 	}
 }
@@ -969,7 +589,7 @@ func TestSetRuntimeProvider_EmptyRuntimeSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if providerName, _ := cfg.Runtime.EffectiveProvider(); providerName != "codex" {
+	if providerName := cfg.Runtime.EffectiveProvider(); providerName != "codex" {
 		t.Fatalf("effective provider = %q", providerName)
 	}
 }

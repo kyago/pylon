@@ -45,8 +45,6 @@ repo / base 브랜치 / 수정 대상 파일 절대 경로
 
 `isolation="worktree"`는 의존성 설치가 필요 없고 파일이 겹치지 않는 태스크에만 사용합니다.
 
-옛 에이전트 이름 매핑: backend-dev/frontend-dev/test-engineer → dev; tracer → debugger; security-reviewer → code-reviewer; web-searcher/academic-analyst/doc-specialist/lead-researcher → researcher; copywriter/report-writer → writer; content-reviewer → editor; brand-strategist/campaign-planner/content-strategist → strategist; data-analyst → market-researcher; code-simplifier → refactorer; po/pm/tech-writer → (없음, 루트 세션이 수행). tasks.json의 `agent`가 이 옛 이름이면 매핑한 이름으로 호출한다.
-
 3. 각 에이전트 완료 후 검증 출력을 확인한 뒤 `execution-log.json`에 기록합니다.
    검증 출력이 첨부되지 않은 "완료" 보고는 완료로 처리하지 않습니다. 또한 provider의 자연어 응답을
    정본으로 사용하지 않고, task별 구조화 보고서를 Pylon으로 검증해 기록합니다:

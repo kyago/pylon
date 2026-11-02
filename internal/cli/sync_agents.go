@@ -7,9 +7,7 @@ import (
 )
 
 func newSyncAgentsCmd() *cobra.Command {
-	var force bool
-
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "sync-agents",
 		Short: "Sync built-in agent definitions to workspace",
 		Long: `내장 에이전트 정의를 워크스페이스에 동기화합니다.
@@ -22,10 +20,6 @@ pylon에 내장된 최신 리소스(.pylon/builtin/)를 갱신하고
 		},
 	}
 
-	cmd.Flags().BoolVar(&force, "force", false, "(deprecated) 효과 없음 — 내장 리소스는 항상 최신 버전으로 유지됩니다")
-	_ = cmd.Flags().MarkDeprecated("force", "내장 리소스는 .pylon/builtin/에서 항상 최신 버전으로 유지됩니다")
-
-	return cmd
 }
 
 func runSyncAgents() error {
@@ -33,7 +27,7 @@ func runSyncAgents() error {
 	if err != nil {
 		return err
 	}
-	wrote, removed, err := syncBuiltinResources(root)
+	wrote, err := syncBuiltinResources(root)
 	if err != nil {
 		return err
 	}
@@ -41,6 +35,6 @@ func runSyncAgents() error {
 	if err := syncClaudeAgentLinks(root); err != nil {
 		fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", err)
 	}
-	reportBuiltinSync(wrote, removed, nil)
+	reportBuiltinSync(wrote, nil)
 	return nil
 }

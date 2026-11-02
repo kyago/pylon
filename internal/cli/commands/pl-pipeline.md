@@ -4,14 +4,14 @@ description: "Pylon 파이프라인 실행 — 요구사항 → 분석 → 설�
 
 # Pylon Pipeline — 전체 워크플로우 실행
 
+> **폐기 예정:** 이 파이프라인은 동결됐습니다. 사용자가 이 커맨드를 명시적으로 실행했을 때만 진행합니다.
+> 새로운 큰 작업은 Paseo 투두 보드를 권장합니다.
+
 요구사항에 맞는 워크플로우를 골라 파이프라인을 실행합니다.
 
 ## 워크플로우 선택
 
-| 도메인 | 워크플로우 | 파이프라인 |
-|--------|-----------|-----------|
-| 소프트웨어 개발 | feature/bugfix/hotfix | 요구사항 분석 → architect → 태스크 분해 → dev → 검증 → PR |
-| 리서치·콘텐츠·마케팅 | research/content/marketing | 조사 → (strategist) → writer → 독립 검토 → 수정 루프 → 최종본 |
+feature/bugfix/hotfix: 요구사항 분석 → architect → 태스크 분해 → dev → 검증 → PR
 
 ## 실행 단계
 
@@ -38,17 +38,16 @@ cat > "$ROOT_PIPELINE_DIR/requirement.md" <<'REQUIREMENT_EOF'
 REQUIREMENT_EOF
 ```
 
-### Step 2: 요구사항 분석 + 도메인 라우팅
+### Step 2: 요구사항 분석 + 워크플로우 선택
 
 루트 세션이 직접 PO 역할을 수행합니다.
 
 1. `$PIPELINE_DIR/requirement.md`를 읽고, 세션 컨텍스트의 "pylon 프로젝트 메모리" 목록과
    `pylon mem search --project <프로젝트> --query "<요구사항 키워드>"`로 관련 결정·학습을 확인합니다. 찾은 내용은
    분석과 에이전트 프롬프트에 반영합니다
-2. 도메인을 판단해 `$PIPELINE_DIR/routing-decision.json`을 작성합니다:
+2. 워크플로우를 판단해 `$PIPELINE_DIR/routing-decision.json`을 작성합니다:
    ```json
-   {"detected_domain": "software|research|content|marketing",
-    "selected_workflow": "feature|bugfix|hotfix|research|content|marketing",
+   {"selected_workflow": "feature|bugfix|hotfix",
     "reasoning": "선택 근거", "agents": ["사용할 에이전트"]}
    ```
 3. 사용자 스토리, 수용 기준, 기능·비기능 요구사항, 범위 밖 항목을 담아 `$PIPELINE_DIR/requirement-analysis.md`를
@@ -60,15 +59,12 @@ REQUIREMENT_EOF
    ID와 설명이 비어 있거나 ID가 중복되면 다음 단계로 진행하지 않습니다.
    `selected_workflow`가 `bugfix`·`hotfix`면 첫 기준을 결함 재현으로 둡니다 — 재현 명령이나 절차, 지금 나오는
    잘못된 결과, 수정 후 기대 결과. 수정은 이 재현이 기대 결과를 낼 때만 완료입니다.
-5. `detected_domain`에 따라 실행 절차를 따릅니다:
-   - `software` → **소프트웨어 파이프라인** (Steps 3-9)
-   - `research`, `content`, `marketing` → **비소프트웨어 파이프라인** (Steps N1-N5)
 
 Claude Code에서는 `.claude/agents/`에 등록된 정의를 `subagent_type`으로 호출한다. 그 외 provider에서는 `.pylon/builtin/agents/<name>.md` 본문을 프롬프트 앞에 붙인다. 사용자가 추가한 에이전트는 `.pylon/agents/<name>.md`에 있다. 정의의 `skills` 목록은 워크스페이스 `AGENTS.md`의 위임 규약에 따라 스킬 본문을 함께 전달한다.
 
 ---
 
-## 소프트웨어 파이프라인 (detected_domain: software)
+## 구현 단계 (Steps 3-9)
 
 ### Step 3: 아키텍처 분석
 
@@ -403,53 +399,6 @@ mv "$STATUS_TMP" "$ROOT_PIPELINE_DIR/status.json"
 
 실행 결과(생성/변경 파일, 검증 결과, PR URL, 소요 시간)를 요약하고, 남은 일(PR 생성·머지)과 마감 방법(머지 후
 `/pl:cleanup`)을 알립니다.
-
----
-
-## 비소프트웨어 파이프라인 (detected_domain: research, content, marketing)
-
-각 단계 프롬프트에는 이전 산출물 내용을 붙여넣는다(경로만 넘기지 않는다). 독자와 수용 기준도 함께
-넣습니다. 읽기 전용 에이전트(`researcher`, `market-researcher`, `fact-checker`, `editor`, `critic`)는 파일을
-쓸 수 없으므로 루트 세션이 결과(최종 메시지)를 지정된 경로에 저장합니다.
-
-### Step N1: 조사
-
-루트 세션이 요구사항에서 조사 질문을 도출해 `$PIPELINE_DIR/research-plan.md`에 쓰고, 출처 유형마다
-`researcher`를 **병렬·백그라운드**로 실행합니다. 출처 수는 질문이 정합니다. 마케팅은 `market-researcher`를
-쓰고 성과 데이터가 있으면 함께 넣습니다. 모두 도착하면 각 결과를 `$PIPELINE_DIR/research-<source>.md`로
-저장합니다.
-
-```
-Agent(subagent_type="researcher", run_in_background=true, prompt="sources: web\n\n[research-plan.md 내용]")
-Agent(subagent_type="researcher", run_in_background=true, prompt="sources: academic\n\n[research-plan.md 내용]")
-```
-
-### Step N2: 종합
-
-전략이 필요한 콘텐츠·마케팅이면 `strategist`(`domain: content|marketing`, 요구사항 + 조사 결과)가 먼저
-`$PIPELINE_DIR/strategy.md`를 씁니다. 이어서 `writer`가 요구사항·전략·조사 결과로 초안
-`$PIPELINE_DIR/draft.md`를 씁니다. `brief type:`은 리서치 `research report`, 콘텐츠 `article`, 마케팅
-`marketing copy`입니다.
-
-### Step N3: 독립 검토
-
-`fact-checker`(초안 + 조사 자료)와 `editor`(초안 + 요구사항·전략)를 병렬로 실행하고 결과를
-`$PIPELINE_DIR/review-facts.md`, `$PIPELINE_DIR/review-edit.md`로 저장합니다. 리서치 보고서는 `critic`도
-추가할 수 있습니다(`review-critic.md`, 지적은 재작성 때 함께 넘깁니다).
-
-### Step N4: 수정 루프
-
-`editor`에 must-fix가 있거나 `fact-checker`에 `contradicted`가 하나라도 있으면 `writer`에 현재 초안과 해당
-항목 전문을 넘겨 `draft.md`를 고쳐 쓰게 하고 Step N3를 다시 실행합니다. 상한은 3회입니다 — 라운드마다 검토
-비용이 들기 때문입니다. 루프가 끝나거나 3회 상한에 도달하면 `draft.md`를 `$PIPELINE_DIR/final.md`로 복사하고
-Step N5로 진행합니다. 상한에 도달했다면 남은 must-fix·`contradicted` 항목을 완료 보고에 미해결로 적습니다.
-
-### Step N5: 완료
-
-요구사항에 SEO가 있으면 `seo-specialist`에 최종본을 한 번 넘겨 제안을 `$PIPELINE_DIR/seo.md`에 저장하게
-합니다. 완료 보고에는 산출물 목록, 미해결 must-fix·`contradicted` 요약, 남은 `unverified` 주장을 넣습니다.
-root `status.json`은 Step 9와 같이 `awaiting_cleanup`으로 바꾸고, 마감(체크포인트·정리·메모리)은 `/pl:cleanup`에
-맡깁니다.
 
 ---
 

@@ -83,7 +83,7 @@ func runLaunch() error {
 		Effort:              cfg.Runtime.Effort,
 		Model:               cfg.Runtime.Model,
 		Environment:         os.Environ(),
-		EnvironmentOverride: config.StripLegacyRuntimeEnv(cfg.Runtime.Env),
+		EnvironmentOverride: cfg.Runtime.Env,
 	})
 	if err != nil {
 		return fmt.Errorf("provider %s 실행 준비 실패: %w", selection.Adapter.Name(), err)

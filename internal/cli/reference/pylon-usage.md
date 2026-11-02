@@ -32,26 +32,15 @@
 - 도메인 지식: `.pylon/domain/overview.md`, `practices.md`, `glossary.md`,
   `<project>/.pylon/context.md`.
 
-## 도메인 자동 감지
+## 작업 진행 방식
 
-| 도메인 | 키워드/신호 | 워크플로우 | 핵심 에이전트 |
-|--------|-----------|-----------|-------------|
-| **소프트웨어 개발** | 구현, 코드, API, 버그, PR, 테스트 | feature/bugfix/hotfix | architect, dev, verifier |
-| **리서치/조사** | 조사, 분석, 비교, 보고서, 논문, 트렌드 | research | researcher, fact-checker, writer |
-| **콘텐츠 제작** | 글, 블로그, 문서, 번역, 편집, 작성 | content | strategist, writer, editor |
-| **마케팅** | 캠페인, 광고, SEO, 타겟, 퍼널, 시장 | marketing | market-researcher, strategist, writer |
-
-도메인이 모호하면 가장 적합한 도메인을 택하되, 확신이 없으면 대화 중에는 사용자에게 확인하고, 파이프라인 실행 중에는 가정을 routing-decision.json에 기록하고 진행합니다.
-혼합 작업(예: '리서치 후 구현')은 단계별로 도메인을 전환합니다.
-
-## 도메인별 파이프라인
-
-- **소프트웨어**: 요구사항 분석 → 아키텍처 → 태스크 분해 → 구현 → 검증 → PR·머지 → `pl-cleanup`(메모리·도메인 지식 갱신, 정리)
-  - bugfix·hotfix는 결함 재현(수정 전 실패하는 테스트)부터 — 재현이 기대 결과를 낼 때만 수정 완료.
-- **리서치·콘텐츠·마케팅**: 출처별 병렬 조사 → (전략) → 초안 → 팩트 체크·편집 검토 → 수정 루프 → 최종본
-
-파이프라인 전체를 돌릴지는 요구사항 규모로 판단합니다. 단일 파일 수정이나 질문 답변에
-`pl-pipeline` 전체 파이프라인을 돌리지 않습니다 — 그냥 처리합니다.
+- 기본은 대화로 직접 처리합니다. 단일 파일 수정이나 질문 답변은 그냥 처리합니다.
+- 범위가 큰 작업은 Paseo 투두 보드를 제안합니다. Paseo 세션에는 `todo_add`·`todo_start` 도구가 있고, 카드 시작은 사용자가
+  정합니다. 카드는 `todo_add`를 호출한 세션의 디렉터리에서 동작합니다. 세션이 워크스페이스 루트처럼 git 저장소가 아닌 곳에
+  있으면 격리·브랜치·PR이 없으므로 호출하지 말고, 프로젝트 디렉터리에서 세션을 열어 추가하도록 안내합니다.
+- `pl-pipeline`은 폐기 예정으로 동결됐습니다. 사용자가 명시적으로 요청할 때만 실행합니다: 요구사항 분석 → 아키텍처 →
+  태스크 분해 → 구현 → 검증 → PR·머지 → `pl-cleanup`.
+- bugfix·hotfix는 결함 재현(수정 전 실패하는 테스트)부터 — 재현이 기대 결과를 낼 때만 수정 완료.
 
 ## 상태 관리
 
@@ -79,7 +68,7 @@
 
 | 커맨드 | 역할 |
 |--------|------|
-| `pl-pipeline` | 전체 파이프라인 실행 (요구사항 → 검증). 모든 도메인의 범용 진입점. 끝나면 run을 `pl-cleanup`에 넘긴다. |
+| `pl-pipeline` | **폐기 예정.** 사용자가 요청할 때만 전체 파이프라인 실행 (요구사항 → 검증). 끝나면 run을 `pl-cleanup`에 넘긴다. |
 | `pl-cleanup` | 세션 마무리 — 파이프라인 사용 여부와 무관. 검증 근거, 메모리·도메인 지식 갱신, 머지된 run 마감, 머지된 브랜치·워크트리 정리. |
 | `pl-architect` | 아키텍처 분석 단독 실행 |
 | `pl-breakdown` | 태스크 분해 |
@@ -88,7 +77,8 @@
 | `pl-pr` | PR 생성 |
 | `pl-status` | 파이프라인 상태 조회 |
 | `pl-add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
-| `pl-migrate` | 레거시 워크스페이스(SQLite/Fossil) 폐기 절차 안내 |
+
+파이프라인 단계 커맨드(`pl-architect`, `pl-breakdown`, `pl-execute`, `pl-verify`, `pl-pr`, `pl-status`)도 함께 폐기 예정입니다.
 
 ## 위임 판단
 
@@ -135,7 +125,11 @@ YAML `skills` 목록을 확인합니다. `.pylon/config.yml`의 `skills.enabled`
 ## 검증 규약
 
 "완료"를 주장하기 전에 반드시 대상 프로젝트의 검증을 실행합니다. 검증 명령은 각
-`<project>/.pylon/verify.yml`에서 읽습니다. 실행:
+`<project>/.pylon/verify.yml`에서 읽습니다. 대화나 보드 작업에서는 직접 실행합니다:
+
+    pylon internal verify --workdir <프로젝트 또는 워크트리> --config <메인 체크아웃>/.pylon/verify.yml
+
+파이프라인 run 안에서는:
 
     .pylon/builtin/scripts/bash/run-verification.sh "$PIPELINE_DIR" --git-root <프로젝트 상대경로>
 

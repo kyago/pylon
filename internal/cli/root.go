@@ -27,13 +27,11 @@ func SetVersion(v string) {
 // When invoked without subcommands, it launches the selected interactive provider.
 var rootCmd = &cobra.Command{
 	Use:   "pylon",
-	Short: "AI multi-agent development team orchestrator",
-	Long: `Pylon - AI multi-agent development team orchestrator.
+	Short: "Workspace tool for Claude Code and Codex across multiple repositories",
+	Long: `Pylon - workspace tool for Claude Code and Codex across multiple repositories.
 
-Pylon powers your AI agent team to build and ship software.
-
-Users provide requirements, and the AI agent team handles
-analysis, design, implementation, and PR creation.
+Pylon prepares a workspace and looks after project knowledge, memory,
+verification and session wrap-up.
 
 Run 'pylon' without subcommands to launch the interactive AI session.`,
 	SilenceUsage:  true,
@@ -68,7 +66,6 @@ func init() {
 	rootCmd.AddCommand(newDeleteProjectCmd())
 	rootCmd.AddCommand(newMemCmd())
 	rootCmd.AddCommand(newHistoryCmd())
-	rootCmd.AddCommand(newSyncMemoryCmd())
 	rootCmd.AddCommand(newSyncAgentsCmd())
 	rootCmd.AddCommand(newUpdateCmd())
 	rootCmd.AddCommand(newAddAgentCmd())

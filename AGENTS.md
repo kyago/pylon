@@ -13,6 +13,12 @@ for Codex) plus `CLAUDE.md`/`AGENTS.md`, and then **replaces its own process** w
 `syscall.Exec` (`internal/cli/launch.go`). All actual orchestration happens inside the provider session via
 `/pl:*` commands (`$pl-*` skills on Codex) and bash scripts — the Go code never runs the pipeline itself.
 
+**Direction.** pylon is mainly a personal tool. It owns workspace files, project knowledge, memory, verification
+and `/pl:cleanup`. Stage-by-stage execution is moving to the separate Paseo plugin `kyago/paseo-todo-board`.
+`/pl:pipeline` and its stage commands are frozen: no new features, fix real failures only, removal planned after a
+trial on the board. Before adding or hardening anything, check that it solves a problem actually hit and that Claude
+Code, Codex or Paseo does not already cover it.
+
 Do not confuse this file with the workspace `AGENTS.md`/`CLAUDE.md`: *this* one guides development of the
 binary; the workspace files are generated at runtime and have no effect on the binary when edited.
 
@@ -28,11 +34,8 @@ inside the block are reverted; content outside the block is user-owned and never
 instruction size limit (keep the manual well under 32KiB). A malformed marker pair (missing, reversed, or
 duplicated whole-line markers) aborts launch/init/doctor before any file is touched; uninstall skips the
 file with a warning and proceeds. A block is replaced without a backup only when `isPylonGeneratedBlock`
-recognizes it as pylon's own output (this generator's manual title + facts heading and no stamp, or the old
-unauthored stub's heading **and** notice sentence); anything else — notably a guide a session authored under
-the old `<!-- pylon-usage-version: N -->` scheme — is copied to the next free `AGENTS.md.pylon-bak[.N]` first,
-and callers report that exact file name. The stamp regex and old stub strings survive only as these
-migration recognizers — the generated block must never contain them. To change what the root agent
+recognizes it as pylon's own output (this generator's manual title + facts heading); anything else is copied to
+the next free `AGENTS.md.pylon-bak[.N]` first, and callers report that exact file name. To change what the root agent
 is told, edit the manual; the next launch propagates it. Go never calls an LLM.
 
 ## Build / test / lint
@@ -63,13 +66,12 @@ go test ./internal/memory/... -race
 
 ### Embedded resources are the source of truth for workspace content
 
-The agents, skills, pipeline commands, and bash scripts that end up in a user's `.pylon/` are **Go-embedded
+The agents, pipeline commands, and bash scripts that end up in a user's `.pylon/` are **Go-embedded
 from `internal/cli/`** (`//go:embed` directives in `init_cmd.go`, `launch_commands.go`, `launch_hooks.go`):
 
-- `internal/cli/agents/*.md`   → 20 agent definitions
+- `internal/cli/agents/*.md`   → 14 agent definitions
 - `internal/cli/commands/*.md`  → `/pl:*` slash commands
 - `internal/cli/scripts/bash/*.sh` → atomic pipeline steps
-- `internal/cli/skills/*.md`    → agent skills
 - `internal/cli/reference/*.md` → the pylon usage manual, copied verbatim into the `AGENTS.md` block
 - `internal/cli/hooks.json`     → Claude Code session hooks
 
@@ -86,7 +88,7 @@ CLAUDE.md, `.claude/agents/` symlinks into `.pylon/builtin/agents/` and `.pylon/
 to `.gitignore`.
 
 **Ownership contract for `.pylon/` resources** (`syncBuiltinResources` in `doctor.go`, shared by launch,
-init, doctor and sync-agents): the embedded agents, skills, commands, scripts and manual live in
+init, doctor and sync-agents): the embedded agents, commands, scripts and manual live in
 **`.pylon/builtin/`** (git-ignored), which is pylon-owned. Every sync compares each file with the embeds,
 rewrites missing or differing ones (restoring script exec bits) and deletes files the embeds no longer have —
 never a wholesale wipe, so concurrent launches converge instead of racing and a damaged builtin heals on the
@@ -95,13 +97,7 @@ no migration step (`.claude/commands/`, `.claude/agents/` links and injected fil
 prune the dropped entries).
 The user-owned `.pylon/{agents,skills,commands}/` hold only user resources (`pylon add-agent` /
 `pylon add-skill` or a new filename; `scaffoldMarkdownResource` refuses built-in names). **A built-in name
-always wins**: a same-named file there (usually a copy left by releases that synced into `.pylon/<kind>/`
-directly) is cleared on every sync — deleted when byte-identical to the embed or to any version a release
-shipped (`legacy_shipped.txt`, every built-in's sha256 from 2026.3.1–2026.9.2), otherwise moved aside to
-`<name>.pylon-bak[.N]` (`pylon doctor` lists each; the launch path's stderr notice is hidden by the TUI). The same
-rule covers **retired built-ins** (`retiredBuiltins()`: shipped paths the embeds no longer have), and
-`pylon add-agent`/`add-skill` refuse those names. That record is frozen: from 2026.10.1 built-ins live only in
-`.pylon/builtin/`, so changing or removing a built-in needs no new entry.
+always wins**: readers take the built-in first, so a same-named file there is ignored and never modified.
 `pylon doctor` also rewrites the pylon hook groups in `.claude/settings.json` from the embedded `hooks.json`, as
 launch does. Readers merge both sources —
 `workspaceAgents`, `loadAgentSkillMap`, `buildDesiredClaudeCommands`, `generateCodexSkills` — built-in

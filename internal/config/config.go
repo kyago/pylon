@@ -22,12 +22,8 @@ type Config struct {
 	Version   string                    `yaml:"version"`
 	Runtime   RuntimeConfig             `yaml:"runtime"`
 	Providers map[string]ProviderConfig `yaml:"providers,omitempty"`
-	Routing   RoutingConfig             `yaml:"routing,omitempty"`
 	Git       GitConfig                 `yaml:"git"`
-	Projects  map[string]ProjectConfig  `yaml:"projects"`
-	Wiki      WikiConfig                `yaml:"wiki"`
 	Memory    MemoryConfig              `yaml:"memory"`
-	Workflow  WorkflowConfig            `yaml:"workflow"`
 	Skills    SkillsConfig              `yaml:"skills"`
 }
 
@@ -42,15 +38,12 @@ type SkillsConfig struct {
 // Spec Reference: Section 16 "runtime"
 type RuntimeConfig struct {
 	Provider       string `yaml:"provider,omitempty"`
-	Backend        string `yaml:"backend,omitempty"`
-	ExecutionMode  string `yaml:"execution_mode,omitempty"`
 	PermissionMode string `yaml:"permission_mode"`
 	// Effort는 provider별 허용값을 그대로 전달한다(claude: low|medium|high|xhigh|max,
 	// codex: model_reasoning_effort 값). Effort·Model이 비어 있으면 provider 자체 기본값을 쓴다.
-	Effort                string            `yaml:"effort,omitempty"`
-	Model                 string            `yaml:"model,omitempty"`
-	AutoApproveTaskReview bool              `yaml:"auto_approve_task_review"`
-	Env                   map[string]string `yaml:"env,omitempty"`
+	Effort string            `yaml:"effort,omitempty"`
+	Model  string            `yaml:"model,omitempty"`
+	Env    map[string]string `yaml:"env,omitempty"`
 }
 
 type ProviderConfig struct {
@@ -58,59 +51,25 @@ type ProviderConfig struct {
 	Command string `yaml:"command,omitempty"`
 }
 
-type RoutingConfig struct {
-	Fallback                   string `yaml:"fallback,omitempty"`
-	RequireResumeForBackground bool   `yaml:"require_resume_for_background,omitempty"`
-}
-
-func (r RuntimeConfig) EffectiveProvider() (string, bool) {
+func (r RuntimeConfig) EffectiveProvider() string {
 	if providerName := strings.TrimSpace(r.Provider); providerName != "" {
-		return providerName, false
+		return providerName
 	}
-	if backendName := strings.TrimSpace(r.Backend); backendName != "" {
-		return backendName, true
-	}
-	return "auto", false
+	return "auto"
 }
 
 // GitConfig defines git integration settings.
 // Spec Reference: Section 16 "git"
 type GitConfig struct {
-	BranchPrefix string         `yaml:"branch_prefix"`
-	DefaultBase  string         `yaml:"default_base"`
-	AutoPush     bool           `yaml:"auto_push"`
-	Worktree     WorktreeConfig `yaml:"worktree"`
-	PR           PRConfig       `yaml:"pr"`
-}
-
-// WorktreeConfig defines git worktree isolation settings.
-// Spec Reference: Section 8 "Git Worktree Isolation"
-type WorktreeConfig struct {
-	Enabled     bool `yaml:"enabled"`
-	AutoCleanup bool `yaml:"auto_cleanup"`
+	BranchPrefix string   `yaml:"branch_prefix"`
+	DefaultBase  string   `yaml:"default_base"`
+	PR           PRConfig `yaml:"pr"`
 }
 
 // PRConfig defines pull request settings.
 // Spec Reference: Section 16 "git.pr"
 type PRConfig struct {
-	AutoPR    bool     `yaml:"auto_pr"`
-	Reviewers []string `yaml:"reviewers"`
-	Draft     bool     `yaml:"draft"`
-	Template  *string  `yaml:"template"`
-}
-
-// ProjectConfig defines per-project settings.
-// Spec Reference: Section 16 "projects"
-type ProjectConfig struct {
-	Stack  string   `yaml:"stack"`
-	Agents []string `yaml:"agents,omitempty"`
-}
-
-// WikiConfig defines domain knowledge update settings.
-// Spec Reference: Section 16 "wiki"
-type WikiConfig struct {
-	AutoUpdate bool     `yaml:"auto_update"`
-	UpdateOn   []string `yaml:"update_on"`
+	AutoPR bool `yaml:"auto_pr"`
 }
 
 // MemoryConfig defines agent memory management settings.
@@ -143,196 +102,8 @@ func (r *retentionPolicy) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// WorkflowConfig defines workflow template settings.
-type WorkflowConfig struct {
-	DefaultWorkflow string `yaml:"default_workflow"`
-	TemplateDir     string `yaml:"template_dir"`
-}
-
-// MigrateRuntimeBackend rewrites deprecated runtime.backend to runtime.provider
-// in config.yml. provider가 이미 있으면 backend 키만 제거한다 — EffectiveProvider가
-// provider를 우선하므로 의미 변화가 없다. yaml.Node 단위로 키만 바꿔 주석과
-// 문서 순서를 보존한다. Returns whether the file was rewritten.
-func MigrateRuntimeBackend(path string) (bool, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil // config 부재는 뒤의 동기화 단계가 이미 보고한다
-		}
-		return false, err
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	var doc yaml.Node
-	if err := decoder.Decode(&doc); err != nil {
-		return false, err
-	}
-	// 멀티 문서 파일은 첫 문서만 재인코딩하면 나머지가 유실되므로 건드리지 않는다.
-	if err := decoder.Decode(&yaml.Node{}); !errors.Is(err, io.EOF) {
-		return false, nil
-	}
-	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return false, nil
-	}
-	root := doc.Content[0]
-	var runtime *yaml.Node
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "runtime" {
-			runtime = root.Content[i+1]
-			break
-		}
-	}
-	if runtime == nil || runtime.Kind != yaml.MappingNode {
-		return false, nil
-	}
-	backendIdx := -1
-	emptyProviderIdx := -1
-	hasProvider := false
-	for i := 0; i+1 < len(runtime.Content); i += 2 {
-		switch runtime.Content[i].Value {
-		case "backend":
-			backendIdx = i
-		case "provider":
-			// 빈 provider는 EffectiveProvider가 backend로 fallback하므로
-			// "provider 있음"으로 취급하면 backend 삭제가 의미를 바꾼다.
-			if value := runtime.Content[i+1]; value.Kind == yaml.ScalarNode && strings.TrimSpace(value.Value) != "" {
-				hasProvider = true
-			} else {
-				emptyProviderIdx = i
-			}
-		}
-	}
-	if backendIdx < 0 {
-		return false, nil
-	}
-	if hasProvider {
-		runtime.Content = append(runtime.Content[:backendIdx], runtime.Content[backendIdx+2:]...)
-	} else {
-		if emptyProviderIdx >= 0 {
-			runtime.Content = append(runtime.Content[:emptyProviderIdx], runtime.Content[emptyProviderIdx+2:]...)
-			if emptyProviderIdx < backendIdx {
-				backendIdx -= 2
-			}
-		}
-		runtime.Content[backendIdx].Value = "provider"
-	}
-	var buf bytes.Buffer
-	encoder := yaml.NewEncoder(&buf)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(&doc); err != nil {
-		return false, err
-	}
-	if err := encoder.Close(); err != nil {
-		return false, err
-	}
-	if err := fsutil.WriteFileAtomic(path, buf.Bytes(), 0644); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// legacyRuntimeEnvDefaults are the runtime.env values older pylon releases synced
-// into config.yml. Claude Code gives these env vars top priority, so they pin every
-// session and agent regardless of runtime.effort or agent effort frontmatter.
-var legacyRuntimeEnvDefaults = []struct{ key, value string }{
-	{"CLAUDE_CODE_EFFORT_LEVEL", "high"},
-	{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "80"},
-}
-
-// StripLegacyRuntimeEnv returns a copy of env without entries that still hold the
-// old pylon-written defaults, so launch stops pinning effort before doctor migrates
-// config.yml. 사용자가 바꾼 값은 그대로 둔다. nil이면 nil을 반환한다.
-func StripLegacyRuntimeEnv(env map[string]string) map[string]string {
-	if env == nil {
-		return nil
-	}
-	stripped := make(map[string]string, len(env))
-	for key, value := range env {
-		stripped[key] = value
-	}
-	for _, legacy := range legacyRuntimeEnvDefaults {
-		if stripped[legacy.key] == legacy.value {
-			delete(stripped, legacy.key)
-		}
-	}
-	return stripped
-}
-
-// MigrateRuntimeEnvDefaults removes runtime.env entries whose value still equals
-// the old pylon-written default; 사용자가 바꾼 값은 남긴다. env가 비면 키째 지운다.
-// MigrateRuntimeBackend와 같은 방식(yaml.Node 편집)으로 주석과 순서를 보존한다.
-// Returns the removed keys.
-func MigrateRuntimeEnvDefaults(path string) ([]string, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // config 부재는 뒤의 동기화 단계가 이미 보고한다
-		}
-		return nil, err
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	var doc yaml.Node
-	if err := decoder.Decode(&doc); err != nil {
-		return nil, err
-	}
-	// 멀티 문서 파일은 첫 문서만 재인코딩하면 나머지가 유실되므로 건드리지 않는다.
-	if err := decoder.Decode(&yaml.Node{}); !errors.Is(err, io.EOF) {
-		return nil, nil
-	}
-	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, nil
-	}
-	find := func(mapping *yaml.Node, key string) int {
-		for i := 0; i+1 < len(mapping.Content); i += 2 {
-			if mapping.Content[i].Value == key {
-				return i
-			}
-		}
-		return -1
-	}
-	root := doc.Content[0]
-	runtimeIdx := find(root, "runtime")
-	if runtimeIdx < 0 || root.Content[runtimeIdx+1].Kind != yaml.MappingNode {
-		return nil, nil
-	}
-	runtime := root.Content[runtimeIdx+1]
-	envIdx := find(runtime, "env")
-	if envIdx < 0 || runtime.Content[envIdx+1].Kind != yaml.MappingNode {
-		return nil, nil
-	}
-	env := runtime.Content[envIdx+1]
-	var removed []string
-	for _, legacy := range legacyRuntimeEnvDefaults {
-		i := find(env, legacy.key)
-		if i < 0 || env.Content[i+1].Kind != yaml.ScalarNode || env.Content[i+1].Value != legacy.value {
-			continue
-		}
-		env.Content = append(env.Content[:i], env.Content[i+2:]...)
-		removed = append(removed, legacy.key)
-	}
-	if len(removed) == 0 {
-		return nil, nil
-	}
-	if len(env.Content) == 0 {
-		runtime.Content = append(runtime.Content[:envIdx], runtime.Content[envIdx+2:]...)
-	}
-	var buf bytes.Buffer
-	encoder := yaml.NewEncoder(&buf)
-	encoder.SetIndent(2)
-	if err := encoder.Encode(&doc); err != nil {
-		return nil, err
-	}
-	if err := encoder.Close(); err != nil {
-		return nil, err
-	}
-	if err := fsutil.WriteFileAtomic(path, buf.Bytes(), 0644); err != nil {
-		return nil, err
-	}
-	return removed, nil
-}
-
 // SetRuntimeProvider pins runtime.provider to the given name in config.yml,
-// preserving comments and document order via yaml.Node surgery (같은 이유로
-// MigrateRuntimeBackend와 동일한 방식). runtime 섹션이나 provider 키가 없으면
+// preserving comments and document order via yaml.Node surgery. runtime 섹션이나 provider 키가 없으면
 // 만들어 넣는다. 멀티 문서 파일은 유실 위험이 있어 건드리지 않는다.
 func SetRuntimeProvider(path, providerName string) error {
 	providerName = strings.TrimSpace(providerName)
@@ -428,15 +199,6 @@ func SyncConfigDefaults(path string) (*Config, []string, error) {
 	defaultBytes, _ := yaml.Marshal(cfg)
 	var defaultMap map[string]any
 	_ = yaml.Unmarshal(defaultBytes, &defaultMap)
-	if rawRuntime, ok := rawMap["runtime"].(map[string]any); ok {
-		if _, hasBackend := rawRuntime["backend"]; hasBackend {
-			if _, hasProvider := rawRuntime["provider"]; !hasProvider {
-				if defaultRuntime, ok := defaultMap["runtime"].(map[string]any); ok {
-					delete(defaultRuntime, "provider")
-				}
-			}
-		}
-	}
 
 	// Sort keys for deterministic output
 	sortedKeys := make([]string, 0, len(defaultMap))
@@ -566,16 +328,6 @@ func ParseConfig(data []byte) (*Config, error) {
 	// go-yaml v3 only overwrites fields present in the YAML,
 	// so pre-initialized values are preserved when not explicitly set.
 	cfg := &Config{
-		Git: GitConfig{
-			AutoPush: true,
-			Worktree: WorktreeConfig{
-				Enabled:     true,
-				AutoCleanup: true,
-			},
-		},
-		Wiki: WikiConfig{
-			AutoUpdate: true,
-		},
 		Memory: MemoryConfig{
 			ProactiveInjection: true,
 		},
@@ -583,9 +335,6 @@ func ParseConfig(data []byte) (*Config, error) {
 			Enabled:               true,
 			PreloadToAgents:       true,
 			ProgressiveDisclosure: true,
-		},
-		Routing: RoutingConfig{
-			RequireResumeForBackground: true,
 		},
 	}
 
@@ -608,17 +357,11 @@ func ParseConfig(data []byte) (*Config, error) {
 // Spec Reference: Section 16 default values
 func applyDefaults(cfg *Config) {
 	// Runtime defaults
-	if cfg.Runtime.Provider == "" && cfg.Runtime.Backend == "" {
+	if cfg.Runtime.Provider == "" {
 		cfg.Runtime.Provider = "auto"
-	}
-	if cfg.Runtime.ExecutionMode == "" {
-		cfg.Runtime.ExecutionMode = "session-native"
 	}
 	if cfg.Runtime.PermissionMode == "" {
 		cfg.Runtime.PermissionMode = "acceptEdits"
-	}
-	if cfg.Routing.Fallback == "" {
-		cfg.Routing.Fallback = "serial"
 	}
 
 	// Git defaults
@@ -627,13 +370,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Git.DefaultBase == "" {
 		cfg.Git.DefaultBase = "main"
-	}
-	// Bool fields (AutoPush, Worktree.Enabled, etc.) are handled by
-	// pre-initialization in ParseConfig. Only set non-bool defaults here.
-
-	// Wiki defaults: set update_on triggers if auto_update is true but no triggers specified
-	if cfg.Wiki.AutoUpdate && len(cfg.Wiki.UpdateOn) == 0 {
-		cfg.Wiki.UpdateOn = []string{"task_complete", "pr_merged"}
 	}
 
 	// Memory defaults
@@ -645,9 +381,4 @@ func applyDefaults(cfg *Config) {
 	}
 	// ProactiveInjection defaults to true,
 	// handled by pre-initialization in ParseConfig.
-
-	// Workflow defaults
-	if cfg.Workflow.DefaultWorkflow == "" {
-		cfg.Workflow.DefaultWorkflow = "feature"
-	}
 }

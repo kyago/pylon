@@ -96,10 +96,6 @@ func buildSlashCommands(root string) map[string]string {
 	return commands
 }
 
-// legacyCommandFiles lists pre-namespace top-level command files that should be
-// removed from .claude/commands/ to prevent stale slash commands.
-var legacyCommandFiles = []string{"index", "status", "verify", "add-project", "cancel", "review"}
-
 const managedClaudeCommandsManifest = ".pylon-managed.json"
 
 // buildDesiredClaudeCommands computes the full set of .claude/commands/ files
@@ -148,18 +144,12 @@ func buildDesiredClaudeCommands(root string) map[string]string {
 	return desired
 }
 
-// applyClaudeCommands writes the desired command files into commandsDir and
-// removes legacy (pre-namespace) top-level command files. It intentionally does
-// NOT remove other on-disk files so any user-added commands are preserved.
+// applyClaudeCommands writes the desired command files into commandsDir and removes
+// previously managed files no longer desired. It intentionally does NOT remove other
+// on-disk files so any user-added commands are preserved.
 func applyClaudeCommands(commandsDir string, desired map[string]string) error {
 	previouslyManaged := readManagedClaudeCommandSet(commandsDir)
 
-	for _, name := range legacyCommandFiles {
-		legacy := filepath.Join(commandsDir, name+".md")
-		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("레거시 커맨드 파일 제거 실패 (%s): %w", legacy, err)
-		}
-	}
 	for rel := range previouslyManaged {
 		if _, ok := desired[rel]; ok {
 			continue

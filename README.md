@@ -1,8 +1,12 @@
 # Pylon
 
-**요구사항은 대화로 전달하고, 구현과 검증은 AI 에이전트 팀이 수행합니다. 사람은 큰 작업의 시작, PR 생성·머지, 마무리를 맡습니다.**
+**여러 저장소를 Claude Code·Codex로 다룰 때 필요한 프로젝트 지식, 메모리, 검증, 세션 마무리를 맡는 개인용 도구입니다.**
 
-Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `pylon`을 실행하면 설정과 capability에 맞는 interactive provider adapter가 선택되고, 루트 에이전트(루트 세션)가 사용자의 요구사항을 분석하여 적절한 도메인과 전문 에이전트 팀을 오케스트레이션합니다. 기본 제공 adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
+- **잘 맞는 경우:** 한 워크스페이스에서 여러 저장소를 다루는 개인이나 소규모 팀
+- **맞지 않는 경우:** 요구사항만 주면 PR까지 자동으로 나오길 기대하는 경우, 안정적인 제품 지원이 필요한 경우
+- **현재 상태:** 제작자 개인 용도로 개발합니다. 호환성을 보장하지 않습니다.
+
+Pylon은 Go CLI입니다. 워크스페이스에 `AGENTS.md`, 에이전트, 커맨드, 메모리 훅을 준비해 두면 Claude Code나 Codex 세션이 이를 읽습니다. 단계별 실행은 [Paseo 투두 보드](https://github.com/kyago/paseo-todo-board)에 맡기는 방향으로 옮기고 있고, `/pl:pipeline`은 폐기 예정으로 동결했습니다. 기본 제공 provider adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
 
 ## 요구 사항
 
@@ -96,10 +100,6 @@ pylon version    # 버전 확인
 pylon doctor     # 의존성 + 워크스페이스 리소스 동기화 상태 확인
 ```
 
-> **기존 워크스페이스 마이그레이션:** 레거시 데이터(SQLite 메모리, Fossil 이력)는 새 버전으로
-> **이전되지 않고 삭제**됩니다. 슬래시 커맨드 `/pl:migrate`가 레거시 파일 폐기 절차를 안내합니다.
-> 새 메모리(`.pylon/memory/`)와 이력(`.pylon/history/pipelines/`)은 빈 상태로 시작합니다.
-
 ## 빠른 시작
 
 ### 1. 워크스페이스 초기화
@@ -108,8 +108,6 @@ pylon doctor     # 의존성 + 워크스페이스 리소스 동기화 상태 확
 mkdir my-workspace && cd my-workspace
 pylon init
 ```
-
-실행 중 PR 리뷰어 GitHub 이름을 묻습니다. Enter로 건너뛸 수 있습니다.
 
 ### 2. 프로젝트 추가
 
@@ -134,6 +132,8 @@ Claude Code 실행 권한을 설정합니다
   bypassPermissions — 모든 권한 자동 허용
 ```
 
+Paseo를 쓰면 `pylon`을 거치지 않고 워크스페이스에서 세션을 바로 시작해도 됩니다. 이때 생성 파일 갱신은 `pylon doctor`나 `pylon update`가 맡습니다.
+
 ### 4. 요구사항 전달
 
 세션에서 자연어로 요구사항을 전달합니다. 모호한 부분은 루트 세션이 되묻습니다:
@@ -147,23 +147,19 @@ Claude Code 실행 권한을 설정합니다
   ...
 ```
 
-루트 세션은 요구사항 규모를 보고 직접 처리할지 파이프라인을 돌릴지 판단합니다. 단일 파일 수정이나 질문 답변은 파이프라인 없이 처리합니다. 큰 작업은 커맨드로 파이프라인을 바로 시작할 수 있습니다 (Codex는 `$pl-pipeline`):
+큰 작업은 [Paseo 투두 보드](https://github.com/kyago/paseo-todo-board)에 카드로 올려 계획 → 구현 → 검토 → 품질 검증을 단계별로 진행할 수 있습니다. 보드는 별도 플러그인이며, 카드는 git 저장소인 프로젝트 디렉터리에서 추가합니다.
 
-```
-> /pl:pipeline 로그인 기능 구현해줘
-```
-
-파이프라인은 슬래시 커맨드와 셸 스크립트를 조합해 분석 → 설계 → 구현 → 검증을 수행한 뒤, 결과와 남은 일을 보고합니다.
+`/pl:pipeline`은 폐기 예정입니다. 기존 방식이 필요할 때만 명시적으로 실행합니다 (Codex는 `$pl-pipeline`).
 
 ### 5. PR·머지·마무리
 
-검증이 끝나면 다음 단계는 사용자가 진행합니다. 커맨드 대신 대화로 요청해도 됩니다 (Codex는 `$pl-pr`, `$pl-cleanup`):
+검증이 끝나면 다음 단계는 사용자가 진행합니다 (Codex는 `$pl-cleanup`):
 
-1. **PR 생성**: 파이프라인 run은 `/pl:pr`, 대화로 작업한 세션은 대화로 요청합니다. `git.pr.auto_pr: true`면 파이프라인이 검증 후 직접 만듭니다.
+1. **PR 생성**: 대화로 요청합니다. 보드는 품질 검증을 통과하면 초안 PR을 만듭니다. 파이프라인 run은 `/pl:pr`을 쓰고, `git.pr.auto_pr: true`면 파이프라인이 검증 후 직접 만듭니다.
 2. **리뷰·머지**: 머지 여부는 사용자가 결정합니다.
 3. **마무리**: 머지 후 `/pl:cleanup`. 메모리·도메인 지식을 갱신하고 run을 마감한 뒤, 머지된 브랜치·워크트리를 정리합니다.
 
-파이프라인 없이 대화로 작업한 세션도 `/pl:cleanup`으로 끝냅니다. PR이 없는 리서치·콘텐츠·마케팅 작업은 최종본을 확인한 뒤 바로 3번으로 갑니다.
+대화나 보드로 작업한 경우에도 `/pl:cleanup`으로 끝냅니다.
 
 ## 동작 방식
 
@@ -173,7 +169,7 @@ Claude Code 실행 권한을 설정합니다
 사용자 ←→ Claude Code TUI (LLM-as-Orchestrator)
               │
               ├── 슬래시 커맨드 (.pylon/builtin/commands/ + Go 내장 index·project-list)
-              │   ├── /pl:pipeline ─ 전체 파이프라인
+              │   ├── /pl:pipeline ─ 전체 파이프라인 (폐기 예정)
               │   ├── /pl:cleanup ── 세션 마무리 (run 마감·메모리·브랜치 정리)
               │   ├── /pl:architect ─ 아키텍처 분석
               │   ├── /pl:breakdown ─ 태스크 분해
@@ -183,8 +179,7 @@ Claude Code 실행 권한을 설정합니다
               │   ├── /pl:status ─── 파이프라인 상태 조회
               │   ├── /pl:index ─── 코드베이스 인덱싱
               │   ├── /pl:project-list ─ 프로젝트 목록 조회
-              │   ├── /pl:add-project ─ 프로젝트 추가
-              │   └── /pl:migrate ─── 레거시 저장소 폐기 안내
+              │   └── /pl:add-project ─ 프로젝트 추가
               │
               └── 셸 스크립트 (.pylon/builtin/scripts/bash/)
                    ├── init-pipeline.sh
@@ -209,6 +204,8 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 
 ### 파이프라인 흐름
 
+> 폐기 예정으로 동결된 `/pl:pipeline`의 흐름입니다. 새로운 큰 작업은 투두 보드를 권장합니다.
+
 ```
 /pl:pipeline "로그인 기능 구현"
     │
@@ -227,8 +224,7 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 ```
 
 bugfix·hotfix는 결함 재현을 첫 수용 기준으로 두고, 재현 테스트(수정 전 실패)를 첫 태스크로 실행한 뒤 수정
-태스크가 그것에 의존합니다. 리서치·콘텐츠·마케팅은 조사 → (전략) → 초안 → 팩트 체크·편집 → 수정 루프(최대 3회)
-→ 최종본 흐름을 따릅니다.
+태스크가 그것에 의존합니다.
 
 ### 검증 게이트
 
@@ -278,18 +274,17 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 
 | 커맨드 | 설명 |
 |--------|------|
-| `/pl:pipeline` | 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → 검증). 끝나면 run을 `/pl:cleanup`에 넘김 |
+| `/pl:pipeline` | **폐기 예정.** 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → 검증). 끝나면 run을 `/pl:cleanup`에 넘김 |
 | `/pl:cleanup` | 세션 마무리 (파이프라인 사용 여부와 무관): 검증 근거, 메모리·도메인 지식 갱신, 머지된 파이프라인 run 마감, 머지된 브랜치·워크트리 정리 |
-| `/pl:pr` | 파이프라인 run의 PR 생성 (repo sub-pipeline 단위) |
+| `/pl:pr` | **폐기 예정.** 파이프라인 run의 PR 생성 (repo sub-pipeline 단위) |
 | `/pl:status` | 파이프라인 상태 조회 (파일 기반) |
 | `/pl:index` | 프로젝트 코드베이스 인덱싱 |
 | `/pl:project-list` | 프로젝트 목록 및 인덱싱 상태 조회 |
 | `/pl:add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
-| `/pl:migrate` | 레거시 워크스페이스(SQLite/Fossil) 폐기 절차 안내 |
 
 ### 파이프라인 단계 단독 실행
 
-`/pl:pipeline`이 수행하는 단계를 따로 돌릴 때 씁니다.
+`/pl:pipeline`이 수행하는 단계를 따로 돌릴 때 씁니다. 파이프라인과 함께 폐기 예정입니다.
 
 | 커맨드 | 설명 |
 |--------|------|
@@ -298,11 +293,9 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 | `/pl:execute` | 에이전트 병렬 실행 |
 | `/pl:verify` | 빌드/테스트/린트 교차 검증 |
 
-## 내장 에이전트 (20종)
+## 내장 에이전트 (14종)
 
-`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). 루트 세션이 요구사항의 도메인을 판별해 적절한 에이전트를 고릅니다.
-
-### 소프트웨어 개발 (14종)
+`.pylon/builtin/agents/`에 설치되며 실행(`pylon`)과 `pylon doctor` 때마다 바이너리 버전에 맞춰 자동 갱신됩니다. 직접 만든 에이전트는 `.pylon/agents/`에 둡니다(`pylon add-agent`). 루트 세션이 작업에 맞는 에이전트를 고릅니다.
 
 | 에이전트 | 역할 |
 |----------|------|
@@ -320,17 +313,6 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 | devops | DevOps (인프라, CI, 배포 설정) |
 | git-master | Git 워크플로 |
 | designer | UI/UX 디자이너 |
-
-### 리서치·콘텐츠·마케팅 (6종)
-
-| 에이전트 | 역할 |
-|----------|------|
-| writer | 작가 (콘텐츠, 보고서, 카피) |
-| editor | 편집자 (콘텐츠 QA) |
-| strategist | 전략가 (콘텐츠, 브랜드, 캠페인) |
-| market-researcher | 시장 조사 분석가 |
-| fact-checker | 팩트 체커 (교차 검증) |
-| seo-specialist | SEO 전문가 |
 
 ## CLI 명령어
 
@@ -396,7 +378,7 @@ pylon history checkpoint --pipeline <id> --phase <planned|executed|completed|can
 | 명령어 | 설명 |
 |--------|------|
 | `pylon internal criteria snapshot` | `verify.yml` + acceptance criteria를 `criteria.json`으로 동결하고 digest를 manifest에 결합 |
-| `pylon internal verify` | snapshot 명령으로 deterministic 검증 실행 → `verification.json` (깨끗한 HEAD면 `tree`, 산출물은 `verify-artifacts/`로 이동) |
+| `pylon internal verify` | snapshot 명령으로 deterministic 검증 실행 → `verification.json` (깨끗한 HEAD면 `tree`, 산출물은 `verify-artifacts/`로 이동). `--workdir`와 `--config`만 주면 파이프라인 없이 실행하고 결과를 표준 출력으로 냄 (`ok`, 실패 시 종료 코드 1) |
 | `pylon internal move-untracked` | 지정한 run 잔여물(추적 안 된 파일)을 경로째 run 폴더(`.pylon/runtime/` 아래)로 이동 |
 | `pylon internal evaluator prepare\|record` | 격리 evaluator bundle 생성 / 판정 검증·기록 |
 | `pylon internal trajectory task-report\|failure` | task report / failure record 기록 (failure는 `failed` 체크포인트까지) |
@@ -410,8 +392,7 @@ workspace/
 ├── .pylon/                    # 소스 오브 트루스 (git 추적)
 │   ├── config.yml             # 워크스페이스 설정
 │   ├── builtin/               # 내장 리소스 (git 무시, 실행·doctor마다 파일 단위로 임베드와 동기화)
-│   │   ├── agents/            # 에이전트 정의 (20종)
-│   │   ├── skills/            # 에이전트 스킬
+│   │   ├── agents/            # 에이전트 정의 (14종)
 │   │   ├── commands/          # 파이프라인 슬래시 커맨드 (pl-pipeline.md, ...)
 │   │   ├── scripts/bash/      # 파이프라인 셸 스크립트 (common.sh, init-pipeline.sh, ...)
 │   │   └── reference/         # pylon 사용 매뉴얼 (pylon-usage.md)
@@ -419,16 +400,13 @@ workspace/
 │   ├── skills/                # 사용자 추가 스킬 (pylon add-skill)
 │   ├── commands/              # 사용자 추가 파이프라인 커맨드
 │   ├── domain/                # 팀 도메인 지식 (위키)
-│   ├── tasks/                 # init이 만드는 빈 디렉토리 (현재 미사용)
 │   ├── memory/                # 프로젝트 메모리 (git 추적)
 │   │   └── {project}/          # 프로젝트별 <category>/<slug>.md + INDEX.md
 │   ├── runtime/               # (git 무시)
-│   │   ├── {pipeline-id}/     # 논리 root pipeline 산출물 (requirement.md, tasks.json, execution-log.json, status.json ...)
-│   │   │   └── repos/{repo-id}/  # repo sub-pipeline: criteria.json, verification.json, task-report.json,
-│   │   │                         #   evaluator-input/, evaluator-result.json, pr.json, status.json,
-│   │   │                         #   verify-artifacts/(검증 산출물), leftovers/(커밋 안 한 run 잔여물)
-│   │   └── sessions/          # init이 만드는 빈 디렉토리 (현재 미사용)
-│   ├── conversations/         # init이 만드는 빈 디렉토리 (현재 미사용, git 무시)
+│   │   └── {pipeline-id}/     # 논리 root pipeline 산출물 (requirement.md, tasks.json, execution-log.json, status.json ...)
+│   │       └── repos/{repo-id}/  # repo sub-pipeline: criteria.json, verification.json, task-report.json,
+│   │                             #   evaluator-input/, evaluator-result.json, pr.json, status.json,
+│   │                             #   verify-artifacts/(검증 산출물), leftovers/(커밋 안 한 run 잔여물)
 │   └── history/               # 파일 기반 작업 이력 (git 무시)
 │       └── pipelines/         # {pipeline-id}/{phase}/ 디렉토리 스냅샷
 │
@@ -458,7 +436,6 @@ version: "0.2"
 
 runtime:
   provider: auto               # provider 이름 또는 auto
-  execution_mode: session-native # 미사용
   permission_mode: acceptEdits # default | acceptEdits | bypassPermissions
   # effort: high               # 선택, 기본값 없음 — provider별 허용값 (claude: low|medium|high|xhigh|max, codex: model_reasoning_effort 값)
   # model: opus                # 선택, 기본값 없음 — provider별 모델 이름
@@ -472,27 +449,11 @@ providers:
     enabled: auto
     command: codex
 
-routing:                       # 미사용
-  fallback: serial
-  require_resume_for_background: true
-
 git:
   branch_prefix: task          # 작업 브랜치 접두사 — 사용자 명명 규칙이 없을 때만 씀 (feature/처럼 /로 끝나면 구분자 없이 이어짐)
   default_base: main           # /pl:cleanup이 삭제하지 않는 기본 브랜치 (파이프라인 base는 초기화 시점의 현재 브랜치)
-  auto_push: true              # 미사용
-  worktree:                    # 미사용
-    enabled: true
-    auto_cleanup: true
   pr:
     auto_pr: false             # true면 /pl:pipeline이 검증 후 PR까지 생성 (기본: /pl:pr로 수동)
-    draft: false               # 미사용
-    reviewers: []              # 미사용
-
-wiki:                          # 미사용
-  auto_update: true
-  update_on:
-    - task_complete
-    - pr_merged
 
 memory:
   proactive_injection: true    # 세션 시작 시 프로젝트 메모리 주입 on/off (Claude Code 훅; Codex는 수동 `pylon mem inject`)
@@ -506,12 +467,6 @@ skills:
   progressive_disclosure: true # 메타데이터만 주입(true) vs 전체 본문 주입(false)
 ```
 
-기존 `runtime.backend`와 agent frontmatter의 `backend`는 deprecated alias로 읽으며, `provider`가 함께 있으면
-`provider`가 우선합니다. `pylon doctor`는 `config.yml`의 `runtime.backend`를 `runtime.provider`로 바꿔 씁니다.
-
-`runtime.execution_mode`/`auto_approve_task_review`, `routing`, `wiki`, `workflow`, `projects`, `git.auto_push`, `git.worktree`,
-`git.pr.draft`/`reviewers`/`template`은 스키마만 있고 현재 이를 읽는 코드가 없습니다.
-
 작업 브랜치 이름은 `/pl:pipeline`이 repo의 `CLAUDE.md`·`AGENTS.md`·`CONTRIBUTING.md`, 그다음 워크스페이스 `AGENTS.md`와
 사용자 지침에서 찾은 명명 규칙을 먼저 따릅니다. 규칙이 없으면 `git.branch_prefix`로 `<접두사>-<pipeline-id>-<repo-id>`를
 만듭니다(`feature/`처럼 `/`로 끝나면 `<접두사><pipeline-id>-<repo-id>`, 기본은 `task-<pipeline-id>-<repo-id>`).
@@ -519,7 +474,7 @@ skills:
 
 `runtime`의 `effort`/`model`/`env`(비어 있으면 provider 기본값)를 제외한 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 주요 필드와 기본값을 보여주며,
 명시하지 않은 필드는 로드 시 코드 기본값으로 자동 채워집니다. `pylon init`이 처음 생성하는 `config.yml`은
-최소 필드(`runtime`의 `provider`/`execution_mode`/`permission_mode`, `git.pr.reviewers`)만 포함하고, 이후
+최소 필드(`runtime`의 `provider`/`permission_mode`)만 포함하고, 이후
 `pylon doctor`가 누락된 필드를 감지해 기본값으로 동기화합니다.
 
 ## 개발

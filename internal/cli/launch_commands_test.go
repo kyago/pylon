@@ -191,9 +191,8 @@ func TestExecuteDoesNotReferenceRemovedStateStore(t *testing.T) {
 	}
 }
 
-// 내장 이름의 사용자 커맨드(이전 릴리스가 남긴 낡은 사본)는 내장 커맨드를 가리지 못하고,
-// 같은 실행에서 .pylon-bak으로 비켜난다.
-func TestGenerateClaudeDir_LegacyCommandCopyNeverShadowsBuiltin(t *testing.T) {
+// 내장 이름의 사용자 커맨드는 내장 커맨드를 가리지 못하고, 사용자 파일은 그대로 남는다.
+func TestGenerateClaudeDir_UserCommandNeverShadowsBuiltin(t *testing.T) {
 	root := t.TempDir()
 	pylonCmds := layout.ResourceDir(root, "commands")
 	if err := os.MkdirAll(pylonCmds, 0755); err != nil {
@@ -219,11 +218,8 @@ func TestGenerateClaudeDir_LegacyCommandCopyNeverShadowsBuiltin(t *testing.T) {
 	if string(got) != string(want) {
 		t.Fatal("낡은 사본이 내장 커맨드를 가렸다")
 	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatal("내장 이름의 낡은 사본이 사용자 디렉토리에 남았다")
-	}
-	if bak, err := os.ReadFile(legacy + rootFileBackupSuffix); err != nil || string(bak) != "OLD VERSION\n" {
-		t.Fatalf("내용이 다른 사본은 백업되어야 한다: %q, %v", bak, err)
+	if kept, err := os.ReadFile(legacy); err != nil || string(kept) != "OLD VERSION\n" {
+		t.Fatalf("사용자 파일을 건드렸다: %q, %v", kept, err)
 	}
 }
 
