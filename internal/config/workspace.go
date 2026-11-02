@@ -55,10 +55,20 @@ func FindWorkspaceRoot(startDir string) (string, error) {
 
 // DiscoverProjects scans the workspace root for project directories.
 // A project is identified as a subdirectory containing its own .pylon/ directory
-// or being added as a standalone git clone in the workspace. Linked git worktrees
-// are checkouts of a repository rather than projects, so they are skipped.
+// or being added as a standalone git clone in the workspace. Worktrees of a checkout
+// in this workspace are not projects (see IsWorkspaceWorktree).
 // Spec Reference: Section 4 "Workspace Structure"
 func DiscoverProjects(root string) ([]ProjectInfo, error) {
+	return scanPylonDirs(root, false)
+}
+
+// DiscoverWorktrees returns the subdirectories with a .pylon/ directory that
+// DiscoverProjects leaves out as workspace worktrees.
+func DiscoverWorktrees(root string) ([]ProjectInfo, error) {
+	return scanPylonDirs(root, true)
+}
+
+func scanPylonDirs(root string, worktrees bool) ([]ProjectInfo, error) {
 	var projects []ProjectInfo
 
 	entries, err := os.ReadDir(root)
@@ -78,7 +88,7 @@ func DiscoverProjects(root string) ([]ProjectInfo, error) {
 		}
 
 		projectDir := filepath.Join(root, name)
-		if isLinkedWorktree(projectDir) {
+		if IsWorkspaceWorktree(root, projectDir) != worktrees {
 			continue
 		}
 
@@ -95,11 +105,22 @@ func DiscoverProjects(root string) ([]ProjectInfo, error) {
 	return projects, nil
 }
 
-// isLinkedWorktree reports whether dir is a linked git worktree: its .git is a gitlink
-// file whose git dir has a commondir file (a submodule's git dir has none). A worktree
-// whose main repository has moved has no git dir to inspect and is reported as false.
-func isLinkedWorktree(dir string) bool {
-	data, err := os.ReadFile(filepath.Join(dir, ".git"))
+// IsWorkspaceWorktree reports whether dir is a linked git worktree whose main checkout
+// is the workspace root or one of its direct subdirectories. Any other worktree (main
+// checkout outside the workspace, bare or separate git dir) may be the only checkout
+// here, so it stays a project. shortcut: a worktree whose main repository moved has no
+// git dir to inspect and reports false, fix it with `git worktree repair`.
+func IsWorkspaceWorktree(root, dir string) bool {
+	// Resolved first: git follows symlinks, while filepath.Join cleans ".." textually.
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(realDir, ".git"))
 	if err != nil {
 		return false
 	}
@@ -108,8 +129,21 @@ func isLinkedWorktree(dir string) bool {
 		return false
 	}
 	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(dir, gitDir)
+		gitDir = filepath.Join(realDir, gitDir)
 	}
-	_, err = os.Stat(filepath.Join(gitDir, "commondir"))
-	return err == nil
+	// Only linked worktrees have commondir; a submodule's git dir does not.
+	data, err = os.ReadFile(filepath.Join(gitDir, "commondir"))
+	if err != nil {
+		return false
+	}
+	commonDir := strings.TrimSpace(string(data))
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(gitDir, commonDir)
+	}
+	commonDir, err = filepath.EvalSymlinks(commonDir)
+	if err != nil || filepath.Base(commonDir) != ".git" {
+		return false
+	}
+	mainDir := filepath.Dir(commonDir)
+	return mainDir == realRoot || filepath.Dir(mainDir) == realRoot
 }

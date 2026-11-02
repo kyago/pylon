@@ -151,6 +151,14 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 			plan.cloneProjects = append(plan.cloneProjects, p.Name)
 		}
 	}
+	// 워크트리는 프로젝트가 아니므로 디렉터리는 두고 pylon 마커만 지운다.
+	worktrees, err := config.DiscoverWorktrees(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover worktrees: %w", err)
+	}
+	for _, w := range worktrees {
+		plan.projectPylons = append(plan.projectPylons, layout.PylonDir(w.Path))
+	}
 
 	// 3. Workspace .pylon/
 	pylonDir := layout.PylonDir(root)

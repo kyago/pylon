@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
 )
 
@@ -67,6 +68,9 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 	projectDir, err := prepareProjectDirectory(root, projectName, force, skipClone)
 	if err != nil {
 		return err
+	}
+	if skipClone && config.IsWorkspaceWorktree(root, projectDir) {
+		return fmt.Errorf("%s is a git worktree of a checkout in this workspace, not a project", projectName)
 	}
 	if !skipClone {
 		if err := cloneProject(root, repoURL, projectName); err != nil {

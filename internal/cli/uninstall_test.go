@@ -536,3 +536,31 @@ func TestFindPylonBinary(t *testing.T) {
 		t.Error("findPylonBinary() returned empty path with no error")
 	}
 }
+
+func TestBuildUninstallPlan_WorktreeKeepsDirButClearsMarker(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	app := filepath.Join(root, "app")
+	runGit(t, root, "init", "app")
+	runGit(t, app, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	runGit(t, app, "worktree", "add", filepath.Join(root, "wt"))
+	for _, dir := range []string{layout.PylonDir(root), layout.PylonDir(app), layout.PylonDir(filepath.Join(root, "wt"))} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	plan, err := buildUninstallPlan(root, true, false)
+	if err != nil {
+		t.Fatalf("buildUninstallPlan() error: %v", err)
+	}
+	if got, want := strings.Join(plan.cloneProjects, ","), "app"; got != want {
+		t.Errorf("cloneProjects = %q, want %q", got, want)
+	}
+	if got, want := len(plan.projectPylons), 2; got != want {
+		t.Fatalf("projectPylons = %v, want %d entries", plan.projectPylons, want)
+	}
+	if got, want := plan.projectPylons[1], layout.PylonDir(filepath.Join(root, "wt")); got != want {
+		t.Errorf("projectPylons[1] = %q, want %q", got, want)
+	}
+}

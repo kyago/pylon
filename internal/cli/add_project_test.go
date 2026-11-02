@@ -453,3 +453,43 @@ func TestRunAddProject_UsesPlainClone(t *testing.T) {
 		t.Errorf("expected sub .pylon/context.md, got %v", err)
 	}
 }
+
+func TestRunAddProject_SkipCloneRefusesWorkspaceWorktree(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(root, "app")
+	runGit(t, root, "init", "app")
+	runGit(t, app, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	runGit(t, app, "worktree", "add", filepath.Join(root, "wt"))
+	verifyPath := filepath.Join(root, "wt", ".pylon", "verify.yml")
+	if err := os.MkdirAll(filepath.Dir(verifyPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(verifyPath, []byte("user edit\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	addCmd := newAddProjectCmd()
+	addCmd.SetArgs([]string{"wt", "--skip-clone"})
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	defer func() { flagWorkspace = oldWorkspace }()
+
+	err := addCmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "worktree") {
+		t.Fatalf("error = %v, want worktree refusal", err)
+	}
+	data, readErr := os.ReadFile(verifyPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "user edit\n" {
+		t.Errorf("verify.yml overwritten: %q", data)
+	}
+}

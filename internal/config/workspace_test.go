@@ -212,9 +212,10 @@ func TestDiscoverProjects_NoProjects(t *testing.T) {
 	}
 }
 
-func TestDiscoverProjects_SkipsLinkedWorktrees(t *testing.T) {
+func TestDiscoverProjects_SkipsWorkspaceWorktrees(t *testing.T) {
 	root := t.TempDir()
 	source := t.TempDir()
+	bare := filepath.Join(t.TempDir(), "bare.git")
 
 	git := func(dir string, args ...string) {
 		t.Helper()
@@ -225,35 +226,59 @@ func TestDiscoverProjects_SkipsLinkedWorktrees(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	for _, dir := range []string{root, source} {
+	clone := filepath.Join(root, "clone")
+	if err := os.Mkdir(clone, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{root, source, clone} {
 		git(dir, "init")
 		git(dir, "commit", "--allow-empty", "-m", "init")
 	}
+	git(source, "clone", "--bare", source, bare)
 
-	if err := os.Mkdir(filepath.Join(root, "clone"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	git(filepath.Join(root, "clone"), "init")
 	git(root, "submodule", "add", source, "sub")
 	git(root, "worktree", "add", "wt")
-	git(root, "-c", "worktree.useRelativePaths=true", "worktree", "add", "wt-rel")
+	git(root, "worktree", "add", "wt-rel")
+	git(clone, "worktree", "add", filepath.Join(root, "clone-wt"))
+	git(source, "worktree", "add", filepath.Join(root, "external"))
+	git(bare, "worktree", "add", filepath.Join(root, "bare-wt"))
+	// Written by hand because older git ignores worktree.useRelativePaths.
+	if err := os.WriteFile(filepath.Join(root, "wt-rel", ".git"), []byte("gitdir: ../.git/worktrees/wt-rel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-	for _, name := range []string{"clone", "plain", "sub", "wt", "wt-rel"} {
+	for _, name := range []string{"bare-wt", "clone", "clone-wt", "external", "plain", "sub", "wt", "wt-rel"} {
 		if err := os.MkdirAll(filepath.Join(root, name, ".pylon"), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	projects, err := DiscoverProjects(root)
-	if err != nil {
-		t.Fatalf("DiscoverProjects failed: %v", err)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
 	}
 
-	var names []string
-	for _, p := range projects {
-		names = append(names, p.Name)
+	join := func(projects []ProjectInfo) string {
+		var names []string
+		for _, p := range projects {
+			names = append(names, p.Name)
+		}
+		return strings.Join(names, ",")
 	}
-	if got, want := strings.Join(names, ","), "clone,plain,sub"; got != want {
-		t.Errorf("projects = %q, want %q", got, want)
+	for _, dir := range []string{root, alias} {
+		projects, err := DiscoverProjects(dir)
+		if err != nil {
+			t.Fatalf("DiscoverProjects(%s) failed: %v", dir, err)
+		}
+		if got, want := join(projects), "bare-wt,clone,external,plain,sub"; got != want {
+			t.Errorf("DiscoverProjects(%s) = %q, want %q", dir, got, want)
+		}
+		worktrees, err := DiscoverWorktrees(dir)
+		if err != nil {
+			t.Fatalf("DiscoverWorktrees(%s) failed: %v", dir, err)
+		}
+		if got, want := join(worktrees), "clone-wt,wt,wt-rel"; got != want {
+			t.Errorf("DiscoverWorktrees(%s) = %q, want %q", dir, got, want)
+		}
 	}
 }
