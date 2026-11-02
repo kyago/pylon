@@ -104,16 +104,15 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 	if dirExists(claudeDir) {
 		plan.runtimeFiles = append(plan.runtimeFiles, claudeDir)
 	}
-	// Remove only the deterministic pointer or the strongly identified legacy
-	// prompt. A hand-written CLAUDE.md is user-owned and must survive uninstall.
+	// Remove only the deterministic pointer. A hand-written CLAUDE.md is user-owned and
+	// must survive uninstall.
 	if f := layout.RootClaudePath(root); fileExists(f) {
 		if data, err := os.ReadFile(f); err == nil && isPylonClaudeMD(data) {
 			plan.runtimeFiles = append(plan.runtimeFiles, f)
 		}
 	}
 	// AGENTS.md: pylon이 소유한 건 블록뿐이다. 블록 밖에 사용자 내용이 있으면 블록만
-	// 벗겨내고, 블록뿐이거나 블록 도입 이전 pylon 전체 파일이면 파일째 지운다.
-	// 블록도 스탬프도 없는 파일은 pylon 산출물이 아니므로 손대지 않는다.
+	// 벗겨내고, 블록뿐이면 파일째 지운다. 블록이 없는 파일은 손대지 않는다.
 	agentsPath := layout.RootAgentsPath(root)
 	if data, err := os.ReadFile(agentsPath); err == nil {
 		s, e, blockState := findAgentsBlock(data)
@@ -128,10 +127,6 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 		case agentsBlockMalformed:
 			// 마크다운 파일 하나 때문에 uninstall 전체를 막지 않는다 — 이 파일만 남기고 계속.
 			plan.agentsSkippedPath = agentsPath
-		case agentsBlockAbsent:
-			if isLegacyAgentsMD(data) {
-				plan.runtimeFiles = append(plan.runtimeFiles, agentsPath)
-			}
 		}
 	}
 	// codex용으로 생성된 워크플로우 스킬(마커 보유)만 제거 — 사용자 스킬은 남긴다.
@@ -353,7 +348,7 @@ func executeUninstall(root string, plan *uninstallPlan) error {
 }
 
 // executeAgentsUninstall classifies the current file contents at execution time.
-// It removes a pylon-only or legacy file, strips a complete block from user content,
+// It removes a pylon-only file, strips a complete block from user content,
 // preserves a user-owned file without a block, and skips malformed blocks safely.
 func executeAgentsUninstall(path string) (bool, error) {
 	data, err := os.ReadFile(path)
@@ -381,15 +376,6 @@ func executeAgentsUninstall(path string) (bool, error) {
 		return false, nil
 	case agentsBlockMalformed:
 		return true, nil
-	case agentsBlockAbsent:
-		if !isLegacyAgentsMD(data) {
-			return false, nil
-		}
-		if err := os.Remove(path); err != nil {
-			return false, err
-		}
-		fmt.Printf("✓ Removed: %s\n", path)
-		return false, nil
 	default:
 		return false, nil
 	}

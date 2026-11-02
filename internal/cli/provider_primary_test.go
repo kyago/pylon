@@ -49,14 +49,14 @@ func TestEnsurePrimaryProvider_SingleInstalledBecomesPrimary(t *testing.T) {
 	if !changed {
 		t.Fatal("single installed provider must be pinned as primary")
 	}
-	if providerName, _ := updated.Runtime.EffectiveProvider(); providerName != "codex" {
+	if providerName := updated.Runtime.EffectiveProvider(); providerName != "codex" {
 		t.Fatalf("effective provider = %q", providerName)
 	}
 	reloaded, err := config.LoadConfig(layout.ConfigPath(root))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if providerName, _ := reloaded.Runtime.EffectiveProvider(); providerName != "codex" {
+	if providerName := reloaded.Runtime.EffectiveProvider(); providerName != "codex" {
 		t.Fatalf("pinned provider not persisted: %q", providerName)
 	}
 }
@@ -131,7 +131,7 @@ func TestEnsurePrimaryProvider_PinnedMissingNonInteractiveKeepsPin(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if providerName, _ := reloaded.Runtime.EffectiveProvider(); providerName != "codex" {
+	if providerName := reloaded.Runtime.EffectiveProvider(); providerName != "codex" {
 		t.Fatalf("pin was rewritten to %q", providerName)
 	}
 }

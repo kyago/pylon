@@ -136,16 +136,6 @@ func TestGenerateSettingsHooks_PreservesExisting(t *testing.T) {
 						},
 					},
 				},
-				// 구버전이 설치한 pylon Stop hook — 병합 시 제거되어야 한다
-				map[string]any{
-					"matcher": "*",
-					"hooks": []any{
-						map[string]any{
-							"type":    "command",
-							"command": "pylon sync-memory --from-session --agent claude",
-						},
-					},
-				},
 			},
 			"PreToolUse": []any{
 				map[string]any{
@@ -199,7 +189,7 @@ func TestGenerateSettingsHooks_PreservesExisting(t *testing.T) {
 		t.Errorf("PreToolUse should have 1 entry, got %d", len(preArr))
 	}
 
-	// Stop에는 사용자 hook만 남고 구버전 pylon Stop hook은 제거된다
+	// Stop의 사용자 hook은 그대로 남는다
 	stopHooks := hooks["Stop"].([]any)
 	if len(stopHooks) != 1 {
 		t.Fatalf("Stop should keep only the user hook group, got %d", len(stopHooks))
@@ -222,66 +212,11 @@ func TestGenerateSettingsHooks_PreservesExisting(t *testing.T) {
 	}
 }
 
-// 구버전 pylon Stop hook만 있던 settings.json은 병합 후 Stop 키가 사라지고
-// SessionStart만 남는다.
-func TestMergeHooks_DropsLegacyPylonStop(t *testing.T) {
-	existing := map[string]any{
-		"hooks": map[string]any{
-			"Stop": []any{
-				map[string]any{
-					"matcher": "*",
-					"hooks": []any{
-						map[string]any{"type": "command", "command": "pylon sync-memory --from-session --agent claude"},
-					},
-				},
-			},
-		},
-	}
-	var pylonHooks map[string][]settingsHookEntry
-	if err := json.Unmarshal(defaultHooksJSON, &pylonHooks); err != nil {
-		t.Fatal(err)
-	}
-
-	merged := mergeHooks(existing, pylonHooks)
-	if _, ok := merged["Stop"]; ok {
-		t.Errorf("legacy pylon Stop hook should be removed, got %v", merged["Stop"])
-	}
-	if len(merged) != 1 || merged["SessionStart"] == nil {
-		t.Errorf("only SessionStart should remain, got %v", merged)
-	}
-}
-
-func TestGenerateSettingsHooks_CleansLegacyHooksJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create legacy hooks.json
-	legacyPath := filepath.Join(tmpDir, "hooks.json")
-	if err := os.WriteFile(legacyPath, []byte(`{"hooks":{}}`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := generateSettingsHooks(tmpDir); err != nil {
-		t.Fatalf("generateSettingsHooks() error = %v", err)
-	}
-
-	// Verify legacy file removed
-	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
-		t.Error("legacy hooks.json should be removed")
-	}
-
-	// Verify settings.json created
-	if _, err := os.Stat(filepath.Join(tmpDir, "settings.json")); os.IsNotExist(err) {
-		t.Error("settings.json should be created")
-	}
-}
-
 func TestIsPylonHookCommand(t *testing.T) {
 	tests := []struct {
 		command string
 		want    bool
 	}{
-		{"pylon sync-memory --from-session", true},
-		{"pylon sync-memory --incremental", true},
 		{"pylon mem inject", true},
 		{"my-custom-hook --on-stop", false},
 		{"", false},

@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -53,11 +52,9 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Check required tool installations and versions",
 		Long: `Verify that required tools and the selected runtime provider are installed and configured.
 
-Also restores the pylon-owned .pylon/builtin/ (agents, skills, commands, scripts,
-manual) to the versions shipped with this binary. Your own resources in
-.pylon/agents/, .pylon/skills/ and .pylon/commands/ are left alone; a file there
-that shares a built-in name is removed if it is an identical copy, otherwise moved
-aside to <name>.pylon-bak.
+Also restores the pylon-owned .pylon/builtin/ (agents, commands, scripts, manual) to
+the versions shipped with this binary. Your own resources in .pylon/agents/,
+.pylon/skills/ and .pylon/commands/ are left alone; a built-in with the same name wins.
 
 Use --fix-excludes to automatically add .pylon/ to project .git/info/exclude
 for any projects that are missing the local-scope ignore entry.`,
@@ -409,7 +406,7 @@ func doctorProviderConfig() (*config.Config, error) {
 func newProviderCheck(cfg *config.Config, configErr error) Check {
 	installURL := claudeInstallURL
 	if cfg != nil {
-		providerName, _ := cfg.Runtime.EffectiveProvider()
+		providerName := cfg.Runtime.EffectiveProvider()
 		if catalog, err := newProviderCatalog(cfg); err == nil {
 			installURL = catalog.installURL(providerName)
 		}
@@ -496,34 +493,14 @@ func verifyGH() (string, error) {
 	return lines[0], nil
 }
 
-// migrateConfigFile applies the config.yml migrations and reports what changed.
-// 모두 noop-safe라 여러 진입점에서 반복 호출해도 된다.
-func migrateConfigFile(cfgPath string) {
-	if migrated, err := config.MigrateRuntimeBackend(cfgPath); err != nil {
-		fmt.Printf("⚠ runtime.backend 마이그레이션 실패: %v\n", err)
-	} else if migrated {
-		fmt.Println("✓ deprecated runtime.backend를 runtime.provider로 전환했습니다")
-	}
-	removed, err := config.MigrateRuntimeEnvDefaults(cfgPath)
-	if err != nil {
-		fmt.Printf("⚠ runtime.env 마이그레이션 실패: %v\n", err)
-	}
-	for _, key := range removed {
-		fmt.Printf("✓ runtime.env.%s 제거 (pylon 구버전 기본값 — effort는 runtime.effort로 설정)\n", key)
-	}
-}
-
 // ensurePrimaryProviderIfWorkspace resolves and pins the primary provider when
-// running inside a pylon workspace. config 마이그레이션을 먼저 수행해 구식
-// 키가 provider 결정과 이후 체크에 그대로 반영되도록 한다.
+// running inside a pylon workspace.
 func ensurePrimaryProviderIfWorkspace(interactive bool) {
 	root, err := resolveRoot()
 	if err != nil {
 		return
 	}
-	cfgPath := layout.ConfigPath(root)
-	migrateConfigFile(cfgPath)
-	cfg, err := config.LoadConfig(cfgPath)
+	cfg, err := config.LoadConfig(layout.ConfigPath(root))
 	if err != nil {
 		return // 설정 로드 실패는 이후 단계가 보고한다
 	}
@@ -537,11 +514,7 @@ func syncConfigIfWorkspace() {
 		return // not in a workspace, skip
 	}
 
-	cfgPath := layout.ConfigPath(root)
-	// 마이그레이션은 ensurePrimaryProviderIfWorkspace가 담당하지만,
-	// init 등 doctor 본 흐름을 거치지 않는 호출을 위해 여기서도 보장한다 (noop-safe).
-	migrateConfigFile(cfgPath)
-	cfg, added, err := config.SyncConfigDefaults(cfgPath)
+	_, added, err := config.SyncConfigDefaults(layout.ConfigPath(root))
 	if err != nil {
 		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)
 		return
@@ -553,29 +526,6 @@ func syncConfigIfWorkspace() {
 		}
 	} else {
 		fmt.Println("✓ config.yml 최신 상태")
-	}
-	// 마이그레이션이 정상 동작하면 여기 도달하지 않는다 — 실패 시의 수동 안내.
-	if providerName, deprecated := cfg.Runtime.EffectiveProvider(); deprecated {
-		fmt.Printf("⚠ runtime.backend는 deprecated입니다 — runtime.provider: %s 로 직접 전환하세요\n", providerName)
-	}
-	warnDeprecatedAgentProviders(root)
-}
-
-func warnDeprecatedAgentProviders(root string) {
-	agentPaths, err := filepath.Glob(filepath.Join(layout.ResourceDir(root, "agents"), "*.md"))
-	if err != nil {
-		return
-	}
-	for _, path := range agentPaths {
-		agent, err := config.ParseAgentFile(path)
-		if err != nil {
-			continue
-		}
-		providerName, deprecated := agent.EffectiveProvider()
-		if !deprecated {
-			continue
-		}
-		fmt.Printf("⚠ agent %s의 backend는 deprecated입니다 — provider: %s 로 전환하세요 (자동 rewrite하지 않음)\n", filepath.Base(path), providerName)
 	}
 }
 
@@ -591,7 +541,7 @@ func reconcileRootAgentFiles(root string) (bool, []string, error) {
 }
 
 // syncResourcesIfWorkspace refreshes the pylon-owned .pylon/builtin/ resources if
-// running inside a pylon workspace, and reports legacy copies it cleaned up.
+// running inside a pylon workspace.
 func syncResourcesIfWorkspace() {
 	root, err := resolveRoot()
 	if err != nil {
@@ -603,7 +553,7 @@ func syncResourcesIfWorkspace() {
 }
 
 // reportBuiltinSync prints the outcome of syncBuiltinResources for doctor and sync-agents.
-func reportBuiltinSync(wrote bool, removed []string, err error) {
+func reportBuiltinSync(wrote bool, err error) {
 	if err != nil {
 		fmt.Printf("⚠ 내장 리소스 동기화 실패: %v\n", err)
 		return
@@ -612,14 +562,6 @@ func reportBuiltinSync(wrote bool, removed []string, err error) {
 		fmt.Println("✓ 내장 리소스 갱신 (.pylon/builtin/)")
 	} else {
 		fmt.Println("✓ 내장 리소스 최신 상태")
-	}
-	// 대개 이전 릴리스가 .pylon/<kind>/에 복사해 둔 사본의 1회 정리지만, 내장 이름과 겹친 사용자
-	// 파일일 수도 있으므로 하나씩 밝힌다.
-	if len(removed) > 0 {
-		fmt.Printf("  ℹ 내장(은퇴한 내장 포함) 이름과 겹치는 파일 %d개를 정리했습니다 (내장 리소스는 .pylon/builtin/에 있습니다):\n", len(removed))
-		for _, line := range removed {
-			fmt.Printf("    - %s\n", line)
-		}
 	}
 }
 
@@ -729,60 +671,19 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 }
 
 // syncBuiltinResources keeps .pylon/builtin/ identical to the embedded resources and
-// returns whether anything under it changed plus a description of each legacy file it
-// cleared out of the user dirs.
+// returns whether anything under it changed.
 //
 // Ownership contract: .pylon/builtin/ belongs to pylon. Every run compares each file
 // with the embeds, rewrites the missing or differing ones and deletes files the embeds
 // no longer have — so a dropped built-in disappears with no migration step and a
 // damaged builtin heals on the next launch or doctor. Nothing is removed wholesale, so
-// concurrent runs converge instead of racing. A built-in name in the user-owned
-// .pylon/<kind>/ dirs (usually a copy left by releases that synced there directly) is
-// cleared so it can never shadow the builtin: a copy identical to the embed or to any
-// previously shipped version (legacyShipped) is deleted, anything else is moved aside
-// to <name>.pylon-bak. Retired built-ins (retiredBuiltins) get the same treatment,
-// matched against their shipped versions. Every other user file is never touched.
+// concurrent runs converge instead of racing. User files in .pylon/<kind>/ are never
+// touched; readers take the built-in first, so a same-named user file is ignored.
 // Shared by launch, init, doctor and sync-agents so they can never drift.
-func syncBuiltinResources(root string) (bool, []string, error) {
+func syncBuiltinResources(root string) (bool, error) {
 	files, err := embeddedBuiltinFiles()
 	if err != nil {
-		return false, nil, fmt.Errorf("내장 리소스 읽기 실패: %w", err)
-	}
-
-	var legacy []string
-	for _, f := range files {
-		line, err := clearUserCopy(root, f.rel, "내장과 동일한 사본 삭제", func(b []byte) bool {
-			return bytes.Equal(b, f.content) || isLegacyShipped(f.rel, b)
-		})
-		if err != nil {
-			return false, legacy, err
-		}
-		if line != "" {
-			legacy = append(legacy, line)
-		}
-	}
-	retired, err := retiredBuiltins()
-	if err != nil {
-		return false, legacy, err
-	}
-	for _, rel := range retired {
-		line, err := clearUserCopy(root, rel, "은퇴한 내장의 출하본 삭제", func(b []byte) bool {
-			return isLegacyShipped(rel, b)
-		})
-		if err != nil {
-			return false, legacy, err
-		}
-		if line != "" {
-			legacy = append(legacy, line)
-		}
-	}
-	// 내장 전용이던 디렉토리는 비었을 때만 걷어낸다 — 사용자 파일이 있으면 Remove가 실패해 남는다.
-	// 심링크는 대상이 비어 있지 않아도 unlink되므로 실제 디렉토리만 다룬다.
-	for _, kind := range []string{"scripts/bash", "scripts", "reference"} {
-		dir := layout.ResourceDir(root, kind)
-		if info, err := os.Lstat(dir); err == nil && info.IsDir() {
-			_ = os.Remove(dir)
-		}
+		return false, fmt.Errorf("내장 리소스 읽기 실패: %w", err)
 	}
 
 	builtinDir := layout.BuiltinDir(root)
@@ -797,16 +698,16 @@ func syncBuiltinResources(root string) (bool, []string, error) {
 		}
 		if current, err := os.ReadFile(target); err != nil || !bytes.Equal(current, f.content) {
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return changed, legacy, err
+				return changed, err
 			}
 			if err := os.WriteFile(target, f.content, perm); err != nil {
-				return changed, legacy, fmt.Errorf(".pylon/builtin/%s 쓰기 실패: %w", f.rel, err)
+				return changed, fmt.Errorf(".pylon/builtin/%s 쓰기 실패: %w", f.rel, err)
 			}
 			changed = true
 		}
 		if info, err := os.Stat(target); err == nil && info.Mode().Perm() != perm {
 			if err := os.Chmod(target, perm); err != nil {
-				return changed, legacy, err
+				return changed, err
 			}
 			changed = true
 		}
@@ -832,49 +733,15 @@ func syncBuiltinResources(root string) (bool, []string, error) {
 		return nil
 	})
 	if err != nil {
-		return changed, legacy, fmt.Errorf(".pylon/builtin 정리 실패: %w", err)
+		return changed, fmt.Errorf(".pylon/builtin 정리 실패: %w", err)
 	}
-	return changed, legacy, nil
+	return changed, nil
 }
 
-// clearUserCopy clears .pylon/<rel> out of the user-owned dirs: a file for which same
-// reports true is deleted, any other file is moved aside to <name>.pylon-bak[.N]. It
-// returns a report line, or "" when there was nothing to clear.
-func clearUserCopy(root, rel, deletedNote string, same func([]byte) bool) (string, error) {
-	old := filepath.Join(layout.ResourceDir(root, path.Dir(rel)), path.Base(rel))
-	info, err := os.Lstat(old)
-	if os.IsNotExist(err) || (err == nil && info.IsDir()) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if current, err := os.ReadFile(old); err == nil && same(current) {
-		if err := os.Remove(old); err != nil {
-			return "", fmt.Errorf(".pylon/%s 정리 실패: %w", rel, err)
-		}
-		return ".pylon/" + rel + " (" + deletedNote + ")", nil
-	}
-	dest, err := nextBackupPath(old)
-	if err == nil {
-		err = os.Rename(old, dest)
-	}
-	if err != nil {
-		return "", fmt.Errorf(".pylon/%s 백업 실패: %w", rel, err)
-	}
-	return fmt.Sprintf(".pylon/%s → %s", rel, filepath.Base(dest)), nil
-}
-
-// syncBuiltinForLaunch is the launch-path wrapper around syncBuiltinResources. The
-// notice goes to stderr, which the provider TUI hides right after — `pylon doctor`
-// is the reliable reporting channel.
+// syncBuiltinForLaunch is the launch-path wrapper around syncBuiltinResources.
 func syncBuiltinForLaunch(root string) error {
-	_, removed, err := syncBuiltinResources(root)
-	if err != nil {
+	if _, err := syncBuiltinResources(root); err != nil {
 		return fmt.Errorf("내장 리소스 동기화 실패: %w", err)
-	}
-	if len(removed) > 0 {
-		fmt.Fprintf(os.Stderr, "ℹ 내장(은퇴한 내장 포함) 이름과 겹치는 파일 %d개를 정리했습니다 (출하본과 같은 사본은 삭제, 다른 내용은 *.pylon-bak으로 보관)\n", len(removed))
 	}
 	return nil
 }
@@ -884,7 +751,7 @@ func syncBuiltinForLaunch(root string) error {
 type commandDiff struct {
 	added   []string // in desired, missing on disk
 	changed []string // present but content differs
-	removed []string // legacy files present on disk that will be deleted
+	removed []string // previously managed files no longer desired, deleted on apply
 }
 
 func (d commandDiff) empty() bool {
@@ -892,7 +759,7 @@ func (d commandDiff) empty() bool {
 }
 
 // diffClaudeCommands compares the desired command set against the on-disk
-// .claude/commands/. Removals are limited to the fixed legacy list, mirroring
+// .claude/commands/. Removals are limited to previously managed files, mirroring
 // applyClaudeCommands — user-added commands are never flagged for deletion.
 func diffClaudeCommands(commandsDir string, desired map[string]string) commandDiff {
 	var d commandDiff
@@ -904,25 +771,12 @@ func diffClaudeCommands(commandsDir string, desired map[string]string) commandDi
 			d.changed = append(d.changed, rel)
 		}
 	}
-	for _, name := range legacyCommandFiles {
-		if _, err := os.Stat(filepath.Join(commandsDir, name+".md")); err == nil {
-			d.removed = append(d.removed, name+".md")
-		}
-	}
-	removed := make(map[string]bool)
-	for _, rel := range d.removed {
-		removed[rel] = true
-	}
 	for rel := range readManagedClaudeCommandSet(commandsDir) {
 		if _, ok := desired[rel]; ok {
 			continue
 		}
-		if removed[rel] {
-			continue
-		}
 		if _, err := os.Stat(filepath.Join(commandsDir, rel)); err == nil {
 			d.removed = append(d.removed, rel)
-			removed[rel] = true
 		}
 	}
 	sort.Strings(d.added)

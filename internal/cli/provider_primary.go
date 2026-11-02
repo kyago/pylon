@@ -51,7 +51,7 @@ func ensurePrimaryProvider(root string, cfg *config.Config, interactive bool) (*
 		return cfg, false
 	}
 	installed := detectInstalledProviders(catalog)
-	current, _ := cfg.Runtime.EffectiveProvider()
+	current := cfg.Runtime.EffectiveProvider()
 	pinned := current != "" && current != "auto"
 
 	if pinned && slices.Contains(installed, current) {

@@ -118,7 +118,7 @@ runtime:
 	}
 
 	// Built-in agents, skills, commands, scripts and the usage manual (.pylon/builtin/)
-	if _, _, err := syncBuiltinResources(workDir); err != nil {
+	if _, err := syncBuiltinResources(workDir); err != nil {
 		return err
 	}
 

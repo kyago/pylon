@@ -495,7 +495,7 @@ Skill body`
 // 내장 에이전트는 심링크로 두고, skills: frontmatter를 가진 사용자 에이전트에는 사용자 스킬을 주입한다.
 func TestGenerateClaudeAgentsWithSkills_BuiltinAgentsAndUserSkills(t *testing.T) {
 	root := t.TempDir()
-	if _, _, err := syncBuiltinResources(root); err != nil {
+	if _, err := syncBuiltinResources(root); err != nil {
 		t.Fatal(err)
 	}
 	userAgents := layout.ResourceDir(root, "agents")

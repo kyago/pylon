@@ -12,7 +12,7 @@ import (
 // template content, shared by add-agent and add-skill. kind is the user-facing
 // resource label ("에이전트", "스킬") used in error messages. The subdirectory is
 // created if missing, an existing file is never overwritten, and a built-in name is
-// refused — the builtin would shadow it and the next sync would clear it. Returns the
+// refused — the builtin would shadow it. Returns the
 // created file path.
 func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error) {
 	root, err := resolveRoot()
@@ -22,10 +22,6 @@ func scaffoldMarkdownResource(kind, subdir, name, content string) (string, error
 
 	if isBuiltinResource(subdir + "/" + name + ".md") {
 		return "", fmt.Errorf("%s '%s'는 내장 리소스 이름입니다 — 다른 이름을 사용하세요", kind, name)
-	}
-	// 은퇴한 내장 이름의 파일은 다음 sync가 .pylon-bak으로 비켜 놓는다 — syncBuiltinResources 참고.
-	if legacyShipped[subdir+"/"+name+".md"] != nil {
-		return "", fmt.Errorf("%s '%s'는 은퇴한 내장 리소스 이름입니다 — 다른 이름을 사용하세요", kind, name)
 	}
 
 	dir := layout.ResourceDir(root, subdir)

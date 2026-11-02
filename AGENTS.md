@@ -28,11 +28,8 @@ inside the block are reverted; content outside the block is user-owned and never
 instruction size limit (keep the manual well under 32KiB). A malformed marker pair (missing, reversed, or
 duplicated whole-line markers) aborts launch/init/doctor before any file is touched; uninstall skips the
 file with a warning and proceeds. A block is replaced without a backup only when `isPylonGeneratedBlock`
-recognizes it as pylon's own output (this generator's manual title + facts heading and no stamp, or the old
-unauthored stub's heading **and** notice sentence); anything else — notably a guide a session authored under
-the old `<!-- pylon-usage-version: N -->` scheme — is copied to the next free `AGENTS.md.pylon-bak[.N]` first,
-and callers report that exact file name. The stamp regex and old stub strings survive only as these
-migration recognizers — the generated block must never contain them. To change what the root agent
+recognizes it as pylon's own output (this generator's manual title + facts heading); anything else is copied to
+the next free `AGENTS.md.pylon-bak[.N]` first, and callers report that exact file name. To change what the root agent
 is told, edit the manual; the next launch propagates it. Go never calls an LLM.
 
 ## Build / test / lint
@@ -94,13 +91,7 @@ no migration step (`.claude/commands/`, `.claude/agents/` links and injected fil
 prune the dropped entries).
 The user-owned `.pylon/{agents,skills,commands}/` hold only user resources (`pylon add-agent` /
 `pylon add-skill` or a new filename; `scaffoldMarkdownResource` refuses built-in names). **A built-in name
-always wins**: a same-named file there (usually a copy left by releases that synced into `.pylon/<kind>/`
-directly) is cleared on every sync — deleted when byte-identical to the embed or to any version a release
-shipped (`legacy_shipped.txt`, every built-in's sha256 from 2026.3.1–2026.9.2), otherwise moved aside to
-`<name>.pylon-bak[.N]` (`pylon doctor` lists each; the launch path's stderr notice is hidden by the TUI). The same
-rule covers **retired built-ins** (`retiredBuiltins()`: shipped paths the embeds no longer have), and
-`pylon add-agent`/`add-skill` refuse those names. That record is frozen: from 2026.10.1 built-ins live only in
-`.pylon/builtin/`, so changing or removing a built-in needs no new entry.
+always wins**: readers take the built-in first, so a same-named file there is ignored and never modified.
 `pylon doctor` also rewrites the pylon hook groups in `.claude/settings.json` from the embedded `hooks.json`, as
 launch does. Readers merge both sources —
 `workspaceAgents`, `loadAgentSkillMap`, `buildDesiredClaudeCommands`, `generateCodexSkills` — built-in

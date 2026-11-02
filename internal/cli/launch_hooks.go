@@ -60,19 +60,12 @@ func generateSettingsHooks(claudeDir string) error {
 		return fmt.Errorf("settings.json 쓰기 실패: %w", err)
 	}
 
-	// Clean up legacy hooks.json if it exists
-	legacyHooksPath := filepath.Join(claudeDir, "hooks.json")
-	if err := os.Remove(legacyHooksPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("레거시 hooks.json 제거 실패: %w", err)
-	}
-
 	return nil
 }
 
 // isPylonHookCommand checks if a command string is a pylon-managed hook.
-// 구버전 Stop hook 명령도 병합 시 제거되도록 계속 인식한다.
 func isPylonHookCommand(command string) bool {
-	return strings.Contains(command, "pylon sync-memory") || strings.Contains(command, "pylon mem inject")
+	return strings.Contains(command, "pylon mem inject")
 }
 
 // isPylonHookGroup checks if a hook group contains any pylon-managed hook commands.

@@ -76,7 +76,6 @@
 | `pl-pr` | PR 생성 |
 | `pl-status` | 파이프라인 상태 조회 |
 | `pl-add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
-| `pl-migrate` | 레거시 워크스페이스(SQLite/Fossil) 폐기 절차 안내 |
 
 ## 위임 판단
 

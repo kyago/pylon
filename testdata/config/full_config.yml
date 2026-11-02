@@ -1,7 +1,7 @@
 version: "0.1"
 
 runtime:
-  backend: claude-code
+  provider: claude-code
   permission_mode: acceptEdits
   env:
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"

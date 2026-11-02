@@ -272,7 +272,7 @@ func TestBuildUninstallPlanSkipsMalformedAgentsMDAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := "# 우리 팀 규칙\n\n" + agentsBlockBegin +
-		"\n<!-- pylon-usage-version: 5 -->\n" + bootstrapAgentsMDHeading + "\n"
+		"\n<!-- pylon-usage-version: 5 -->\n" + "# pylon 워크스페이스 — 운영 가이드 (자동 생성 부트스트랩)" + "\n"
 	agentsPath := layout.RootAgentsPath(root)
 	if err := os.WriteFile(agentsPath, []byte(original), 0644); err != nil {
 		t.Fatal(err)

@@ -203,7 +203,7 @@ func (catalog *providerCatalog) selectInteractive(ctx context.Context, cfg *conf
 	if cfg == nil {
 		return providerCatalogEntry{}, provider.Selection{}, fmt.Errorf("provider config is nil")
 	}
-	providerName, _ := cfg.Runtime.EffectiveProvider()
+	providerName := cfg.Runtime.EffectiveProvider()
 	selection, err := provider.NewRouter(catalog.registry).Select(ctx, provider.SelectionRequest{
 		WorkspaceProvider: providerName,
 	})

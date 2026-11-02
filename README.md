@@ -96,10 +96,6 @@ pylon version    # 버전 확인
 pylon doctor     # 의존성 + 워크스페이스 리소스 동기화 상태 확인
 ```
 
-> **기존 워크스페이스 마이그레이션:** 레거시 데이터(SQLite 메모리, Fossil 이력)는 새 버전으로
-> **이전되지 않고 삭제**됩니다. 슬래시 커맨드 `/pl:migrate`가 레거시 파일 폐기 절차를 안내합니다.
-> 새 메모리(`.pylon/memory/`)와 이력(`.pylon/history/pipelines/`)은 빈 상태로 시작합니다.
-
 ## 빠른 시작
 
 ### 1. 워크스페이스 초기화
@@ -181,8 +177,7 @@ Claude Code 실행 권한을 설정합니다
               │   ├── /pl:status ─── 파이프라인 상태 조회
               │   ├── /pl:index ─── 코드베이스 인덱싱
               │   ├── /pl:project-list ─ 프로젝트 목록 조회
-              │   ├── /pl:add-project ─ 프로젝트 추가
-              │   └── /pl:migrate ─── 레거시 저장소 폐기 안내
+              │   └── /pl:add-project ─ 프로젝트 추가
               │
               └── 셸 스크립트 (.pylon/builtin/scripts/bash/)
                    ├── init-pipeline.sh
@@ -282,7 +277,6 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 | `/pl:index` | 프로젝트 코드베이스 인덱싱 |
 | `/pl:project-list` | 프로젝트 목록 및 인덱싱 상태 조회 |
 | `/pl:add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
-| `/pl:migrate` | 레거시 워크스페이스(SQLite/Fossil) 폐기 절차 안내 |
 
 ### 파이프라인 단계 단독 실행
 
@@ -468,9 +462,6 @@ skills:
   preload_to_agents: true      # .claude/agents/ 생성 시 스킬 주입
   progressive_disclosure: true # 메타데이터만 주입(true) vs 전체 본문 주입(false)
 ```
-
-기존 `runtime.backend`와 agent frontmatter의 `backend`는 deprecated alias로 읽으며, `provider`가 함께 있으면
-`provider`가 우선합니다. `pylon doctor`는 `config.yml`의 `runtime.backend`를 `runtime.provider`로 바꿔 씁니다.
 
 작업 브랜치 이름은 `/pl:pipeline`이 repo의 `CLAUDE.md`·`AGENTS.md`·`CONTRIBUTING.md`, 그다음 워크스페이스 `AGENTS.md`와
 사용자 지침에서 찾은 명명 규칙을 먼저 따릅니다. 규칙이 없으면 `git.branch_prefix`로 `<접두사>-<pipeline-id>-<repo-id>`를
