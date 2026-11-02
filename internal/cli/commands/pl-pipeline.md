@@ -64,7 +64,7 @@ REQUIREMENT_EOF
    - `software` → **소프트웨어 파이프라인** (Steps 3-9)
    - `research`, `content`, `marketing` → **비소프트웨어 파이프라인** (Steps N1-N5)
 
-Claude Code에서는 `.claude/agents/`에 등록된 정의를 `subagent_type`으로 호출한다. 그 외 provider에서는 `.pylon/builtin/agents/<name>.md` 본문을 프롬프트 앞에 붙인다. 사용자가 추가한 에이전트는 `.pylon/agents/<name>.md`에 있다.
+Claude Code에서는 `.claude/agents/`에 등록된 정의를 `subagent_type`으로 호출한다. 그 외 provider에서는 `.pylon/builtin/agents/<name>.md` 본문을 프롬프트 앞에 붙인다. 사용자가 추가한 에이전트는 `.pylon/agents/<name>.md`에 있다. 정의의 `skills` 목록은 워크스페이스 `AGENTS.md`의 위임 규약에 따라 스킬 본문을 함께 전달한다.
 
 ---
 
