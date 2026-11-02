@@ -72,7 +72,7 @@ $UNCOMMITTED"
     BRANCH="${BRANCH_ARG:-${BRANCH_PREFIX}${ROOT_PIPELINE_ID}-${REPO_ID}}"
     git check-ref-format "refs/heads/$BRANCH" || die "브랜치 이름으로 쓸 수 없습니다: $BRANCH"
     # 브랜치뿐 아니라 @, heads/main, 태그처럼 다른 대상으로 풀리는 이름도 나중에 그 대상을 가리키므로 쓰지 않는다.
-    ! git -C "$GIT_ROOT" rev-parse --verify --quiet "$BRANCH^{commit}" >/dev/null || die "branch already exists or resolves to another ref: $BRANCH"
+    ! git -C "$GIT_ROOT" rev-parse --verify --quiet "$BRANCH^{object}" >/dev/null || die "branch already exists or resolves to another ref: $BRANCH"
     # --branch 이름은 동료의 원격 브랜치와 겹칠 수 있고, 겹치면 push가 그 브랜치에 커밋을 얹는다. 확인하지 못하면 쓰지 않는다.
     if [[ -n "$BRANCH_ARG" ]] && git -C "$GIT_ROOT" remote get-url origin &>/dev/null; then
       REMOTE_BRANCH=$(git -C "$GIT_ROOT" ls-remote --heads origin "refs/heads/$BRANCH") \

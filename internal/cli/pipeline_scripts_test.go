@@ -186,10 +186,11 @@ func TestInitPipelineRejectsUnusableBranchNames(t *testing.T) {
 	runPipelineGit(t, repo, "checkout", "main")
 	runPipelineGit(t, repo, "branch", "-D", "previous")
 	runPipelineGit(t, repo, "tag", "v1")
+	runPipelineGit(t, repo, "tag", "treetag", "HEAD^{tree}")
 	root := runInitPipeline(t, workspace, "bad names")
 	before := runPipelineGit(t, repo, "for-each-ref", "refs/heads")
 
-	for _, name := range []string{"-x", "-", "a..b", "@{-1}", "@", "heads/main", "refs/heads/main", "v1", "bad name", "main", "develop", "DEVELOP", "taken"} {
+	for _, name := range []string{"-x", "-", "a..b", "@{-1}", "@", "heads/main", "refs/heads/main", "v1", "treetag", "bad name", "main", "develop", "DEVELOP", "taken"} {
 		runInitPipelineFailure(t, workspace, "--git-root", "service-a", "--pipeline-dir", root.PipelineDir, "--branch", name)
 		if after := runPipelineGit(t, repo, "for-each-ref", "refs/heads"); after != before {
 			t.Fatalf("--branch %q changed branches:\n%s", name, after)

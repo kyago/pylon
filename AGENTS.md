@@ -165,15 +165,16 @@ name stays `task-<run-id>-<repo-id>` and init touches no network. Only a name co
 owns it; a `--branch` name may also be a person's. Two things must never happen, and changes here are judged against them:
 
 1. **A user's work lost.** Scripts delete a branch or remove a worktree by name only when the name contains the run
-   id. Worktrees on a `--branch` name stay and are reported as `kept`, and branches beside it stay. `/pl:cleanup`
-   deletes such a branch only after its merge check, which cannot pass with unmerged commits.
+   id. Worktrees on a name without it stay and are reported as `kept`, and branches beside such a name stay.
+   `/pl:cleanup` deletes the run's branch only when its merge check passes or it has no commits past `base_revision`,
+   so no unmerged commit is lost.
 2. **A run works on a branch it did not create.** A new name is refused when it is not a valid branch name, is
    protected (any case), resolves to anything in the repo, or the root run already registered this repo. A `--branch`
    name is also refused when `origin` has it or cannot be asked. Re-entry keeps the recorded name and refuses a
    protected one, a mismatch with the root registry, or a different `--branch`.
 
 Non-goals: enforcing that the session followed the rules; `git.branch_prefix` when neither yq nor PyYAML is available;
-agent branches left beside a `--branch` name; a name deleted and recreated while its run is still open, including by
+agent branches left beside a name without the run id; a name deleted and recreated while its run is still open, including by
 another run; a same name pushed to `origin` after init; case-only collisions with non-protected branches. A review
 finding outside these rules is a known limit, not a bug.
 
