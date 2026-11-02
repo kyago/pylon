@@ -22,6 +22,7 @@ func TestPipelineCommandUsesRepoOwnedBranches(t *testing.T) {
 	}
 	for _, required := range []string{
 		`--pipeline-dir "$ROOT_PIPELINE_DIR"`,
+		`--branch "$REPO_BRANCH"`,
 		`--held-out-output "$REPO_PIPELINE_DIR/evaluator-only/held-out.json"`,
 		`.sub_pipelines[] | select(.repo == $repo) | .branch`,
 		`.status = "awaiting_cleanup"`,

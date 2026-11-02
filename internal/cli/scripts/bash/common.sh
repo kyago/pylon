@@ -75,6 +75,9 @@ config_get() {
   if command -v yq &>/dev/null; then
     value=$(yq ".$key" "$CONFIG_FILE" 2>/dev/null)
     [[ "$value" == "null" ]] && value=""
+    # kislyuk yq는 문자열을 JSON으로(따옴표째) 출력한다.
+    value="${value#\"}"
+    value="${value%\"}"
   elif command -v python3 &>/dev/null; then
     value=$(PYLON_CONFIG="$CONFIG_FILE" PYLON_KEY="$key" python3 -c "
 import os, sys
@@ -85,7 +88,7 @@ try:
     val = cfg
     for k in os.environ['PYLON_KEY'].split('.'):
         val = val.get(k) if isinstance(val, dict) else None
-    print('' if val is None else str(val).lower(), end='')
+    print('' if val is None else str(val).lower() if isinstance(val, bool) else str(val), end='')
 except Exception:
     pass
 " 2>/dev/null)
