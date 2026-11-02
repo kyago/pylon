@@ -21,7 +21,7 @@ description: "에이전트 병렬 실행"
 
 서브 에이전트는 이 대화도 파이프라인 산출물도 보지 못합니다. 프롬프트에 **설계 근거·수용 기준·대상
 파일·검증 명령·범위 밖**을 모두 내용째로 넣습니다(경로만 넘기지 않습니다). `subagent_type`은 태스크의
-`agent` 값입니다(Claude Code 외 provider는 `.pylon/builtin/agents/<name>.md` 본문을 프롬프트 앞에 붙입니다, 사용자 추가 에이전트는 `.pylon/agents/<name>.md`):
+`agent` 값입니다(Claude Code 외 provider는 `.pylon/builtin/agents/<name>.md` 본문을 프롬프트 앞에 붙입니다, 사용자 추가 에이전트는 `.pylon/agents/<name>.md`). 정의의 `skills` 목록은 워크스페이스 `AGENTS.md`의 위임 규약에 따라 스킬 본문을 함께 전달합니다:
 
 ```
 Agent(subagent_type="dev", prompt="## 설계 근거
