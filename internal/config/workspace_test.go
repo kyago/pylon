@@ -321,11 +321,19 @@ func TestDiscoverProjects_KeepsWorktreesWithoutWorkspaceCheckout(t *testing.T) {
 	git(root, "clone", source, ".hub")
 	git(filepath.Join(root, ".hub"), "worktree", "add", filepath.Join(root, "from-hidden"))
 
-	for _, name := range []string{"from-root-bare", "from-sub-bare", "from-hidden"} {
+	// core.worktree puts the only other checkout outside the workspace.
+	git(root, "clone", source, "core-wt")
+	git(filepath.Join(root, "core-wt"), "worktree", "add", filepath.Join(root, "from-core-wt"))
+	git(filepath.Join(root, "core-wt"), "config", "core.worktree", t.TempDir())
+
+	for _, name := range []string{"from-root-bare", "from-sub-bare", "from-hidden", "from-core-wt"} {
 		if err := os.MkdirAll(filepath.Join(root, name, ".pylon"), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
+
+	// The verdict must not follow the caller's git environment.
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
 
 	projects, err := DiscoverProjects(root)
 	if err != nil {
@@ -335,7 +343,7 @@ func TestDiscoverProjects_KeepsWorktreesWithoutWorkspaceCheckout(t *testing.T) {
 	for _, p := range projects {
 		names = append(names, p.Name)
 	}
-	if got, want := strings.Join(names, ","), "from-hidden,from-root-bare,from-sub-bare"; got != want {
+	if got, want := strings.Join(names, ","), "from-core-wt,from-hidden,from-root-bare,from-sub-bare"; got != want {
 		t.Errorf("projects = %q, want %q", got, want)
 	}
 }

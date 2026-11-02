@@ -65,12 +65,14 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Before prepareProjectDirectory: --force would delete the worktree.
+	if config.IsWorkspaceWorktree(root, filepath.Join(root, projectName)) {
+		return fmt.Errorf("%s is a git worktree of a checkout in this workspace, not a project", projectName)
+	}
+
 	projectDir, err := prepareProjectDirectory(root, projectName, force, skipClone)
 	if err != nil {
 		return err
-	}
-	if skipClone && config.IsWorkspaceWorktree(root, projectDir) {
-		return fmt.Errorf("%s is a git worktree of a checkout in this workspace, not a project", projectName)
 	}
 	if !skipClone {
 		if err := cloneProject(root, repoURL, projectName); err != nil {

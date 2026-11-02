@@ -141,8 +141,9 @@ func IsWorkspaceWorktree(root, dir string) bool {
 	if err != nil || filepath.Base(commonDir) != ".git" {
 		return false
 	}
-	out, err := exec.Command("git", "--git-dir", commonDir, "rev-parse", "--is-bare-repository").Output()
-	if err != nil || strings.TrimSpace(string(out)) != "false" {
+	// Read as config, not rev-parse: GIT_WORK_TREE in the caller's environment changes its answer.
+	out, err := exec.Command("git", "--git-dir", commonDir, "config", "--get-regexp", `^core\.(bare|worktree)$`).Output()
+	if err != nil || strings.TrimSpace(string(out)) != "core.bare false" {
 		return false
 	}
 	// os.SameFile: path spelling differs in case and normalization on APFS.

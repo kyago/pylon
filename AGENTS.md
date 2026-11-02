@@ -145,10 +145,12 @@ worktree is just another checkout of something already here. Two things must nev
 judged against them:
 
 1. **A real project disappears.** Whatever cannot be shown to be a workspace worktree stays a project: main
-   checkout outside the workspace, bare or separate git dir, submodule, a git error, or a main repository that moved.
+   checkout outside the workspace, `core.worktree` set, bare or separate git dir, submodule, a git error, or a main
+   repository that moved. The one exception git cannot reveal: a separate git dir literally named `.git` inside the
+   workspace is taken for its parent's checkout.
 2. **A command destroys user files in a workspace worktree, or claims to have handled one it skipped.** Uninstall
-   deletes only its `.pylon/` directory and keeps the worktree; `add-project --skip-clone` and `delete-project` refuse
-   it; doctor neither regenerates anything in it nor suggests `add-project` for it.
+   deletes only its `.pylon/` directory and keeps the worktree; `add-project` and `delete-project` refuse it; doctor
+   neither regenerates anything in it nor suggests `add-project` for it.
 
 The verdict must not depend on how the workspace path is spelled (symlink, case, Unicode normalization). Non-goals:
 `/pl:pipeline` targeting a workspace worktree (`pylon internal verify --config` checks one), cleaning state left from

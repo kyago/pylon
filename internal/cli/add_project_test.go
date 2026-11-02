@@ -454,8 +454,17 @@ func TestRunAddProject_UsesPlainClone(t *testing.T) {
 	}
 }
 
-func TestRunAddProject_SkipCloneRefusesWorkspaceWorktree(t *testing.T) {
+func TestRunAddProject_RefusesWorkspaceWorktree(t *testing.T) {
 	requireGit(t)
+	for _, flag := range []string{"--skip-clone", "--force"} {
+		t.Run(flag, func(t *testing.T) {
+			testAddProjectRefusesWorktree(t, flag)
+		})
+	}
+}
+
+func testAddProjectRefusesWorktree(t *testing.T, flag string) {
+	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
 		t.Fatal(err)
@@ -476,7 +485,7 @@ func TestRunAddProject_SkipCloneRefusesWorkspaceWorktree(t *testing.T) {
 	}
 
 	addCmd := newAddProjectCmd()
-	addCmd.SetArgs([]string{"wt", "--skip-clone"})
+	addCmd.SetArgs([]string{"wt", flag})
 	oldWorkspace := flagWorkspace
 	flagWorkspace = root
 	defer func() { flagWorkspace = oldWorkspace }()
