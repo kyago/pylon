@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -141,13 +142,19 @@ func IsWorkspaceWorktree(root, dir string) bool {
 	if err != nil || filepath.Base(commonDir) != ".git" {
 		return false
 	}
-	// Read as config, not rev-parse: GIT_WORK_TREE in the caller's environment changes its answer.
-	out, err := exec.Command("git", "--git-dir", commonDir, "config", "--get-regexp", `^core\.(bare|worktree)$`).Output()
-	if err != nil || strings.TrimSpace(string(out)) != "core.bare false" {
+	// Ask git for the main checkout: a bare repository errors, core.worktree may place it
+	// elsewhere. The caller's GIT_* and global config must not change the verdict.
+	mainDir := filepath.Dir(commonDir)
+	cmd := exec.Command("git", "--git-dir", commonDir, "rev-parse", "--show-toplevel")
+	cmd.Dir = mainDir
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(env string) bool {
+		return strings.HasPrefix(env, "GIT_")
+	}), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	out, err := cmd.Output()
+	if err != nil || !sameDir(strings.TrimSpace(string(out)), mainDir) {
 		return false
 	}
 	// os.SameFile: path spelling differs in case and normalization on APFS.
-	mainDir := filepath.Dir(commonDir)
 	if sameDir(mainDir, root) {
 		return true
 	}

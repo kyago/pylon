@@ -145,14 +145,15 @@ worktree is just another checkout of something already here. Two things must nev
 judged against them:
 
 1. **A real project disappears.** Whatever cannot be shown to be a workspace worktree stays a project: main
-   checkout outside the workspace, `core.worktree` set, bare or separate git dir, submodule, a git error, or a main
-   repository that moved. The one exception git cannot reveal: a separate git dir literally named `.git` inside the
-   workspace is taken for its parent's checkout.
+   checkout outside the workspace, `core.worktree` pointing elsewhere, bare or separate git dir, submodule, a git
+   error, or a main repository that moved. The one exception git cannot reveal: a separate git dir literally named
+   `.git` inside the workspace is taken for its parent's checkout.
 2. **A command destroys user files in a workspace worktree, or claims to have handled one it skipped.** Uninstall
    deletes only its `.pylon/` directory and keeps the worktree; `add-project` and `delete-project` refuse it; doctor
    neither regenerates anything in it nor suggests `add-project` for it.
 
-The verdict must not depend on how the workspace path is spelled (symlink, case, Unicode normalization). Non-goals:
+The verdict must not depend on how the workspace path is spelled (symlink, case, Unicode normalization) or on the
+caller's `GIT_*` environment and global git config. Non-goals:
 `/pl:pipeline` targeting a workspace worktree (`pylon internal verify --config` checks one), cleaning state left from
 when a worktree counted as a project, repairing a worktree whose main checkout `uninstall --remove-projects` removed,
 and worktrees whose main checkout is nested deeper. A review finding outside these rules is a known limit, not a bug.
