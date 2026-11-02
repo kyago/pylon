@@ -89,6 +89,17 @@ func TestInitPipelineNamespacesBranchesByLogicalRun(t *testing.T) {
 	if !strings.Contains(firstSub.Branch, firstRoot.PipelineID) || !strings.Contains(secondSub.Branch, secondRoot.PipelineID) {
 		t.Fatalf("branches are not namespaced by run: %q %q", firstSub.Branch, secondSub.Branch)
 	}
+	if want := "task-" + firstRoot.PipelineID + "-service-a"; firstSub.Branch != want {
+		t.Fatalf("default branch = %q, want %q", firstSub.Branch, want)
+	}
+
+	// /pl:pipeline은 규칙이 없는 repo에 빈 --branch를 넘긴다.
+	runPipelineGit(t, repo, "checkout", "main")
+	thirdRoot := runInitPipeline(t, workspace, "repeat requirement")
+	thirdSub := runInitPipeline(t, workspace, "repeat requirement", "--git-root", "service-a", "--pipeline-dir", thirdRoot.PipelineDir, "--branch", "")
+	if want := "task-" + thirdRoot.PipelineID + "-service-a"; thirdSub.Branch != want {
+		t.Fatalf("empty --branch = %q, want %q", thirdSub.Branch, want)
+	}
 }
 
 func TestInitPipelineRejectsOwnedBranchThatLostBaseAncestry(t *testing.T) {
@@ -118,6 +129,200 @@ func TestInitPipelineRejectsOwnedBranchThatLostBaseAncestry(t *testing.T) {
 	if !strings.Contains(string(output), "recorded base revision") {
 		t.Fatalf("unexpected stale branch error: %s", output)
 	}
+}
+
+// 사용자 규칙으로 정한 이름은 체크아웃·status·root 등록에 그대로 쓰이고, 재진입은 저장된 이름을 유지한다.
+func TestInitPipelineUsesExplicitBranch(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "named branch")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+	const branch = "feature/API-123-add-group-code"
+
+	sub := runInitPipeline(t, workspace, "named branch", append(repoArgs, "--branch", branch)...)
+	if sub.Branch != branch {
+		t.Fatalf("branch = %q, want %q", sub.Branch, branch)
+	}
+	assertCurrentBranch(t, repo, branch)
+	statusPath := filepath.Join(sub.PipelineDir, "status.json")
+	if got := readJSONMap(t, statusPath)["branch"]; got != branch {
+		t.Fatalf("status branch = %v, want %q", got, branch)
+	}
+	entries := readJSONMap(t, filepath.Join(root.PipelineDir, "status.json"))["sub_pipelines"].([]any)
+	if got := entries[0].(map[string]any)["branch"]; got != branch {
+		t.Fatalf("root entry branch = %v, want %q", got, branch)
+	}
+
+	if again := runInitPipeline(t, workspace, "named branch", repoArgs...); again.Branch != branch {
+		t.Fatalf("re-entry branch = %q, want stored %q", again.Branch, branch)
+	}
+	output := runInitPipelineFailure(t, workspace, append(repoArgs, "--branch", "feature/other")...)
+	if !strings.Contains(output, "branch ownership mismatch") {
+		t.Fatalf("re-entry with another name: %s", output)
+	}
+	assertBranchMissing(t, repo, "feature/other")
+
+	// status.json이 root 등록과 어긋나면 그 브랜치를 이 run의 것으로 믿지 않는다 — 정리가 브랜치를 지우는 근거다.
+	status, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := strings.Replace(string(status), `"branch":"`+branch+`"`, `"branch":"someone-elses"`, 1)
+	if err := os.WriteFile(statusPath, []byte(tampered), 0644); err != nil {
+		t.Fatal(err)
+	}
+	output = runInitPipelineFailure(t, workspace, repoArgs...)
+	if !strings.Contains(output, "branch ownership mismatch") {
+		t.Fatalf("tampered status: %s", output)
+	}
+}
+
+func TestInitPipelineRejectsUnusableBranchNames(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	runPipelineGit(t, repo, "branch", "taken")
+	// 직전 브랜치가 지워진 상태에서는 @{-1}이 그 이름으로 풀려 git이 새 브랜치를 만들어 버린다.
+	runPipelineGit(t, repo, "checkout", "-b", "previous")
+	runPipelineGit(t, repo, "checkout", "main")
+	runPipelineGit(t, repo, "branch", "-D", "previous")
+	runPipelineGit(t, repo, "tag", "v1")
+	runPipelineGit(t, repo, "tag", "treetag", "HEAD^{tree}")
+	root := runInitPipeline(t, workspace, "bad names")
+	before := runPipelineGit(t, repo, "for-each-ref", "refs/heads")
+
+	for _, name := range []string{"-x", "-", "a..b", "@{-1}", "@", "heads/main", "refs/heads/main", "v1", "treetag", "bad name", "main", "develop", "DEVELOP", "taken"} {
+		runInitPipelineFailure(t, workspace, "--git-root", "service-a", "--pipeline-dir", root.PipelineDir, "--branch", name)
+		if after := runPipelineGit(t, repo, "for-each-ref", "refs/heads"); after != before {
+			t.Fatalf("--branch %q changed branches:\n%s", name, after)
+		}
+		assertCurrentBranch(t, repo, "main")
+	}
+	if entries := readJSONMap(t, filepath.Join(root.PipelineDir, "status.json"))["sub_pipelines"].([]any); len(entries) != 0 {
+		t.Fatalf("rejected names were registered: %v", entries)
+	}
+
+	// root pipeline은 브랜치를 소유하지 않는다.
+	if output := runInitPipelineFailure(t, workspace, "--branch", "feature/x"); !strings.Contains(output, "--branch") {
+		t.Fatalf("root mode must explain --branch: %s", output)
+	}
+}
+
+func TestInitPipelineUsesConfiguredBranchPrefix(t *testing.T) {
+	if _, err := exec.LookPath("yq"); err != nil {
+		t.Skip("yq not installed: config_get needs a YAML parser")
+	}
+	for _, tc := range []struct{ prefix, wantStart string }{
+		{"Feature/", "Feature/"},
+		{"wip", "wip-"},
+	} {
+		t.Run(tc.prefix, func(t *testing.T) {
+			workspace := setupPipelineScriptWorkspace(t)
+			initGitRepo(t, workspace, "service-a")
+			writeBranchPrefix(t, workspace, tc.prefix)
+			root := runInitPipeline(t, workspace, "prefixed")
+			repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+
+			sub := runInitPipeline(t, workspace, "prefixed", repoArgs...)
+			if want := tc.wantStart + root.PipelineID + "-service-a"; sub.Branch != want {
+				t.Fatalf("branch = %q, want %q", sub.Branch, want)
+			}
+
+			// 실행 중 설정이 바뀌어도 재진입은 만들어 둔 브랜치를 쓴다.
+			writeBranchPrefix(t, workspace, "changed")
+			if again := runInitPipeline(t, workspace, "prefixed", repoArgs...); again.Branch != sub.Branch {
+				t.Fatalf("re-entry branch = %q, want stored %q", again.Branch, sub.Branch)
+			}
+		})
+	}
+}
+
+// kislyuk yq는 문자열을 JSON으로(따옴표째) 출력한다. 따옴표는 git 참조에 허용되므로 그대로 두면 브랜치 이름에 들어간다.
+func TestInitPipelineStripsQuotesFromBranchPrefix(t *testing.T) {
+	binDir := t.TempDir()
+	fake := "#!/bin/sh\ncase \"$1\" in .git.branch_prefix) echo '\"wip/\"' ;; *) echo null ;; esac\n"
+	if err := os.WriteFile(filepath.Join(binDir, "yq"), []byte(fake), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	workspace := setupPipelineScriptWorkspace(t)
+	initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "quoted")
+	sub := runInitPipeline(t, workspace, "quoted", "--git-root", "service-a", "--pipeline-dir", root.PipelineDir)
+	if want := "wip/" + root.PipelineID + "-service-a"; sub.Branch != want {
+		t.Fatalf("branch = %q, want %q", sub.Branch, want)
+	}
+}
+
+// 동료가 쓰는 이름을 받으면 push가 그 브랜치에 커밋을 얹는다. fetch하지 않은 브랜치도 막아야 한다.
+func TestInitPipelineRefusesNamedBranchOnOrigin(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runPipelineGit(t, repo, "init", "--bare", origin)
+	runPipelineGit(t, repo, "remote", "add", "origin", origin)
+	runPipelineGit(t, repo, "push", "origin", "main:refs/heads/feature/colleague")
+	root := runInitPipeline(t, workspace, "colleague")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+
+	output := runInitPipelineFailure(t, workspace, append(repoArgs, "--branch", "feature/colleague")...)
+	if !strings.Contains(output, "branch already exists") {
+		t.Fatalf("name on origin: %s", output)
+	}
+	assertBranchMissing(t, repo, "feature/colleague")
+
+	if sub := runInitPipeline(t, workspace, "colleague", append(repoArgs, "--branch", "feature/mine")...); sub.Branch != "feature/mine" {
+		t.Fatalf("free name = %q", sub.Branch)
+	}
+}
+
+// 확인할 수 없으면 쓰지 않는다. run id가 든 기본 이름은 겹칠 수 없으므로 네트워크 없이 예전처럼 동작한다.
+func TestInitPipelineRefusesNamedBranchWhenOriginUnreachable(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	runPipelineGit(t, repo, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing.git"))
+	root := runInitPipeline(t, workspace, "offline")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+
+	runInitPipelineFailure(t, workspace, append(repoArgs, "--branch", "feature/offline")...)
+	assertBranchMissing(t, repo, "feature/offline")
+
+	sub := runInitPipeline(t, workspace, "offline", repoArgs...)
+	if want := "task-" + root.PipelineID + "-service-a"; sub.Branch != want {
+		t.Fatalf("default branch = %q, want %q", sub.Branch, want)
+	}
+}
+
+// sub status는 root 등록보다 먼저 쓰인다. 등록만 남았는데 새 이름으로 시작하면 원래 브랜치가 run에서 떨어져 나간다.
+func TestInitPipelineRefusesRegisteredRepoWithoutStatus(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "lost status")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+	sub := runInitPipeline(t, workspace, "lost status", append(repoArgs, "--branch", "feature/first")...)
+	if err := os.Remove(filepath.Join(sub.PipelineDir, "status.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	output := runInitPipelineFailure(t, workspace, append(repoArgs, "--branch", "feature/second")...)
+	if !strings.Contains(output, "branch ownership mismatch") {
+		t.Fatalf("registered repo without status: %s", output)
+	}
+	assertBranchMissing(t, repo, "feature/second")
+}
+
+func TestInitPipelineRefusesProtectedBranchOnResume(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "resume main")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+	sub := runInitPipeline(t, workspace, "resume main", append(repoArgs, "--branch", "feature/x")...)
+
+	writeJSONField(t, filepath.Join(sub.PipelineDir, "status.json"), "branch", "main")
+	writeJSONField(t, filepath.Join(root.PipelineDir, "status.json"), "sub_pipelines", []any{})
+
+	runInitPipelineFailure(t, workspace, repoArgs...)
+	assertCurrentBranch(t, repo, "feature/x")
 }
 
 // 검증은 깨끗한 트리의 HEAD만 기록하므로 run도 깨끗하게 시작해야 한다. .pylon/과 에이전트 워크트리는 프로젝트 변경이 아니다.
@@ -243,26 +448,7 @@ func TestCleanupPipelineKeepsDirtyRunWorktrees(t *testing.T) {
 	if _, err := history.NewManager(workspace).Checkpoint(root.PipelineID, history.PhaseCompleted); err != nil {
 		t.Fatal(err)
 	}
-	binDir := filepath.Join(workspace, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	build := exec.Command("go", "build", "-o", filepath.Join(binDir, "pylon"), "./cmd/pylon")
-	build.Dir = repoRoot
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build pylon: %v\n%s", err, output)
-	}
-	cmd := exec.Command(filepath.Join(layout.ScriptsDir(workspace), "cleanup-pipeline.sh"), sub.PipelineDir, "--terminal-phase", "completed")
-	cmd.Dir = workspace
-	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("cleanup failed: %v\n%s", err, output)
-	}
+	output := runCleanupPipeline(t, workspace, sub.PipelineDir)
 	if got, err := os.ReadFile(filepath.Join(dirty, "scratch.txt")); err != nil || string(got) != "wip\n" {
 		t.Errorf("dirty worktree must be kept: %q, %v\n%s", got, err, output)
 	}
@@ -271,6 +457,36 @@ func TestCleanupPipelineKeepsDirtyRunWorktrees(t *testing.T) {
 	}
 	if _, err := os.Stat(clean); !os.IsNotExist(err) {
 		t.Errorf("clean worktree must be removed: %v\n%s", err, output)
+	}
+}
+
+// --branch로 정한 이름에는 run id가 없어 `<이름>--*`가 사용자 브랜치일 수 있다 — 정리가 지우면 커밋을 잃는다.
+func TestCleanupPipelineKeepsUserBranchesBesideNamedBranch(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, base := initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "user branches")
+	sub := runInitPipeline(t, workspace, "user branches", "--git-root", "service-a", "--pipeline-dir", root.PipelineDir, "--branch", "feature/login")
+
+	userBranch := "feature/login--wip"
+	userWorktree := filepath.Join(workspace, "wt-user")
+	runPipelineGit(t, repo, "worktree", "add", "-b", userBranch, userWorktree, base)
+	// 같은 이름의 워크트리도 사람이 다시 만든 브랜치일 수 있다. git worktree remove는 무시된 파일을 지우므로 건드리지 않는다.
+	runPipelineGit(t, repo, "checkout", "main")
+	sameName := filepath.Join(workspace, "wt-same-name")
+	runPipelineGit(t, repo, "worktree", "add", sameName, "feature/login")
+	if _, err := history.NewManager(workspace).Checkpoint(root.PipelineID, history.PhaseCompleted); err != nil {
+		t.Fatal(err)
+	}
+
+	output := runCleanupPipeline(t, workspace, sub.PipelineDir)
+	assertBranchExists(t, repo, userBranch)
+	for _, kept := range []string{userWorktree, sameName} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("worktree must be kept: %v\n%s", err, output)
+		}
+	}
+	if !strings.Contains(string(output), "wt-same-name") {
+		t.Errorf("kept worktree must be reported: %s", output)
 	}
 }
 
@@ -409,6 +625,63 @@ func runInitPipeline(t *testing.T, workspace, requirement string, args ...string
 		t.Fatalf("init-pipeline output is not JSON: %v\n%s", err, output)
 	}
 	return result
+}
+
+func runInitPipelineFailure(t *testing.T, workspace string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(filepath.Join(layout.ScriptsDir(workspace), "init-pipeline.sh"), append([]string{"run"}, args...)...)
+	cmd.Dir = workspace
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("init-pipeline accepted %q: %s", args, output)
+	}
+	return string(output)
+}
+
+func writeBranchPrefix(t *testing.T, workspace, prefix string) {
+	t.Helper()
+	config := "version: \"0.1\"\ngit:\n  branch_prefix: " + prefix + "\n"
+	if err := os.WriteFile(filepath.Join(workspace, ".pylon", "config.yml"), []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeJSONField(t *testing.T, path, field string, value any) {
+	t.Helper()
+	status := readJSONMap(t, path)
+	status[field] = value
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runCleanupPipeline(t *testing.T, workspace, pipelineDir string) []byte {
+	t.Helper()
+	binDir := filepath.Join(workspace, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-o", filepath.Join(binDir, "pylon"), "./cmd/pylon")
+	build.Dir = repoRoot
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build pylon: %v\n%s", err, output)
+	}
+	cmd := exec.Command(filepath.Join(layout.ScriptsDir(workspace), "cleanup-pipeline.sh"), pipelineDir, "--terminal-phase", "completed")
+	cmd.Dir = workspace
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cleanup failed: %v\n%s", err, output)
+	}
+	return output
 }
 
 func readJSONMap(t *testing.T, path string) map[string]any {

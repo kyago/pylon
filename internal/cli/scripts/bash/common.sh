@@ -46,7 +46,9 @@ require_cmd() {
 # Returns 0 if the given branch name is a protected branch
 readonly PROTECTED_BRANCHES=("main" "master" "develop" "dev")
 is_protected_branch() {
-  local branch="$1"
+  # 대소문자를 구분하지 않는 파일시스템에서는 Main도 main을 가리킬 수 있다.
+  local branch
+  branch=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
   for protected in "${PROTECTED_BRANCHES[@]}"; do
     [[ "$branch" == "$protected" ]] && return 0
   done
@@ -75,6 +77,9 @@ config_get() {
   if command -v yq &>/dev/null; then
     value=$(yq ".$key" "$CONFIG_FILE" 2>/dev/null)
     [[ "$value" == "null" ]] && value=""
+    # kislyuk yq는 문자열을 JSON으로(따옴표째) 출력한다.
+    value="${value#\"}"
+    value="${value%\"}"
   elif command -v python3 &>/dev/null; then
     value=$(PYLON_CONFIG="$CONFIG_FILE" PYLON_KEY="$key" python3 -c "
 import os, sys
@@ -85,7 +90,7 @@ try:
     val = cfg
     for k in os.environ['PYLON_KEY'].split('.'):
         val = val.get(k) if isinstance(val, dict) else None
-    print('' if val is None else str(val).lower(), end='')
+    print('' if val is None else str(val).lower() if isinstance(val, bool) else str(val), end='')
 except Exception:
     pass
 " 2>/dev/null)

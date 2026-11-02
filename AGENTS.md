@@ -157,6 +157,27 @@ The verdict must not depend on how the workspace path is spelled (symlink, case,
 when a worktree counted as a project, repairing a worktree whose main checkout `uninstall --remove-projects` removed,
 and worktrees whose main checkout is nested deeper. A review finding outside these rules is a known limit, not a bug.
 
+### Work branch naming contract (`init-pipeline.sh`, `cleanup-pipeline.sh`)
+
+A repo sub-pipeline's branch is named once, when it starts: `--branch <name>` (the root session's reading of the
+user's naming rules, `/pl:pipeline` Step 3B) > `git.branch_prefix` > `task`. With neither a rule nor a config, the
+name stays `task-<run-id>-<repo-id>` and init touches no network. Only a name containing the run id proves the run
+owns it; a `--branch` name may also be a person's. Two things must never happen, and changes here are judged against them:
+
+1. **A user's work lost.** Scripts delete a branch or remove a worktree by name only when the name contains the run
+   id. Worktrees on a name without it stay and are reported as `kept`, and branches beside such a name stay.
+   `/pl:cleanup` deletes the run's branch only when its merge check passes or it has no commits past `base_revision`,
+   so no unmerged commit is lost.
+2. **A run works on a branch it did not create.** A new name is refused when it is not a valid branch name, is
+   protected (any case), resolves to anything in the repo, or the root run already registered this repo. A `--branch`
+   name is also refused when `origin` has it or cannot be asked. Re-entry keeps the recorded name and refuses a
+   protected one, a mismatch with the root registry, or a different `--branch`.
+
+Non-goals: enforcing that the session followed the rules; `git.branch_prefix` when neither yq nor PyYAML is available;
+agent branches left beside a name without the run id; a name deleted and recreated while its run is still open, including by
+another run; a same name pushed to `origin` after init; case-only collisions with non-protected branches. A review
+finding outside these rules is a known limit, not a bug.
+
 ### Package layout
 
 - `cmd/pylon/main.go` — entry point; sets version, calls `cli.Execute()`.

@@ -452,7 +452,7 @@ routing:
   require_resume_for_background: true
 
 git:
-  branch_prefix: task          # 작업 브랜치 접두사
+  branch_prefix: task          # 작업 브랜치 접두사 — 사용자 명명 규칙이 없을 때만 씀 (feature/처럼 /로 끝나면 구분자 없이 이어짐)
   default_base: main           # 기본 베이스 브랜치
   auto_push: true              # 자동 푸시
   worktree:
@@ -484,9 +484,14 @@ skills:
 기존 `runtime.backend`와 agent frontmatter의 `backend`는 deprecated alias로 읽으며, `provider`가 함께 있으면
 `provider`가 우선합니다. `pylon doctor`는 `config.yml`의 `runtime.backend`를 `runtime.provider`로 바꿔 씁니다.
 
-`runtime.execution_mode`, `routing`, `wiki`, `workflow`, `git.branch_prefix`, `git.auto_push`, `git.worktree`,
+`runtime.execution_mode`, `routing`, `wiki`, `workflow`, `git.auto_push`, `git.worktree`,
 `git.pr.draft`/`reviewers`는 스키마와 기본값만 있고
-현재 이를 읽는 코드가 없습니다 (작업 브랜치는 `task-<pipeline-id>-<repo-id>`, base는 초기화 시점의 현재 브랜치).
+현재 이를 읽는 코드가 없습니다 (base는 초기화 시점의 현재 브랜치).
+
+작업 브랜치 이름은 `/pl:pipeline`이 repo의 `CLAUDE.md`·`AGENTS.md`·`CONTRIBUTING.md`, 그다음 워크스페이스 `AGENTS.md`와
+사용자 지침에서 찾은 명명 규칙을 먼저 따릅니다. 규칙이 없으면 `git.branch_prefix`로 `<접두사>-<pipeline-id>-<repo-id>`를
+만듭니다(`feature/`처럼 `/`로 끝나면 `<접두사><pipeline-id>-<repo-id>`, 기본은 `task-<pipeline-id>-<repo-id>`).
+접두사를 읽으려면 `yq` 또는 PyYAML이 필요합니다. `python3`만 있고 PyYAML이 없으면 기본 접두사를 씁니다.
 
 `runtime`의 `effort`/`model`/`env`(비어 있으면 provider 기본값)를 제외한 모든 설정에는 기본값이 있으므로 `version` 필드만 필수입니다. 위 예시는 전체 필드와 기본값을 보여주며,
 명시하지 않은 필드는 로드 시 코드 기본값으로 자동 채워집니다. `pylon init`이 처음 생성하는 `config.yml`은

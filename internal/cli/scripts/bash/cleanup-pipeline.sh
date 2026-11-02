@@ -73,23 +73,30 @@ if [[ "$SCOPE" == "repo" ]]; then
   resolve_git_root "${GIT_ROOT_ARG:-$REPO}"
   git -C "$GIT_ROOT" rev-parse --git-dir &>/dev/null || die "repo is not a git repository: $REPO"
 
+  # 이름에 run id가 있어야 이 run의 것으로 확신한다. --branch로 정한 이름은 사람이 같은 이름으로 다시 만들었거나 옆에 만든 브랜치일 수 있다.
+  is_run_branch() {
+    [[ "$BRANCH" == *"$ROOT_PIPELINE_ID"* && ( "$1" == "$BRANCH" || "$1" == "$BRANCH/"* || "$1" == "$BRANCH--"* ) ]]
+  }
+
   # detached 워크트리는 branch 줄이 없으므로 grep 실패를 허용한다. 미커밋·추적 안 된 파일이 있는
   # 워크트리는 git이 제거를 거부하므로(--force 없음) 남기고 kept로 보고한다.
   while IFS= read -r wt; do
     [[ -z "$wt" ]] && continue
     wt_branch=$(git -C "$GIT_ROOT" worktree list --porcelain | grep -A2 "^worktree ${wt}$" | grep "^branch " | sed 's|^branch refs/heads/||' || true)
-    if [[ "$wt_branch" == "$BRANCH" || "$wt_branch" == "$BRANCH/"* || "$wt_branch" == "$BRANCH--"* ]]; then
+    if is_run_branch "$wt_branch"; then
       if git -C "$GIT_ROOT" worktree remove "$wt" 2>/dev/null; then
         CLEANED+=("worktree:$wt")
       else
         KEPT+=("worktree:$wt")
       fi
+    elif [[ "$wt_branch" == "$BRANCH" ]]; then
+      KEPT+=("worktree:$wt")
     fi
   done < <(git -C "$GIT_ROOT" worktree list --porcelain | grep "^worktree " | sed 's/^worktree //')
 
   # Delete agent sub-branches
   while IFS= read -r b; do
-    if [[ -n "$b" && ( "$b" == "$BRANCH/"* || "$b" == "$BRANCH--"* ) ]]; then
+    if is_run_branch "$b"; then
       git -C "$GIT_ROOT" branch -D "$b" 2>/dev/null && CLEANED+=("branch:$b")
     fi
   done < <({

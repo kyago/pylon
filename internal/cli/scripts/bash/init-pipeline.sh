@@ -5,12 +5,13 @@ source "$(dirname "$0")/common.sh"
 
 GIT_ROOT_ARG=$(extract_arg "git-root" "$@")
 PIPELINE_DIR_ARG=$(extract_arg "pipeline-dir" "$@")
+BRANCH_ARG=$(extract_arg "branch" "$@")
 resolve_git_root "$GIT_ROOT_ARG"
 cd "$GIT_ROOT" || die "GIT_ROOT로 이동 실패: $GIT_ROOT"
 
 require_cmd git jq
 
-REQUIREMENT="${1:?Usage: init-pipeline.sh <requirement> [--git-root <repo-rel-path>] [--pipeline-dir <root-pipeline-dir>]}"
+REQUIREMENT="${1:?Usage: init-pipeline.sh <requirement> [--git-root <repo-rel-path>] [--pipeline-dir <root-pipeline-dir>] [--branch <name>]}"
 
 # Generate a locale-independent slug from requirement.
 SLUG=$(printf '%s\n' "$REQUIREMENT" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-30 | sed 's/-$//')
@@ -36,7 +37,6 @@ if [[ -n "$GIT_ROOT_ARG" && -n "$PIPELINE_DIR_ARG" ]]; then
   SUB_PIPELINE_DIR="${PIPELINE_DIR_ARG}/repos/${REPO_ID}"
   mkdir -p "$SUB_PIPELINE_DIR"
   ROOT_PIPELINE_ID=$(jq -r --arg fallback "$(basename "$PIPELINE_DIR_ARG")" '.pipeline_id // $fallback' "$ROOT_STATUS")
-  EXPECTED_BRANCH="task-${ROOT_PIPELINE_ID}-${REPO_ID}"
 
   # Create or checkout branch in target repo
   # 검증은 깨끗한 작업 트리의 HEAD만 기록하므로 run도 깨끗하게 시작한다 — 이후 남는 파일은 모두 이 run의 것이다.
@@ -46,25 +46,46 @@ if [[ -n "$GIT_ROOT_ARG" && -n "$PIPELINE_DIR_ARG" ]]; then
     die "$GIT_ROOT_ARG 에 커밋되지 않은 변경·추적 안 된 파일이 있습니다. commit, 'git stash -u', 또는 .git/info/exclude 추가 후 다시 실행하세요 (pylon이 실행 시 만든 .gitignore라면 커밋하세요):
 $UNCOMMITTED"
   fi
+  # sub status는 root 등록보다 먼저 쓰이므로, 등록이 없으면 등록 전에 죽은 run이고 sub status가 없으면 새 run이다.
+  REGISTERED_BRANCH=$(jq -r --arg id "$REPO_ID" '.sub_pipelines[]? | select(.repo_id == $id) | .branch' "$ROOT_STATUS")
   if [[ -f "$SUB_PIPELINE_DIR/status.json" ]]; then
     STORED_REPO=$(jq -r '.repo // ""' "$SUB_PIPELINE_DIR/status.json")
     [[ "$STORED_REPO" == "$REPO_RELATIVE" ]] || die "sub-pipeline repo ownership mismatch: $SUB_PIPELINE_DIR"
     STORED_ROOT_PIPELINE_ID=$(jq -r '.root_pipeline_id // ""' "$SUB_PIPELINE_DIR/status.json")
     [[ "$STORED_ROOT_PIPELINE_ID" == "$ROOT_PIPELINE_ID" ]] || die "sub-pipeline root ownership mismatch: $SUB_PIPELINE_DIR"
     BRANCH=$(jq -r '.branch // ""' "$SUB_PIPELINE_DIR/status.json")
-    [[ "$BRANCH" == "$EXPECTED_BRANCH" ]] || die "sub-pipeline branch ownership mismatch: expected '$EXPECTED_BRANCH', found '$BRANCH'"
+    # 이름은 run을 시작할 때 정해지므로 설정·인자로 다시 만들지 않고 root 등록과 대조한다.
+    [[ -z "$REGISTERED_BRANCH" || "$BRANCH" == "$REGISTERED_BRANCH" ]] \
+      || die "sub-pipeline branch ownership mismatch: registered '$REGISTERED_BRANCH', found '$BRANCH'"
+    [[ -z "$BRANCH_ARG" || "$BRANCH" == "$BRANCH_ARG" ]] \
+      || die "sub-pipeline branch ownership mismatch: run owns '$BRANCH', --branch requested '$BRANCH_ARG'"
     BASE_REVISION=$(jq -r '.base_revision // ""' "$SUB_PIPELINE_DIR/status.json")
     BASE_BRANCH=$(jq -r '.base_branch // ""' "$SUB_PIPELINE_DIR/status.json")
     STARTED_AT=$(jq -r '.started_at // ""' "$SUB_PIPELINE_DIR/status.json")
   else
-    BRANCH="$EXPECTED_BRANCH"
+    [[ -z "$REGISTERED_BRANCH" ]] \
+      || die "sub-pipeline branch ownership mismatch: registered '$REGISTERED_BRANCH', but status is missing: $SUB_PIPELINE_DIR"
+    # --branch(세션이 사용자 규칙으로 정한 이름) > git.branch_prefix > task. 접두사가 /로 끝나면 구분자 없이 잇는다.
+    # shortcut: yq·PyYAML이 모두 없으면 config_get이 빈 값을 돌려 기본 접두사가 쓰인다, 그런 환경이 보고되면 pylon이 값을 넘기게 바꾼다.
+    BRANCH_PREFIX=$(config_get "git.branch_prefix" "task")
+    [[ "$BRANCH_PREFIX" == */ ]] || BRANCH_PREFIX="${BRANCH_PREFIX}-"
+    BRANCH="${BRANCH_ARG:-${BRANCH_PREFIX}${ROOT_PIPELINE_ID}-${REPO_ID}}"
+    git check-ref-format "refs/heads/$BRANCH" || die "브랜치 이름으로 쓸 수 없습니다: $BRANCH"
+    # 브랜치뿐 아니라 @, heads/main, 태그처럼 다른 대상으로 풀리는 이름도 나중에 그 대상을 가리키므로 쓰지 않는다.
+    ! git -C "$GIT_ROOT" rev-parse --verify --quiet "$BRANCH^{object}" >/dev/null || die "branch already exists or resolves to another ref: $BRANCH"
+    # --branch 이름은 동료의 원격 브랜치와 겹칠 수 있고, 겹치면 push가 그 브랜치에 커밋을 얹는다. 확인하지 못하면 쓰지 않는다.
+    if [[ -n "$BRANCH_ARG" ]] && git -C "$GIT_ROOT" remote get-url origin &>/dev/null; then
+      REMOTE_BRANCH=$(git -C "$GIT_ROOT" ls-remote --heads origin "refs/heads/$BRANCH") \
+        || die "origin에서 브랜치 이름을 확인하지 못했습니다: $BRANCH"
+      [[ -z "$REMOTE_BRANCH" ]] || die "branch already exists on origin: $BRANCH"
+    fi
     BASE_REVISION=$(git -C "$GIT_ROOT" rev-parse HEAD)
     BASE_BRANCH=$(git -C "$GIT_ROOT" branch --show-current)
     STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   fi
+  ! is_protected_branch "$BRANCH" || die "protected branch는 작업 브랜치로 쓸 수 없습니다: $BRANCH"
   [[ -n "$BASE_REVISION" ]] || die "sub-pipeline base revision is missing: $SUB_PIPELINE_DIR"
   if git -C "$GIT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-    [[ -f "$SUB_PIPELINE_DIR/status.json" ]] || die "branch already exists without sub-pipeline ownership: $BRANCH"
     git -C "$GIT_ROOT" merge-base --is-ancestor "$BASE_REVISION" "$BRANCH" \
       || die "owned branch no longer descends from recorded base revision: $BRANCH ($BASE_REVISION)"
     git -C "$GIT_ROOT" checkout "$BRANCH" || die "브랜치 전환 실패: $BRANCH"
@@ -138,6 +159,8 @@ fi
 if [[ -n "$GIT_ROOT_ARG" && -z "$PIPELINE_DIR_ARG" ]]; then
   die "--git-root requires --pipeline-dir to be specified as well"
 fi
+
+[[ -z "$BRANCH_ARG" ]] || die "--branch는 --git-root, --pipeline-dir와 함께만 쓸 수 있습니다 (root pipeline은 브랜치를 소유하지 않습니다)"
 
 # --- Root mode: no --git-root ---
 # Step 1: PIPELINE_DIR + status.json initialization only. No branch creation.
