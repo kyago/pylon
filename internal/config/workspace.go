@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -55,9 +56,20 @@ func FindWorkspaceRoot(startDir string) (string, error) {
 
 // DiscoverProjects scans the workspace root for project directories.
 // A project is identified as a subdirectory containing its own .pylon/ directory
-// or being added as a standalone git clone in the workspace.
+// or being added as a standalone git clone in the workspace. Worktrees of a checkout
+// in this workspace are not projects (see IsWorkspaceWorktree).
 // Spec Reference: Section 4 "Workspace Structure"
 func DiscoverProjects(root string) ([]ProjectInfo, error) {
+	return scanPylonDirs(root, false)
+}
+
+// DiscoverWorktrees returns the subdirectories with a .pylon/ directory that
+// DiscoverProjects leaves out as workspace worktrees.
+func DiscoverWorktrees(root string) ([]ProjectInfo, error) {
+	return scanPylonDirs(root, true)
+}
+
+func scanPylonDirs(root string, worktrees bool) ([]ProjectInfo, error) {
 	var projects []ProjectInfo
 
 	entries, err := os.ReadDir(root)
@@ -77,6 +89,9 @@ func DiscoverProjects(root string) ([]ProjectInfo, error) {
 		}
 
 		projectDir := filepath.Join(root, name)
+		if IsWorkspaceWorktree(root, projectDir) != worktrees {
+			continue
+		}
 
 		// Check if directory has its own .pylon/ (project-level config)
 		projectPylonDir := filepath.Join(projectDir, ".pylon")
@@ -89,4 +104,61 @@ func DiscoverProjects(root string) ([]ProjectInfo, error) {
 	}
 
 	return projects, nil
+}
+
+// IsWorkspaceWorktree reports whether dir is a linked git worktree whose main checkout
+// is the workspace root or a non-hidden direct subdirectory, per the discovery contract
+// in AGENTS.md. Anything uncertain reports false, so a real project never disappears.
+// shortcut: a worktree whose main repository moved has no git dir to inspect and reports
+// false, fix it with `git worktree repair`.
+func IsWorkspaceWorktree(root, dir string) bool {
+	// Resolved first: git follows symlinks, while filepath.Join cleans ".." textually.
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(realDir, ".git"))
+	if err != nil {
+		return false
+	}
+	gitDir, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir: ")
+	if !ok {
+		return false
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(realDir, gitDir)
+	}
+	// Only linked worktrees have commondir; a submodule's git dir does not.
+	data, err = os.ReadFile(filepath.Join(gitDir, "commondir"))
+	if err != nil {
+		return false
+	}
+	commonDir := strings.TrimSpace(string(data))
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(gitDir, commonDir)
+	}
+	commonDir, err = filepath.EvalSymlinks(commonDir)
+	if err != nil || filepath.Base(commonDir) != ".git" {
+		return false
+	}
+	// Read as config, not rev-parse: GIT_WORK_TREE in the caller's environment changes its answer.
+	out, err := exec.Command("git", "--git-dir", commonDir, "config", "--get-regexp", `^core\.(bare|worktree)$`).Output()
+	if err != nil || strings.TrimSpace(string(out)) != "core.bare false" {
+		return false
+	}
+	// os.SameFile: path spelling differs in case and normalization on APFS.
+	mainDir := filepath.Dir(commonDir)
+	if sameDir(mainDir, root) {
+		return true
+	}
+	return !strings.HasPrefix(filepath.Base(mainDir), ".") && sameDir(filepath.Dir(mainDir), root)
+}
+
+func sameDir(a, b string) bool {
+	aInfo, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bInfo, err := os.Stat(b)
+	return err == nil && os.SameFile(aInfo, bInfo)
 }

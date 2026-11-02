@@ -348,6 +348,9 @@ func hintUnscaffoldedProjects(root string, projects []config.ProjectInfo) {
 		if _, err := os.Stat(filepath.Join(root, name, ".git")); err != nil {
 			continue
 		}
+		if config.IsWorkspaceWorktree(root, filepath.Join(root, name)) {
+			continue
+		}
 		fmt.Printf("ℹ %s: .pylon/ 미초기화 git 프로젝트 — pylon add-project %s --skip-clone 으로 초기화하세요\n", name, name)
 	}
 }
