@@ -89,15 +89,18 @@ PR은 이 repo sub-pipeline만 소유합니다.
 
 규칙이 설명 부분을 요구하면 Step 1의 `$TITLE`을 쓰고, 이슈 번호처럼 요구사항에 없는 값이 필요하면 지어내지 말고 사용자에게
 묻습니다. 규칙이 없으면 `branch`를 적지 않습니다 — 스크립트가 `.pylon/config.yml`의 `git.branch_prefix`(기본 `task`)로
-`<접두사>-<run-id>-<repo-id>`를 만듭니다(`feature/`처럼 `/`로 끝나면 `<접두사><run-id>-<repo-id>`). 이미 있는 브랜치는
-재사용하지 않습니다. `branch already exists` 오류가 나면 다른 이름을 정하거나 사용자에게 묻습니다.
+`<접두사>-<run-id>-<repo-id>`를 만듭니다(`feature/`처럼 `/`로 끝나면 `<접두사><run-id>-<repo-id>`).
+
+이미 있는 브랜치는 로컬이든 origin이든 재사용하지 않습니다. 이름이 거부되면 반복문이 멈춥니다. `branch already exists`면
+`repos.json`의 이름을 고치거나 사용자에게 묻고, origin을 확인하지 못했다면 사용자에게 묻습니다. 고친 뒤 반복문을 처음부터
+다시 실행합니다. 이미 초기화한 repo는 기록된 브랜치로 그대로 이어집니다.
 
 ```bash
 jq -r '.repos[] | [.path, .branch // ""] | @tsv' "$ROOT_PIPELINE_DIR/repos.json" | while IFS=$'\t' read -r REPO REPO_BRANCH; do
   SUB_RESULT=$(.pylon/builtin/scripts/bash/init-pipeline.sh "$PIPELINE_ID" \
     --git-root "$REPO" \
     --pipeline-dir "$ROOT_PIPELINE_DIR" \
-    --branch "$REPO_BRANCH")
+    --branch "$REPO_BRANCH") || exit 1
   REPO_ID=$(echo "$SUB_RESULT" | jq -r '.repo_id')
   BASE_REVISION=$(echo "$SUB_RESULT" | jq -r '.base_revision')
   REPO_PIPELINE_DIR=$(echo "$SUB_RESULT" | jq -r '.pipeline_dir')

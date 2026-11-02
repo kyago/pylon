@@ -185,10 +185,11 @@ func TestInitPipelineRejectsUnusableBranchNames(t *testing.T) {
 	runPipelineGit(t, repo, "checkout", "-b", "previous")
 	runPipelineGit(t, repo, "checkout", "main")
 	runPipelineGit(t, repo, "branch", "-D", "previous")
+	runPipelineGit(t, repo, "tag", "v1")
 	root := runInitPipeline(t, workspace, "bad names")
 	before := runPipelineGit(t, repo, "for-each-ref", "refs/heads")
 
-	for _, name := range []string{"-x", "-", "a..b", "@{-1}", "bad name", "main", "develop", "taken"} {
+	for _, name := range []string{"-x", "-", "a..b", "@{-1}", "@", "heads/main", "refs/heads/main", "v1", "bad name", "main", "develop", "DEVELOP", "taken"} {
 		runInitPipelineFailure(t, workspace, "--git-root", "service-a", "--pipeline-dir", root.PipelineDir, "--branch", name)
 		if after := runPipelineGit(t, repo, "for-each-ref", "refs/heads"); after != before {
 			t.Fatalf("--branch %q changed branches:\n%s", name, after)
@@ -250,6 +251,77 @@ func TestInitPipelineStripsQuotesFromBranchPrefix(t *testing.T) {
 	if want := "wip/" + root.PipelineID + "-service-a"; sub.Branch != want {
 		t.Fatalf("branch = %q, want %q", sub.Branch, want)
 	}
+}
+
+// 동료가 쓰는 이름을 받으면 push가 그 브랜치에 커밋을 얹는다. fetch하지 않은 브랜치도 막아야 한다.
+func TestInitPipelineRefusesNamedBranchOnOrigin(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	runPipelineGit(t, repo, "init", "--bare", origin)
+	runPipelineGit(t, repo, "remote", "add", "origin", origin)
+	runPipelineGit(t, repo, "push", "origin", "main:refs/heads/feature/colleague")
+	root := runInitPipeline(t, workspace, "colleague")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+
+	output := runInitPipelineFailure(t, workspace, append(repoArgs, "--branch", "feature/colleague")...)
+	if !strings.Contains(output, "branch already exists") {
+		t.Fatalf("name on origin: %s", output)
+	}
+	assertBranchMissing(t, repo, "feature/colleague")
+
+	if sub := runInitPipeline(t, workspace, "colleague", append(repoArgs, "--branch", "feature/mine")...); sub.Branch != "feature/mine" {
+		t.Fatalf("free name = %q", sub.Branch)
+	}
+}
+
+// 확인할 수 없으면 쓰지 않는다. run id가 든 기본 이름은 겹칠 수 없으므로 네트워크 없이 예전처럼 동작한다.
+func TestInitPipelineRefusesNamedBranchWhenOriginUnreachable(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	runPipelineGit(t, repo, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing.git"))
+	root := runInitPipeline(t, workspace, "offline")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+
+	runInitPipelineFailure(t, workspace, append(repoArgs, "--branch", "feature/offline")...)
+	assertBranchMissing(t, repo, "feature/offline")
+
+	sub := runInitPipeline(t, workspace, "offline", repoArgs...)
+	if want := "task-" + root.PipelineID + "-service-a"; sub.Branch != want {
+		t.Fatalf("default branch = %q, want %q", sub.Branch, want)
+	}
+}
+
+// sub status는 root 등록보다 먼저 쓰인다. 등록만 남았는데 새 이름으로 시작하면 원래 브랜치가 run에서 떨어져 나간다.
+func TestInitPipelineRefusesRegisteredRepoWithoutStatus(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "lost status")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+	sub := runInitPipeline(t, workspace, "lost status", append(repoArgs, "--branch", "feature/first")...)
+	if err := os.Remove(filepath.Join(sub.PipelineDir, "status.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	output := runInitPipelineFailure(t, workspace, append(repoArgs, "--branch", "feature/second")...)
+	if !strings.Contains(output, "branch ownership mismatch") {
+		t.Fatalf("registered repo without status: %s", output)
+	}
+	assertBranchMissing(t, repo, "feature/second")
+}
+
+func TestInitPipelineRefusesProtectedBranchOnResume(t *testing.T) {
+	workspace := setupPipelineScriptWorkspace(t)
+	repo, _ := initGitRepo(t, workspace, "service-a")
+	root := runInitPipeline(t, workspace, "resume main")
+	repoArgs := []string{"--git-root", "service-a", "--pipeline-dir", root.PipelineDir}
+	sub := runInitPipeline(t, workspace, "resume main", append(repoArgs, "--branch", "feature/x")...)
+
+	writeJSONField(t, filepath.Join(sub.PipelineDir, "status.json"), "branch", "main")
+	writeJSONField(t, filepath.Join(root.PipelineDir, "status.json"), "sub_pipelines", []any{})
+
+	runInitPipelineFailure(t, workspace, repoArgs...)
+	assertCurrentBranch(t, repo, "feature/x")
 }
 
 // 검증은 깨끗한 트리의 HEAD만 기록하므로 run도 깨끗하게 시작해야 한다. .pylon/과 에이전트 워크트리는 프로젝트 변경이 아니다.
@@ -397,14 +469,23 @@ func TestCleanupPipelineKeepsUserBranchesBesideNamedBranch(t *testing.T) {
 	userBranch := "feature/login--wip"
 	userWorktree := filepath.Join(workspace, "wt-user")
 	runPipelineGit(t, repo, "worktree", "add", "-b", userBranch, userWorktree, base)
+	// 같은 이름의 워크트리도 사람이 다시 만든 브랜치일 수 있다. git worktree remove는 무시된 파일을 지우므로 건드리지 않는다.
+	runPipelineGit(t, repo, "checkout", "main")
+	sameName := filepath.Join(workspace, "wt-same-name")
+	runPipelineGit(t, repo, "worktree", "add", sameName, "feature/login")
 	if _, err := history.NewManager(workspace).Checkpoint(root.PipelineID, history.PhaseCompleted); err != nil {
 		t.Fatal(err)
 	}
 
 	output := runCleanupPipeline(t, workspace, sub.PipelineDir)
 	assertBranchExists(t, repo, userBranch)
-	if _, err := os.Stat(userWorktree); err != nil {
-		t.Errorf("user worktree must be kept: %v\n%s", err, output)
+	for _, kept := range []string{userWorktree, sameName} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("worktree must be kept: %v\n%s", err, output)
+		}
+	}
+	if !strings.Contains(string(output), "wt-same-name") {
+		t.Errorf("kept worktree must be reported: %s", output)
 	}
 }
 
@@ -560,6 +641,19 @@ func writeBranchPrefix(t *testing.T, workspace, prefix string) {
 	t.Helper()
 	config := "version: \"0.1\"\ngit:\n  branch_prefix: " + prefix + "\n"
 	if err := os.WriteFile(filepath.Join(workspace, ".pylon", "config.yml"), []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeJSONField(t *testing.T, path, field string, value any) {
+	t.Helper()
+	status := readJSONMap(t, path)
+	status[field] = value
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}
 }

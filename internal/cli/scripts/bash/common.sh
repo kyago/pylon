@@ -46,7 +46,9 @@ require_cmd() {
 # Returns 0 if the given branch name is a protected branch
 readonly PROTECTED_BRANCHES=("main" "master" "develop" "dev")
 is_protected_branch() {
-  local branch="$1"
+  # 대소문자를 구분하지 않는 파일시스템에서는 Main도 main을 가리킬 수 있다.
+  local branch
+  branch=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
   for protected in "${PROTECTED_BRANCHES[@]}"; do
     [[ "$branch" == "$protected" ]] && return 0
   done
