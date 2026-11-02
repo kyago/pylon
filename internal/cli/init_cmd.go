@@ -213,7 +213,7 @@ runtime:
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
 	fmt.Println("  2. Add projects: pylon add-project <name>")
-	fmt.Println("  3. Start working: run 'pylon', then use /pl:pipeline")
+	fmt.Println("  3. Start working: run 'pylon', or open the workspace in Paseo")
 
 	return nil
 }

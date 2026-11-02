@@ -32,14 +32,15 @@
 - 도메인 지식: `.pylon/domain/overview.md`, `practices.md`, `glossary.md`,
   `<project>/.pylon/context.md`.
 
-## 파이프라인
+## 작업 진행 방식
 
-요구사항 분석 → 아키텍처 → 태스크 분해 → 구현 → 검증 → PR·머지 → `pl-cleanup`(메모리·도메인 지식 갱신, 정리)
-
+- 기본은 대화로 직접 처리합니다. 단일 파일 수정이나 질문 답변은 그냥 처리합니다.
+- 범위가 큰 작업은 Paseo 투두 보드를 제안합니다. Paseo 세션에는 `todo_add`·`todo_start` 도구가 있고, 카드 시작은 사용자가
+  정합니다. 보드는 카드를 만든 디렉터리에서 동작하므로 git 저장소인 프로젝트 디렉터리에서 추가합니다. 워크스페이스 루트가
+  git 저장소가 아니면 격리·브랜치·PR 없이 돕니다.
+- `pl-pipeline`은 폐기 예정으로 동결됐습니다. 사용자가 명시적으로 요청할 때만 실행합니다: 요구사항 분석 → 아키텍처 →
+  태스크 분해 → 구현 → 검증 → PR·머지 → `pl-cleanup`.
 - bugfix·hotfix는 결함 재현(수정 전 실패하는 테스트)부터 — 재현이 기대 결과를 낼 때만 수정 완료.
-
-파이프라인 전체를 돌릴지는 요구사항 규모로 판단합니다. 단일 파일 수정이나 질문 답변에
-`pl-pipeline` 전체 파이프라인을 돌리지 않습니다 — 그냥 처리합니다.
 
 ## 상태 관리
 
@@ -67,7 +68,7 @@
 
 | 커맨드 | 역할 |
 |--------|------|
-| `pl-pipeline` | 전체 파이프라인 실행 (요구사항 → 검증). 끝나면 run을 `pl-cleanup`에 넘긴다. |
+| `pl-pipeline` | **폐기 예정.** 사용자가 요청할 때만 전체 파이프라인 실행 (요구사항 → 검증). 끝나면 run을 `pl-cleanup`에 넘긴다. |
 | `pl-cleanup` | 세션 마무리 — 파이프라인 사용 여부와 무관. 검증 근거, 메모리·도메인 지식 갱신, 머지된 run 마감, 머지된 브랜치·워크트리 정리. |
 | `pl-architect` | 아키텍처 분석 단독 실행 |
 | `pl-breakdown` | 태스크 분해 |
@@ -76,6 +77,8 @@
 | `pl-pr` | PR 생성 |
 | `pl-status` | 파이프라인 상태 조회 |
 | `pl-add-project` | 프로젝트를 워크스페이스에 clone하여 추가 |
+
+파이프라인 단계 커맨드(`pl-architect`, `pl-breakdown`, `pl-execute`, `pl-verify`, `pl-pr`, `pl-status`)도 함께 폐기 예정입니다.
 
 ## 위임 판단
 
@@ -116,7 +119,11 @@
 ## 검증 규약
 
 "완료"를 주장하기 전에 반드시 대상 프로젝트의 검증을 실행합니다. 검증 명령은 각
-`<project>/.pylon/verify.yml`에서 읽습니다. 실행:
+`<project>/.pylon/verify.yml`에서 읽습니다. 대화나 보드 작업에서는 직접 실행합니다:
+
+    pylon internal verify --workdir <프로젝트 또는 워크트리> --config <메인 체크아웃>/.pylon/verify.yml
+
+파이프라인 run 안에서는:
 
     .pylon/builtin/scripts/bash/run-verification.sh "$PIPELINE_DIR" --git-root <프로젝트 상대경로>
 

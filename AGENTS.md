@@ -13,6 +13,12 @@ for Codex) plus `CLAUDE.md`/`AGENTS.md`, and then **replaces its own process** w
 `syscall.Exec` (`internal/cli/launch.go`). All actual orchestration happens inside the provider session via
 `/pl:*` commands (`$pl-*` skills on Codex) and bash scripts — the Go code never runs the pipeline itself.
 
+**Direction.** pylon is mainly a personal tool. It owns workspace files, project knowledge, memory, verification
+and `/pl:cleanup`. Stage-by-stage execution is moving to the separate Paseo plugin `kyago/paseo-todo-board`.
+`/pl:pipeline` and its stage commands are frozen: no new features, fix real failures only, removal planned after a
+trial on the board. Before adding or hardening anything, check that it solves a problem actually hit and that Claude
+Code, Codex or Paseo does not already cover it.
+
 Do not confuse this file with the workspace `AGENTS.md`/`CLAUDE.md`: *this* one guides development of the
 binary; the workspace files are generated at runtime and have no effect on the binary when edited.
 

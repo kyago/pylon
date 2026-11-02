@@ -1,8 +1,12 @@
 # Pylon
 
-**요구사항은 대화로 전달하고, 구현과 검증은 AI 에이전트 팀이 수행합니다. 사람은 큰 작업의 시작, PR 생성·머지, 마무리를 맡습니다.**
+**여러 저장소를 Claude Code·Codex로 다룰 때 필요한 프로젝트 지식, 메모리, 검증, 세션 마무리를 맡는 개인용 도구입니다.**
 
-Pylon은 provider-neutral 멀티도메인 AI 오케스트레이터입니다. `pylon`을 실행하면 설정과 capability에 맞는 interactive provider adapter가 선택되고, 루트 에이전트(루트 세션)가 사용자의 요구사항을 분석하여 적절한 도메인과 전문 에이전트 팀을 오케스트레이션합니다. 기본 제공 adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
+- **잘 맞는 경우:** 한 워크스페이스에서 여러 저장소를 다루는 개인이나 소규모 팀
+- **맞지 않는 경우:** 요구사항만 주면 PR까지 자동으로 나오길 기대하는 경우, 안정적인 제품 지원이 필요한 경우
+- **현재 상태:** 제작자 개인 용도로 개발합니다. 호환성을 보장하지 않습니다.
+
+Pylon은 Go CLI입니다. 워크스페이스에 `AGENTS.md`, 에이전트, 커맨드, 메모리 훅을 준비해 두면 Claude Code나 Codex 세션이 이를 읽습니다. 단계별 실행은 [Paseo 투두 보드](https://github.com/kyago/paseo-todo-board)에 맡기는 방향으로 옮기고 있고, `/pl:pipeline`은 폐기 예정으로 동결했습니다. 기본 제공 provider adapter는 Claude Code와 Codex입니다. 파이프라인 커맨드는 Claude Code에서는 `/pl:*` 슬래시 커맨드로, Codex에서는 `.agents/skills/`에 생성되는 `$pl-*` 스킬로 노출됩니다. 설치된 provider가 하나뿐이면 그것이 primary로 자동 설정되고, 둘 이상이면 첫 실행(doctor/launch) 시 인터랙티브 선택 후 전용으로 고정됩니다.
 
 ## 요구 사항
 
@@ -128,6 +132,8 @@ Claude Code 실행 권한을 설정합니다
   bypassPermissions — 모든 권한 자동 허용
 ```
 
+Paseo를 쓰면 `pylon`을 거치지 않고 워크스페이스에서 세션을 바로 시작해도 됩니다. 이때 생성 파일 갱신은 `pylon doctor`나 `pylon update`가 맡습니다.
+
 ### 4. 요구사항 전달
 
 세션에서 자연어로 요구사항을 전달합니다. 모호한 부분은 루트 세션이 되묻습니다:
@@ -141,23 +147,19 @@ Claude Code 실행 권한을 설정합니다
   ...
 ```
 
-루트 세션은 요구사항 규모를 보고 직접 처리할지 파이프라인을 돌릴지 판단합니다. 단일 파일 수정이나 질문 답변은 파이프라인 없이 처리합니다. 큰 작업은 커맨드로 파이프라인을 바로 시작할 수 있습니다 (Codex는 `$pl-pipeline`):
+큰 작업은 [Paseo 투두 보드](https://github.com/kyago/paseo-todo-board)에 카드로 올려 계획 → 구현 → 검토 → 품질 검증을 단계별로 진행할 수 있습니다. 보드는 별도 플러그인이며, 카드는 git 저장소인 프로젝트 디렉터리에서 추가합니다.
 
-```
-> /pl:pipeline 로그인 기능 구현해줘
-```
-
-파이프라인은 슬래시 커맨드와 셸 스크립트를 조합해 분석 → 설계 → 구현 → 검증을 수행한 뒤, 결과와 남은 일을 보고합니다.
+`/pl:pipeline`은 폐기 예정입니다. 기존 방식이 필요할 때만 명시적으로 실행합니다 (Codex는 `$pl-pipeline`).
 
 ### 5. PR·머지·마무리
 
-검증이 끝나면 다음 단계는 사용자가 진행합니다. 커맨드 대신 대화로 요청해도 됩니다 (Codex는 `$pl-pr`, `$pl-cleanup`):
+검증이 끝나면 다음 단계는 사용자가 진행합니다 (Codex는 `$pl-cleanup`):
 
-1. **PR 생성**: 파이프라인 run은 `/pl:pr`, 대화로 작업한 세션은 대화로 요청합니다. `git.pr.auto_pr: true`면 파이프라인이 검증 후 직접 만듭니다.
+1. **PR 생성**: 대화로 요청합니다. 보드는 품질 검증을 통과하면 초안 PR을 만듭니다. 파이프라인 run은 `/pl:pr`을 쓰고, `git.pr.auto_pr: true`면 파이프라인이 검증 후 직접 만듭니다.
 2. **리뷰·머지**: 머지 여부는 사용자가 결정합니다.
 3. **마무리**: 머지 후 `/pl:cleanup`. 메모리·도메인 지식을 갱신하고 run을 마감한 뒤, 머지된 브랜치·워크트리를 정리합니다.
 
-파이프라인 없이 대화로 작업한 세션도 `/pl:cleanup`으로 끝냅니다.
+대화나 보드로 작업한 경우에도 `/pl:cleanup`으로 끝냅니다.
 
 ## 동작 방식
 
@@ -167,7 +169,7 @@ Claude Code 실행 권한을 설정합니다
 사용자 ←→ Claude Code TUI (LLM-as-Orchestrator)
               │
               ├── 슬래시 커맨드 (.pylon/builtin/commands/ + Go 내장 index·project-list)
-              │   ├── /pl:pipeline ─ 전체 파이프라인
+              │   ├── /pl:pipeline ─ 전체 파이프라인 (폐기 예정)
               │   ├── /pl:cleanup ── 세션 마무리 (run 마감·메모리·브랜치 정리)
               │   ├── /pl:architect ─ 아키텍처 분석
               │   ├── /pl:breakdown ─ 태스크 분해
@@ -201,6 +203,8 @@ Pylon은 Go CLI가 워크스페이스를 준비한 뒤 provider router로 intera
 | **프로젝트 메모리** | `.pylon/memory/` 마크다운 파일 기반 지식 저장소 (git 추적) |
 
 ### 파이프라인 흐름
+
+> 폐기 예정으로 동결된 `/pl:pipeline`의 흐름입니다. 새로운 큰 작업은 투두 보드를 권장합니다.
 
 ```
 /pl:pipeline "로그인 기능 구현"
@@ -270,9 +274,9 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 
 | 커맨드 | 설명 |
 |--------|------|
-| `/pl:pipeline` | 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → 검증). 끝나면 run을 `/pl:cleanup`에 넘김 |
+| `/pl:pipeline` | **폐기 예정.** 전체 파이프라인 실행 (요구사항 → 분석 → 설계 → 구현 → 검증). 끝나면 run을 `/pl:cleanup`에 넘김 |
 | `/pl:cleanup` | 세션 마무리 (파이프라인 사용 여부와 무관): 검증 근거, 메모리·도메인 지식 갱신, 머지된 파이프라인 run 마감, 머지된 브랜치·워크트리 정리 |
-| `/pl:pr` | 파이프라인 run의 PR 생성 (repo sub-pipeline 단위) |
+| `/pl:pr` | **폐기 예정.** 파이프라인 run의 PR 생성 (repo sub-pipeline 단위) |
 | `/pl:status` | 파이프라인 상태 조회 (파일 기반) |
 | `/pl:index` | 프로젝트 코드베이스 인덱싱 |
 | `/pl:project-list` | 프로젝트 목록 및 인덱싱 상태 조회 |
@@ -280,7 +284,7 @@ deterministic gate를 통과한 repo는 worker 자연어 보고 대신 digest가
 
 ### 파이프라인 단계 단독 실행
 
-`/pl:pipeline`이 수행하는 단계를 따로 돌릴 때 씁니다.
+`/pl:pipeline`이 수행하는 단계를 따로 돌릴 때 씁니다. 파이프라인과 함께 폐기 예정입니다.
 
 | 커맨드 | 설명 |
 |--------|------|
@@ -374,7 +378,7 @@ pylon history checkpoint --pipeline <id> --phase <planned|executed|completed|can
 | 명령어 | 설명 |
 |--------|------|
 | `pylon internal criteria snapshot` | `verify.yml` + acceptance criteria를 `criteria.json`으로 동결하고 digest를 manifest에 결합 |
-| `pylon internal verify` | snapshot 명령으로 deterministic 검증 실행 → `verification.json` (깨끗한 HEAD면 `tree`, 산출물은 `verify-artifacts/`로 이동) |
+| `pylon internal verify` | snapshot 명령으로 deterministic 검증 실행 → `verification.json` (깨끗한 HEAD면 `tree`, 산출물은 `verify-artifacts/`로 이동). `--workdir`와 `--config`만 주면 파이프라인 없이 실행하고 결과를 표준 출력으로 냄 (`ok`, 실패 시 종료 코드 1) |
 | `pylon internal move-untracked` | 지정한 run 잔여물(추적 안 된 파일)을 경로째 run 폴더(`.pylon/runtime/` 아래)로 이동 |
 | `pylon internal evaluator prepare\|record` | 격리 evaluator bundle 생성 / 판정 검증·기록 |
 | `pylon internal trajectory task-report\|failure` | task report / failure record 기록 (failure는 `failed` 체크포인트까지) |
