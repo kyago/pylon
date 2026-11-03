@@ -646,7 +646,6 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 	}{
 		{embeddedAgents, "agents"},
 		{embeddedCommands, "commands"},
-		{embeddedScripts, "scripts/bash"},
 		{embeddedReference, "reference"},
 	}
 	var files []builtinFile

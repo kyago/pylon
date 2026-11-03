@@ -51,7 +51,7 @@ func TestSyncBuiltinResources_WritesEmbedsAndIsIdempotent(t *testing.T) {
 // 사용자 디렉터리의 파일은 내장과 이름이 같아도 건드리지 않는다. 읽는 쪽이 내장을 먼저 고른다.
 func TestSyncBuiltinResources_LeavesUserFilesAlone(t *testing.T) {
 	root := t.TempDir()
-	sameName := filepath.Join(layout.ResourceDir(root, "agents"), "architect.md")
+	sameName := filepath.Join(layout.ResourceDir(root, "agents"), "dev.md")
 	mine := filepath.Join(layout.ResourceDir(root, "agents"), "my-agent.md")
 	if err := os.MkdirAll(filepath.Dir(mine), 0o755); err != nil {
 		t.Fatal(err)
@@ -118,8 +118,8 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 	if _, err := syncBuiltinResources(root); err != nil {
 		t.Fatal(err)
 	}
-	common := filepath.Join(layout.ScriptsDir(root), "common.sh")
-	builtinAgent := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "architect.md")
+	common := filepath.Join(layout.BuiltinResourceDir(root, "commands"), "pl-cleanup.md")
+	builtinAgent := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dev.md")
 	dropped := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dropped-in-new-release.md")
 	if err := os.Remove(common); err != nil {
 		t.Fatal(err)
@@ -138,10 +138,10 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 	if !changed {
 		t.Error("a damaged builtin must be reported as changed")
 	}
-	if info, err := os.Stat(common); err != nil || info.Mode().Perm()&0o100 == 0 {
-		t.Errorf("deleted script not restored as executable: %v", err)
+	if _, err := os.Stat(common); err != nil {
+		t.Errorf("deleted file not restored: %v", err)
 	}
-	want, _ := embeddedAgents.ReadFile("agents/architect.md")
+	want, _ := embeddedAgents.ReadFile("agents/dev.md")
 	if got, _ := os.ReadFile(builtinAgent); !bytes.Equal(got, want) {
 		t.Error("edited builtin file not restored")
 	}
@@ -446,10 +446,7 @@ func TestBuildDesiredClaudeCommands_Keyset(t *testing.T) {
 
 	desired := buildDesiredClaudeCommands(root)
 
-	want := map[string]bool{
-		filepath.Join("pl", "index.md"):        true,
-		filepath.Join("pl", "project-list.md"): true,
-	}
+	want := map[string]bool{}
 	embedded, err := embeddedCommands.ReadDir("commands")
 	if err != nil {
 		t.Fatal(err)
@@ -480,7 +477,7 @@ func TestBuildDesiredClaudeCommands_Keyset(t *testing.T) {
 func TestBuildDesiredClaudeCommands_UserCommands(t *testing.T) {
 	root := newTestWorkspace(t)
 	userDir := layout.ResourceDir(root, "commands")
-	for name, body := range map[string]string{"pl-mine.md": "# mine\n", "pl-verify.md": "# shadow\n"} {
+	for name, body := range map[string]string{"pl-mine.md": "# mine\n", "pl-cleanup.md": "# shadow\n"} {
 		if err := os.WriteFile(filepath.Join(userDir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -489,8 +486,8 @@ func TestBuildDesiredClaudeCommands_UserCommands(t *testing.T) {
 	if desired[filepath.Join("pl", "mine.md")] != "# mine\n" {
 		t.Error("user command missing from desired set")
 	}
-	want, _ := embeddedCommands.ReadFile("commands/pl-verify.md")
-	if desired[filepath.Join("pl", "verify.md")] != string(want) {
+	want, _ := embeddedCommands.ReadFile("commands/pl-cleanup.md")
+	if desired[filepath.Join("pl", "cleanup.md")] != string(want) {
 		t.Error("user file must not shadow a built-in command")
 	}
 }
@@ -513,7 +510,7 @@ func TestDiffClaudeCommands(t *testing.T) {
 	if err := applyClaudeCommands(commandsDir, desired); err != nil {
 		t.Fatal(err)
 	}
-	staleTarget := filepath.Join("pl", "index.md")
+	staleTarget := filepath.Join("pl", "cleanup.md")
 	if err := os.WriteFile(filepath.Join(commandsDir, staleTarget), []byte("STALE\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -572,8 +569,8 @@ func TestSyncClaudeCommands_ConsentApplies(t *testing.T) {
 
 	syncClaudeCommandsIfWorkspace(bytes.NewBufferString("y\n"), false)
 
-	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); err != nil {
-		t.Errorf("expected pl/index.md to be created after consent: %v", err)
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "cleanup.md")); err != nil {
+		t.Errorf("expected pl/cleanup.md to be created after consent: %v", err)
 	}
 }
 
@@ -583,7 +580,7 @@ func TestSyncClaudeCommands_DeclineDoesNothing(t *testing.T) {
 
 	syncClaudeCommandsIfWorkspace(bytes.NewBufferString("n\n"), false)
 
-	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "cleanup.md")); !os.IsNotExist(err) {
 		t.Errorf("expected no commands written after decline, got err=%v", err)
 	}
 }
@@ -595,7 +592,7 @@ func TestSyncClaudeCommands_EmptyInputDeclines(t *testing.T) {
 
 	syncClaudeCommandsIfWorkspace(bytes.NewBufferString(""), false)
 
-	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "cleanup.md")); !os.IsNotExist(err) {
 		t.Errorf("expected no commands written on empty input, got err=%v", err)
 	}
 }
@@ -607,7 +604,7 @@ func TestSyncClaudeCommands_AutoYesSkipsPrompt(t *testing.T) {
 
 	syncClaudeCommandsIfWorkspace(bytes.NewBufferString(""), true)
 
-	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "cleanup.md")); err != nil {
 		t.Errorf("expected commands written with autoYes, got err=%v", err)
 	}
 }

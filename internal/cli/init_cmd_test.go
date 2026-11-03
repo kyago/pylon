@@ -86,7 +86,4 @@ func TestInitSetsUpTrackedMemoryDir(t *testing.T) {
 	if strings.Contains(string(data), ".pylon/memory") {
 		t.Error(".pylon/memory는 git 추적 대상이어야 한다 — gitignore에 없어야 함 (D1)")
 	}
-	if !strings.Contains(string(data), ".pylon/history/") {
-		t.Error(".pylon/history/는 계속 무시되어야 한다")
-	}
 }

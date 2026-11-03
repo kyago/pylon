@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -272,6 +273,24 @@ func refreshWorkspaceAfterUpgrade(root string, cfg *config.Config) {
 		// 내장 리소스가 최신이면 다음 세션이 갱신을 건너뛰므로 하나를 지워 재시도하게 한다.
 		_ = os.Remove(filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md"))
 	}
+}
+
+func printJSON(value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
+}
+
+func printJSONIndent(value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
 }
 
 // confirmDeletion asks the user to confirm a destructive operation.

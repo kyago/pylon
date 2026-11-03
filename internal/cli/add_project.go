@@ -183,7 +183,7 @@ func projectNextSteps(contextPath, agentsDir string) string {
 	return fmt.Sprintf(`Next steps:
   1. Review: %s
   2. Customize agents: %s
-  3. Start working in Claude Code: /pl:pipeline "<requirement>"
+  3. Start working: open the workspace in Claude Code, Codex, or Paseo
 `, contextPath, agentsDir)
 }
 

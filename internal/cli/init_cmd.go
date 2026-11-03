@@ -16,9 +16,6 @@ import (
 //go:embed agents/*.md
 var embeddedAgents embed.FS
 
-//go:embed scripts/bash/*.sh
-var embeddedScripts embed.FS
-
 //go:embed reference/*.md
 var embeddedReference embed.FS
 
@@ -132,7 +129,6 @@ runtime:
 	gitignoreEntries := []string{
 		"# Pylon runtime (agent communication, state)",
 		".pylon/runtime/",
-		".pylon/history/",
 		// .pylon/memory/ 는 의도적으로 제외 — 메모리는 git으로 추적/리뷰한다 (D1).
 		"",
 		"# Claude CLI agent symlinks (managed by pylon)",
@@ -199,12 +195,11 @@ runtime:
 	fmt.Println("Created:")
 	fmt.Println("  .pylon/config.yml          - workspace configuration")
 	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
-	fmt.Println("  .pylon/builtin/            - built-in agents, commands, scripts, manual (regenerated)")
+	fmt.Println("  .pylon/builtin/            - built-in agents, commands, manual (regenerated)")
 	fmt.Println("  .pylon/agents/             - your own agents (pylon add-agent)")
 	fmt.Println("  .pylon/skills/             - your own skills (pylon add-skill)")
 	fmt.Println("  .pylon/commands/           - your own pipeline commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
-	fmt.Println("  .pylon/history/            - pipeline work history (file-based)")
 	fmt.Println("  .pylon/memory/             - project memory (git-tracked)")
 	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/builtin/agents/, .pylon/agents/)")
 	fmt.Println("  CLAUDE.md                  - @AGENTS.md import marker")
@@ -213,7 +208,7 @@ runtime:
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
 	fmt.Println("  2. Add projects: pylon add-project <name>")
-	fmt.Println("  3. Start working: run 'pylon', or open the workspace in Paseo")
+	fmt.Println("  3. Start working: open the workspace in Claude Code, Codex, or Paseo")
 
 	return nil
 }

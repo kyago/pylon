@@ -530,8 +530,8 @@ func TestGenerateClaudeAgentsWithSkills_BuiltinAgentsAndUserSkills(t *testing.T)
 		t.Errorf("user skill not injected into user agent:\n%s", injected)
 	}
 	for name, want := range map[string]string{
-		"architect.md": layout.BuiltinAgentLinkTarget("architect.md"),
-		"my-agent.md":  layout.AgentLinkTarget("my-agent.md"),
+		"dev.md":      layout.BuiltinAgentLinkTarget("dev.md"),
+		"my-agent.md": layout.AgentLinkTarget("my-agent.md"),
 	} {
 		got, err := os.Readlink(filepath.Join(claudeAgents, name))
 		if err != nil || got != want {

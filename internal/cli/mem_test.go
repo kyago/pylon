@@ -215,7 +215,7 @@ func staleClaudeWorkspace(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale := strings.Replace(string(agents), "## 작업 진행 방식", "## 옛 제목", 1)
+	stale := strings.Replace(string(agents), "## 필요할 때 찾기", "## 옛 제목", 1)
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte("# 내 규칙\n\n"+stale), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestMemInject_RefreshesWorkspaceAfterUpgrade(t *testing.T) {
 		t.Error("없어진 에이전트의 .claude/agents 링크가 남았다")
 	}
 	agents, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if !strings.HasPrefix(string(agents), "# 내 규칙\n\n") || !strings.Contains(string(agents), "## 작업 진행 방식") {
+	if !strings.HasPrefix(string(agents), "# 내 규칙\n\n") || !strings.Contains(string(agents), "## 필요할 때 찾기") {
 		t.Errorf("AGENTS.md 갱신 또는 사용자 내용 보존 실패: %.80q", agents)
 	}
 }
@@ -289,7 +289,7 @@ func TestMemInject_RetriesRefreshAfterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	runMemInjectIn(t, root)
-	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); !strings.Contains(string(got), "## 작업 진행 방식") {
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); !strings.Contains(string(got), "## 필요할 때 찾기") {
 		t.Errorf("다음 세션이 다시 시도하지 않았다: %.80q", got)
 	}
 }

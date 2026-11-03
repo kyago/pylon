@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kyago/pylon/internal/config"
-	"github.com/kyago/pylon/internal/criteria"
 	"github.com/kyago/pylon/internal/fsutil"
 )
 
@@ -29,111 +29,34 @@ type verificationCheck struct {
 }
 
 type verificationResult struct {
-	OK             bool                `json:"ok"`
-	Checks         []verificationCheck `json:"checks"`
-	Skipped        bool                `json:"skipped,omitempty"`
-	Reason         string              `json:"reason,omitempty"`
-	CriteriaDigest string              `json:"criteria_digest,omitempty"`
-	IntegrityOK    bool                `json:"integrity_ok,omitempty"`
-	SourceChanged  bool                `json:"source_changed,omitempty"`
-	Tree           string              `json:"tree,omitempty"`
-	TreeReason     string              `json:"tree_reason,omitempty"`
-	Artifacts      []string            `json:"artifacts,omitempty"`
-	ArtifactsDir   string              `json:"artifacts_dir,omitempty"`
-	Timestamp      string              `json:"timestamp"`
+	OK           bool                `json:"ok"`
+	Checks       []verificationCheck `json:"checks"`
+	Skipped      bool                `json:"skipped,omitempty"`
+	Reason       string              `json:"reason,omitempty"`
+	Tree         string              `json:"tree,omitempty"`
+	TreeReason   string              `json:"tree_reason,omitempty"`
+	Artifacts    []string            `json:"artifacts,omitempty"`
+	ArtifactsDir string              `json:"artifacts_dir,omitempty"`
+	Timestamp    string              `json:"timestamp"`
 }
 
 func newInternalCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "internal", Short: "Pipeline helper commands used by /pl:* commands", Hidden: true}
+	cmd := &cobra.Command{Use: "internal", Short: "Helper commands", Hidden: true}
 	cmd.AddCommand(newInternalVerifyCmd())
-	cmd.AddCommand(newInternalCriteriaCmd())
-	cmd.AddCommand(newInternalEvaluatorCmd())
-	cmd.AddCommand(newInternalTrajectoryCmd())
 	cmd.AddCommand(newInternalMoveUntrackedCmd())
 	return cmd
 }
 
 func newInternalVerifyCmd() *cobra.Command {
 	var workDir, configPath, outputPath string
-	var snapshotPath, heldOutPath, manifestPath, liveConfigPath string
 	cmd := &cobra.Command{
 		Use:          "verify",
 		Short:        "Run project verification commands",
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var steps []config.NamedVerifyStep
-			var skipped bool
-			result := verificationResult{Checks: []verificationCheck{}, Timestamp: time.Now().UTC().Format(time.RFC3339)}
-
-			if snapshotPath != "" {
-				snapshot, err := criteria.Load(snapshotPath)
-				if err != nil {
-					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
-				}
-				result.CriteriaDigest = snapshot.Digest
-				if manifestPath == "" {
-					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("--manifest is required with --snapshot"))
-				}
-				if err := criteria.ValidateManifest(manifestPath, snapshotPath, snapshot); err != nil {
-					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
-				}
-				result.IntegrityOK = true
-				steps = append(steps, snapshot.Verification...)
-				expectedHeldOutPath, hasHeldOut, err := criteria.ManifestHeldOutPath(manifestPath)
-				if err != nil {
-					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
-				}
-				if hasHeldOut && heldOutPath == "" {
-					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("manifest requires --held-out evaluator snapshot"))
-				}
-				if heldOutPath != "" {
-					if !hasHeldOut {
-						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("manifest has no held-out reference"))
-					}
-					resolvedHeldOutPath, resolveErr := filepath.Abs(heldOutPath)
-					if resolveErr != nil {
-						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", resolveErr)
-					}
-					expectedHeldOutPath, resolveErr = filepath.Abs(expectedHeldOutPath)
-					if resolveErr != nil || resolvedHeldOutPath != expectedHeldOutPath {
-						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("held-out path does not match manifest"))
-					}
-					heldOut, loadErr := criteria.LoadHeldOut(heldOutPath)
-					if loadErr != nil {
-						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", loadErr)
-					}
-					if heldOut.CriteriaDigest != snapshot.Digest {
-						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("held-out criteria digest mismatch"))
-					}
-					if err := criteria.ValidateHeldOutManifest(manifestPath, heldOutPath, heldOut); err != nil {
-						return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", err)
-					}
-					steps = append(steps, heldOut.Verification...)
-				}
-				if len(steps) == 0 {
-					return failVerification(cmd, outputPath, manifestPath, result, "criteria_integrity_failed", errors.New("criteria contains no verification commands"))
-				}
-				changed, actualDigest, err := criteria.LiveSourceChanged(snapshot, resolveLiveConfigPath(workDir, liveConfigPath, snapshot.Source))
-				if err != nil {
-					return failVerification(cmd, outputPath, manifestPath, result, "criteria_source_check_failed", err)
-				}
-				result.SourceChanged = changed
-				if changed {
-					if err := recordCriteriaEvent(manifestPath, criteria.Event{
-						Type:     "criteria_source_changed",
-						Expected: snapshot.Source.Digest,
-						Actual:   actualDigest,
-						Message:  "live verification config changed after criteria snapshot",
-					}); err != nil {
-						return failVerification(cmd, outputPath, manifestPath, result, "criteria_event_write_failed", err)
-					}
-				}
-			} else {
-				var err error
-				steps, skipped, err = loadVerificationSteps(workDir, configPath)
-				if err != nil {
-					return err
-				}
+			steps, skipped, err := loadVerificationSteps(workDir, configPath)
+			if err != nil {
+				return err
 			}
 
 			// Only committed code can be matched to a PR, so verification vouches for HEAD's tree and only when the
@@ -172,9 +95,6 @@ func newInternalVerifyCmd() *cobra.Command {
 				executed.TreeReason = beforeReason
 			}
 			executed.Skipped = skipped
-			executed.CriteriaDigest = result.CriteriaDigest
-			executed.IntegrityOK = result.IntegrityOK
-			executed.SourceChanged = result.SourceChanged
 			if len(steps) == 0 {
 				executed.OK = false
 				if skipped {
@@ -183,17 +103,6 @@ func newInternalVerifyCmd() *cobra.Command {
 					executed.Reason = fmt.Sprintf("verify.yml에 실행 가능한 검증 명령이 없습니다: %s", configPath)
 				}
 			}
-			if executed.SourceChanged {
-				executed.OK = false
-				executed.Reason = "live verification config changed after criteria snapshot; snapshot commands were executed but the run must be re-approved"
-				executed.Checks = append(executed.Checks, verificationCheck{
-					Name:     "criteria_source_unchanged",
-					Kind:     "integrity",
-					OK:       false,
-					ExitCode: 1,
-					Output:   executed.Reason,
-				})
-			}
 			if !executed.OK {
 				executed.Tree = "" // a tree vouches only for a passing result
 			}
@@ -201,34 +110,37 @@ func newInternalVerifyCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&workDir, "workdir", "", "project working directory")
-	cmd.Flags().StringVar(&configPath, "config", "", "legacy live verify.yml path")
-	cmd.Flags().StringVar(&snapshotPath, "snapshot", "", "criteria snapshot path")
-	cmd.Flags().StringVar(&heldOutPath, "held-out", "", "evaluator-only held-out snapshot path")
-	cmd.Flags().StringVar(&manifestPath, "manifest", "", "run manifest bound to the criteria snapshot")
-	cmd.Flags().StringVar(&liveConfigPath, "live-config", "", "live verify.yml path used only for change detection")
+	cmd.Flags().StringVar(&configPath, "config", "", "verify.yml path (default: <workdir>/.pylon/verify.yml)")
 	cmd.Flags().StringVar(&outputPath, "output", "", "verification result path")
 	_ = cmd.MarkFlagRequired("workdir")
 	return cmd
 }
 
-// resolveLiveConfigPath returns the live verify.yml path used for change
-// detection. 구버전 binary가 만든 snapshot은 Source.Path를 상대경로로 기록했는데,
-// 검증 프로세스의 cwd에서는 그 경로가 해석되지 않아 존재하는 파일을 "missing"으로
-// 오판한다. 그 경우에만 workdir의 표준 위치로 대체하고, 그 외에는
-// LiveSourceChanged의 Source.Path fallback에 맡긴다.
-func resolveLiveConfigPath(workDir, liveConfigPath string, source criteria.Source) string {
-	if liveConfigPath != "" {
-		return liveConfigPath
-	}
-	if source.Path != "" && !filepath.IsAbs(source.Path) {
-		return filepath.Join(workDir, ".pylon", "verify.yml")
-	}
-	return ""
-}
-
+// loadVerificationSteps reads verify.yml, falls back to the Go defaults when a go.mod
+// exists, and reports skipped when neither is there.
 func loadVerificationSteps(workDir, configPath string) ([]config.NamedVerifyStep, bool, error) {
-	steps, skipped, _, err := criteria.ResolveVerification(workDir, configPath)
-	return steps, skipped, err
+	if configPath == "" {
+		configPath = filepath.Join(workDir, ".pylon", "verify.yml")
+	}
+	if _, err := os.Stat(configPath); err == nil {
+		verifyConfig, err := config.LoadVerifyConfig(configPath)
+		if err != nil {
+			return nil, false, err
+		}
+		return append(verifyConfig.OrderedSteps(), verifyConfig.OrderedHeldOutSteps()...), false, nil
+	} else if !os.IsNotExist(err) {
+		return nil, false, fmt.Errorf("failed to inspect verify config: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "go.mod")); err == nil {
+		return []config.NamedVerifyStep{
+			{Name: "build", Kind: config.VerifyKindDeterministic, Command: "go build ./...", Timeout: "5m"},
+			{Name: "vet", Kind: config.VerifyKindDeterministic, Command: "go vet ./...", Timeout: "5m"},
+			{Name: "test", Kind: config.VerifyKindDeterministic, Command: "go test ./...", Timeout: "10m"},
+		}, false, nil
+	} else if !os.IsNotExist(err) {
+		return nil, false, fmt.Errorf("failed to inspect Go project: %w", err)
+	}
+	return nil, true, nil
 }
 
 func executeVerification(workDir string, steps []config.NamedVerifyStep, now func() time.Time) (verificationResult, error) {
@@ -289,25 +201,6 @@ func executeVerification(workDir string, steps []config.NamedVerifyStep, now fun
 	return result, nil
 }
 
-func failVerification(cmd *cobra.Command, outputPath, manifestPath string, result verificationResult, eventType string, cause error) error {
-	result.OK = false
-	result.IntegrityOK = false
-	result.Reason = cause.Error()
-	if result.Timestamp == "" {
-		result.Timestamp = time.Now().UTC().Format(time.RFC3339)
-	}
-	if manifestPath != "" {
-		if err := recordCriteriaEvent(manifestPath, criteria.Event{Type: eventType, Message: cause.Error()}); err != nil {
-			cause = errors.Join(cause, fmt.Errorf("failed to record criteria event: %w", err))
-			result.Reason = cause.Error()
-		}
-	}
-	if err := writeVerificationResult(cmd, outputPath, result); err != nil {
-		return errors.Join(cause, err)
-	}
-	return cause
-}
-
 func emitVerificationResult(cmd *cobra.Command, outputPath string, result verificationResult) error {
 	if err := writeVerificationResult(cmd, outputPath, result); err != nil {
 		return err
@@ -333,8 +226,4 @@ func writeVerificationResult(cmd *cobra.Command, outputPath string, result verif
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
-}
-
-func recordCriteriaEvent(manifestPath string, event criteria.Event) error {
-	return criteria.AppendEvent(filepath.Join(filepath.Dir(manifestPath), "criteria-events.jsonl"), event)
 }
