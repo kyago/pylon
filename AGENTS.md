@@ -89,7 +89,7 @@ CLAUDE.md, `.claude/agents/` symlinks into `.pylon/builtin/agents/` and `.pylon/
 to `.gitignore`.
 
 **Ownership contract for `.pylon/` resources** (`syncBuiltinResources` in `doctor.go`, shared by launch,
-init, doctor and sync-agents): the embedded agents, commands, scripts and manual live in
+init, doctor, sync-agents and `pylon mem inject`): the embedded agents, commands, scripts and manual live in
 **`.pylon/builtin/`** (git-ignored), which is pylon-owned. Every sync compares each file with the embeds,
 rewrites missing or differing ones (restoring script exec bits) and deletes files the embeds no longer have —
 never a wholesale wipe, so concurrent launches converge instead of racing and a damaged builtin heals on the
@@ -99,8 +99,10 @@ prune the dropped entries).
 The user-owned `.pylon/{agents,skills,commands}/` hold only user resources (`pylon add-agent` /
 `pylon add-skill` or a new filename; `scaffoldMarkdownResource` refuses built-in names). **A built-in name
 always wins**: readers take the built-in first, so a same-named file there is ignored and never modified.
-`pylon doctor` also rewrites the pylon hook groups in `.claude/settings.json` from the embedded `hooks.json`, as
-launch does. Readers merge both sources —
+Paseo starts sessions without `pylon`, so `pylon mem inject` (the SessionStart hook) runs the same sync: when the
+builtin changed it also regenerates the provider files, warns on stderr instead of blocking the session, and retries on
+the next session after a failure. Its stdout is session context, so nothing else may print there. `pylon doctor` also
+rewrites the pylon hook groups in `.claude/settings.json` from the embedded `hooks.json`, as launch does. Readers merge both sources —
 `workspaceAgents`, `loadAgentSkillMap`, `buildDesiredClaudeCommands`, `generateCodexSkills` — built-in
 first. Markdown resources address built-ins as `.pylon/builtin/...` and user agents as `.pylon/agents/...`.
 Config (`config.yml`), domain knowledge, memory, history and runtime state are user data and are never

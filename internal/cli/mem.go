@@ -4,10 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/memory"
 )
 
@@ -180,7 +183,8 @@ func newMemInjectCmd() *cobra.Command {
 
 Claude Code SessionStart hook이 호출하며, 출력이 그대로 세션 컨텍스트에 들어갑니다.
 memory.proactive_injection이 false이거나 메모리가 없으면 아무것도 출력하지 않습니다.
-출력 전에 memory.retention_days를 넘긴 항목을 정리합니다.`,
+출력 전에 memory.retention_days를 넘긴 항목을 정리합니다. pylon 업데이트 뒤 첫 세션이면
+내장 리소스와 생성 파일도 갱신합니다.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMemInject()
@@ -196,6 +200,7 @@ func runMemInject() error {
 	if err != nil {
 		return err
 	}
+	refreshWorkspaceAfterUpgrade(root, cfg)
 	memStore := memory.NewStore(root)
 	projects, err := memStore.ListProjects()
 	if err != nil {
@@ -236,6 +241,37 @@ func runMemInject() error {
 	fmt.Print("## pylon 프로젝트 메모리\n" + b.String() +
 		"각 줄 끝의 경로(`.pylon/memory/` 기준)가 전문 파일입니다. 같은 key로 `pylon mem store` 하면 갱신됩니다.\n")
 	return nil
+}
+
+// refreshWorkspaceAfterUpgrade brings a workspace up to date on the first session after
+// an update: Paseo starts sessions without `pylon`, so launch never gets to do this.
+// 내장 리소스가 임베드와 같으면 아무것도 쓰지 않는다. 세션 시작을 막지 않도록 실패는 stderr
+// 경고로 끝내고, stdout은 세션 컨텍스트이므로 쓰지 않는다.
+func refreshWorkspaceAfterUpgrade(root string, cfg *config.Config) {
+	changed, err := syncBuiltinResources(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "경고: 내장 리소스 갱신 실패: %v\n", err)
+		return
+	}
+	if !changed {
+		return
+	}
+	projects, err := config.DiscoverProjects(root)
+	if err != nil {
+		projects = nil // 탐색 실패 시 프로젝트 목록 없이라도 갱신한다
+	}
+	var genErr error
+	if dirExists(layout.ClaudeDir(root)) {
+		genErr = generateClaudeDir(root, cfg, projects)
+	}
+	if genErr == nil && dirExists(layout.CodexSkillsDir(root)) {
+		genErr = prepareCodexWorkspace(root, cfg, projects)
+	}
+	if genErr != nil {
+		fmt.Fprintf(os.Stderr, "경고: 워크스페이스 파일 갱신 실패 (다음 세션에서 다시 시도합니다): %v\n", genErr)
+		// 내장 리소스가 최신이면 다음 세션이 갱신을 건너뛰므로 하나를 지워 재시도하게 한다.
+		_ = os.Remove(filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md"))
+	}
 }
 
 // confirmDeletion asks the user to confirm a destructive operation.
