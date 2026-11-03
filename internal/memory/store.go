@@ -314,53 +314,6 @@ func (s *Store) DeleteProject(project string) (int64, error) {
 	return int64(len(entries)), nil
 }
 
-// PruneExpired deletes entries older than their category's retention window.
-// retentionDays: 카테고리 → 보존 일수. 미지정 카테고리·0 이하 값은 영구 보존.
-// 삭제 건수를 반환하며, 삭제가 있었으면 INDEX.md를 갱신한다.
-func (s *Store) PruneExpired(project string, retentionDays map[string]int) (int64, error) {
-	if len(retentionDays) == 0 {
-		return 0, nil
-	}
-	if err := os.MkdirAll(s.baseDir(), 0755); err != nil {
-		return 0, err
-	}
-	// 목록 조회부터 잠금 안에서 해야 동시 Insert(upsert)가 갱신한 항목을
-	// 오래된 스냅샷으로 판단해 지우지 않는다.
-	unlock, err := fsutil.AcquireLock(s.lockPath(), lockTimeout)
-	if err != nil {
-		return 0, err
-	}
-	defer unlock()
-	entries, err := s.List(project)
-	if err != nil {
-		return 0, err
-	}
-	now := s.Now().UTC()
-	var targets []Entry
-	for _, e := range entries {
-		days, ok := retentionDays[e.Category]
-		if !ok || days <= 0 {
-			continue
-		}
-		if e.CreatedAt.IsZero() {
-			continue // created_at 결측 항목은 나이를 알 수 없으므로 영구 보존
-		}
-		if now.Sub(e.CreatedAt) > time.Duration(days)*24*time.Hour {
-			targets = append(targets, e)
-		}
-	}
-	if len(targets) == 0 {
-		return 0, nil
-	}
-	for _, e := range targets {
-		if err := os.Remove(filepath.Join(s.Root, filepath.FromSlash(e.Path))); err != nil && !os.IsNotExist(err) {
-			return 0, err
-		}
-	}
-	removeEmptyCategoryDirs(s.projectDir(project))
-	return int64(len(targets)), s.rebuildIndexLocked(project)
-}
-
 // legacyHookKey matches the keys the removed Stop-hook sync wrote: session-<timestamp>/<prefix>.
 var legacyHookKey = regexp.MustCompile(`^session-\d{8}-\d{6}/`)
 

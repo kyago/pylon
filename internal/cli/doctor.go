@@ -59,7 +59,7 @@ for any projects that are missing the local-scope ignore entry.`,
 	}
 
 	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in project repos")
-	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화, provider 선택)를 건너뛰고 비인터랙티브로 실행")
+	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화)를 건너뛰고 비인터랙티브로 실행")
 
 	return cmd
 }
@@ -334,7 +334,7 @@ func syncResourcesIfWorkspace() {
 	}
 
 	reportBuiltinSync(syncBuiltinResources(root))
-	ensureGitignore(root) // .pylon/builtin/ 이 launch 전에도 git에 잡히지 않도록
+	ensureGitignore(root) // .pylon/builtin/ 이 git에 잡히지 않도록
 }
 
 // reportBuiltinSync prints the outcome of syncBuiltinResources for doctor and sync-agents.
@@ -372,11 +372,10 @@ func syncGeneratedFilesIfWorkspace(in io.Reader, autoYes bool) {
 	}
 	pruneCodexSkills(root)
 
-	// .claude/는 위 에이전트 동기화가 만든다.
-	if err := generateSettingsHooks(layout.ClaudeDir(root)); err != nil {
-		fmt.Printf("⚠ .claude/settings.json 훅 갱신 실패: %v\n", err)
-	} else {
-		fmt.Println("✓ .claude/settings.json 훅 갱신")
+	if removed, err := removePylonHooks(layout.ClaudeDir(root)); err != nil {
+		fmt.Printf("⚠ .claude/settings.json 훅 제거 실패: %v\n", err)
+	} else if removed {
+		fmt.Println("✓ .claude/settings.json에서 pylon 훅 제거")
 	}
 
 	syncClaudeCommandsIfWorkspace(in, autoYes)
@@ -486,14 +485,6 @@ func syncBuiltinResources(root string) (bool, error) {
 		return changed, fmt.Errorf(".pylon/builtin 정리 실패: %w", err)
 	}
 	return changed, nil
-}
-
-// syncBuiltinForLaunch is the launch-path wrapper around syncBuiltinResources.
-func syncBuiltinForLaunch(root string) error {
-	if _, err := syncBuiltinResources(root); err != nil {
-		return fmt.Errorf("내장 리소스 동기화 실패: %w", err)
-	}
-	return nil
 }
 
 // commandDiff describes how the on-disk .claude/commands/ differs from the

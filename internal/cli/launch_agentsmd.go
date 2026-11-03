@@ -15,13 +15,13 @@ import (
 
 // agentsBlockBegin/agentsBlockEnd delimit the pylon-managed region inside the
 // workspace-root AGENTS.md. pylon regenerates what lies between the markers on every
-// launch; anything a user writes outside the block is preserved verbatim.
+// doctor; anything a user writes outside the block is preserved verbatim.
 const agentsBlockBegin = "<!-- pylon:begin -->"
 const agentsBlockEnd = "<!-- pylon:end -->"
 
 // buildClaudeMDPointer returns the workspace-root CLAUDE.md content: a single
 // Claude Code import marker that pulls AGENTS.md into the session prompt. Kept
-// deterministic so launch may rewrite it every time without churn.
+// deterministic so doctor may rewrite it every time without churn.
 func buildClaudeMDPointer() string {
 	return "@AGENTS.md\n"
 }
@@ -40,7 +40,7 @@ func isPylonClaudeMD(data []byte) bool {
 
 // buildAgentsBlock returns the pylon-managed block (markers included): the embedded
 // usage manual verbatim, followed by the workspace facts Go knows. It is a pure
-// function of the binary and the project list, so every launch rewrites it whenever
+// function of the binary and the project list, so every doctor rewrites it whenever
 // either changes and no version tracking is needed. The workspace root is left out on
 // purpose: the same directory reached through different paths must not churn the file.
 func buildAgentsBlock(projects []config.ProjectInfo) string {
@@ -162,7 +162,7 @@ const maxRootFileBackups = 100
 
 // backupIfHandWritten renames path aside when it exists and was not written by pylon.
 // pylonAuthored decides that from the current content; a file pylon itself produced is
-// replaced in place, so ordinary launches never churn out backups. An existing backup is
+// replaced in place, so ordinary runs never churn out backups. An existing backup is
 // never clobbered — the next free suffix is used. Returns the backup's file name, or ""
 // when no backup was taken.
 func backupIfHandWritten(path string, pylonAuthored func([]byte) bool) (string, error) {

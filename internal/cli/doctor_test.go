@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,16 +70,15 @@ func TestSyncBuiltinResources_LeavesUserFilesAlone(t *testing.T) {
 	}
 }
 
-// pylon doctor/update도 .claude/settings.json 훅을 현재 hooks.json으로 갱신한다 — 구버전 Stop 훅이
-// `claude`를 직접 띄운 세션에서 매 턴 실패하지 않도록. 사용자 훅은 남는다.
-func TestSyncGeneratedFiles_RefreshesSettingsHooks(t *testing.T) {
+// doctor는 이전 릴리스의 훅을 지우고 사용자 훅은 남긴다.
+func TestSyncGeneratedFiles_RemovesPylonHook(t *testing.T) {
 	root := setupTestWorkspace(t)
 	claudeDir := layout.ClaudeDir(root)
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stale := `{"hooks":{
-  "SessionStart":[{"matcher":"stale","hooks":[{"type":"command","command":"pylon mem inject"}]}],
+  "SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"pylon mem inject"}]}],
   "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-guard"}]}]
 }}`
 	settingsPath := filepath.Join(claudeDir, "settings.json")
@@ -97,17 +95,8 @@ func TestSyncGeneratedFiles_RefreshesSettingsHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var settings struct {
-		Hooks map[string][]settingsHookEntry `json:"hooks"`
-	}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatal(err)
-	}
-	if start := settings.Hooks["SessionStart"]; len(start) != 1 || start[0].Matcher == "stale" {
-		t.Errorf("SessionStart hook not refreshed: %s", data)
-	}
-	if pre := settings.Hooks["PreToolUse"]; len(pre) != 1 || pre[0].Hooks[0].Command != "my-guard" {
-		t.Errorf("user hook must be kept: %s", data)
+	if strings.Contains(string(data), "pylon mem inject") || !strings.Contains(string(data), "my-guard") {
+		t.Errorf("settings.json = %s", data)
 	}
 }
 

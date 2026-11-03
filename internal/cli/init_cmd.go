@@ -104,7 +104,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Built-in agents, skills, commands, scripts and the usage manual (.pylon/builtin/)
+	// Built-in agents, commands and the usage manual (.pylon/builtin/)
 	if _, err := syncBuiltinResources(workDir); err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Root agent files so the workspace is launch-ready: CLAUDE.md import marker +
+	// Root agent files so the workspace is ready: CLAUDE.md import marker +
 	// AGENTS.md whose pylon block carries the embedded manual and workspace facts.
 	_, backedUp, err := ensureRootAgentFiles(workDir, projects)
 	if err != nil {

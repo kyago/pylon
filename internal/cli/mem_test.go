@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +10,6 @@ import (
 	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/memory"
 )
-
-const memInjectHeader = "## pylon 프로젝트 메모리\n"
-const memInjectFooter = "각 줄 끝의 경로(`.pylon/memory/` 기준)가 전문 파일입니다. 같은 key로 `pylon mem store` 하면 갱신됩니다.\n"
 
 // runMemInjectIn runs `pylon mem inject` against root and returns its stdout.
 func runMemInjectIn(t *testing.T, root string) string {
@@ -29,108 +25,11 @@ func runMemInjectIn(t *testing.T, root string) string {
 	return out
 }
 
-func writeMemConfig(t *testing.T, root, memoryYAML string) {
-	t.Helper()
-	if err := os.WriteFile(layout.ConfigPath(root), []byte("version: \"0.1\"\nmemory:\n"+memoryYAML), 0644); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func insertMem(t *testing.T, root, project, key, content string) {
 	t.Helper()
 	e := &memory.Entry{ProjectID: project, Category: "decision", Key: key, Content: content, Confidence: 0.8}
 	if err := memory.NewStore(root).Insert(e); err != nil {
 		t.Fatalf("Insert 실패: %v", err)
-	}
-}
-
-// 프로젝트를 이름순으로 주입하고 헤더/꼬리말로 감싼다.
-func TestMemInject_TwoProjects(t *testing.T) {
-	root := setupTestWorkspace(t)
-	insertMem(t, root, "beta", "beta-key", "beta 프로젝트의 결정 요약")
-	insertMem(t, root, "alpha", "alpha-key", "alpha 프로젝트의 결정 요약")
-
-	out := runMemInjectIn(t, root)
-	if !strings.HasPrefix(out, memInjectHeader) || !strings.HasSuffix(out, memInjectFooter) {
-		t.Fatalf("헤더/꼬리말로 감싸야 한다:\n%s", out)
-	}
-	a, b := strings.Index(out, "#### alpha"), strings.Index(out, "#### beta")
-	if a < 0 || b < 0 || a > b {
-		t.Errorf("alpha, beta 순으로 모두 주입되어야 한다:\n%s", out)
-	}
-}
-
-// 앞 프로젝트가 예산을 거의 다 쓰면 남은 예산에 못 들어가는 프로젝트는 빠진다.
-func TestMemInject_BudgetExceeded(t *testing.T) {
-	root := setupTestWorkspace(t)
-	insertMem(t, root, "alpha", "alpha-key", "alpha 프로젝트의 결정 요약")
-	insertMem(t, root, "beta", "beta-key", "beta 프로젝트의 결정 요약")
-
-	md, err := memory.NewStore(root).InjectionMarkdown("alpha", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// InjectionMarkdown은 생략 표기(12바이트) 자리를 남기므로 alpha 전체 + 12바이트를
-	// 겨우 담는 예산이면 beta에는 15바이트 이하만 남는다.
-	const ellipsisBytes = len("…(생략)\n")
-	writeMemConfig(t, root, "  proactive_max_tokens: "+strconv.Itoa((len(md)+ellipsisBytes+3)/4)+"\n")
-
-	out := runMemInjectIn(t, root)
-	if !strings.Contains(out, "#### alpha") {
-		t.Errorf("alpha는 예산 안에 들어가야 한다:\n%s", out)
-	}
-	if strings.Contains(out, "#### beta") {
-		t.Errorf("예산을 넘는 beta는 주입되면 안 된다:\n%s", out)
-	}
-}
-
-// InjectionMarkdown은 0 이하 예산을 무제한으로 취급하므로, 예산이 없으면
-// 호출 자체를 하지 않아야 한다.
-func TestMemInject_NonPositiveBudget(t *testing.T) {
-	root := setupTestWorkspace(t)
-	insertMem(t, root, "alpha", "alpha-key", "alpha 프로젝트의 결정 요약")
-	writeMemConfig(t, root, "  proactive_max_tokens: -1\n")
-
-	if out := runMemInjectIn(t, root); out != "" {
-		t.Errorf("예산이 0 이하면 출력이 없어야 한다: %q", out)
-	}
-}
-
-func TestMemInject_Disabled(t *testing.T) {
-	root := setupTestWorkspace(t)
-	insertMem(t, root, "alpha", "alpha-key", "alpha 프로젝트의 결정 요약")
-	writeMemConfig(t, root, "  proactive_injection: false\n")
-
-	if out := runMemInjectIn(t, root); out != "" {
-		t.Errorf("proactive_injection=false면 출력이 없어야 한다: %q", out)
-	}
-}
-
-func TestMemInject_NoMemory(t *testing.T) {
-	root := setupTestWorkspace(t)
-	if out := runMemInjectIn(t, root); out != "" {
-		t.Errorf("메모리가 없으면 출력이 없어야 한다: %q", out)
-	}
-}
-
-// 세션 시작 주입 전에 retention_days(기본 learning 30일)를 넘긴 항목을 정리한다.
-func TestMemInject_PrunesExpired(t *testing.T) {
-	root := setupTestWorkspace(t)
-	store := memory.NewStore(root)
-	old := &memory.Entry{ProjectID: "alpha", Category: "learning", Key: "오래된 학습",
-		Content: "31일이 지나 만료 정리 대상인 오래된 학습", Confidence: 0.8,
-		CreatedAt: time.Now().UTC().Add(-31 * 24 * time.Hour)}
-	if err := store.Insert(old); err != nil {
-		t.Fatal(err)
-	}
-	insertMem(t, root, "alpha", "새 결정", "아직 유효한 새 결정 요약")
-
-	out := runMemInjectIn(t, root)
-	if _, err := os.Stat(root + "/" + old.Path); !os.IsNotExist(err) {
-		t.Errorf("만료 항목 파일이 삭제되어야 한다: %v", err)
-	}
-	if strings.Contains(out, "오래된 학습") || !strings.Contains(out, "새 결정") {
-		t.Errorf("만료 항목은 빠지고 새 항목만 주입되어야 한다:\n%s", out)
 	}
 }
 
@@ -164,10 +63,9 @@ func TestMemStore_ReportsUpdate(t *testing.T) {
 	}
 }
 
-// 구버전 Stop 훅이 저장한 훅 JSON 원문은 보존 정책을 꺼 둔 워크스페이스에서도 주입 전에 지운다.
+// 구버전 Stop 훅이 저장한 훅 JSON 원문은 옛 훅이 마지막으로 돌 때 지운다.
 func TestMemInject_RemovesLegacyHookEntries(t *testing.T) {
 	root := setupTestWorkspace(t)
-	writeMemConfig(t, root, "  retention_days: {}\n")
 	junk := &memory.Entry{ProjectID: "alpha", Category: "learning", Author: "claude", Confidence: 0.8,
 		Key:     `session-20261029-172146/{"session_id"-"8c1d2e3f`,
 		Content: `{"session_id":"8c1d2e3f-0a9b-4c8d-b7e6-f5a4b3c2d1e0","transcript_path":"/x.jsonl","hook_event_name":"Stop","stop_hook_active":false}`}
@@ -176,12 +74,15 @@ func TestMemInject_RemovesLegacyHookEntries(t *testing.T) {
 	}
 	insertMem(t, root, "alpha", "새 결정", "아직 유효한 새 결정 요약")
 
-	out := runMemInjectIn(t, root)
-	if _, err := os.Stat(root + "/" + junk.Path); !os.IsNotExist(err) {
-		t.Errorf("구버전 훅 항목 파일이 삭제되어야 한다: %v", err)
+	if out := runMemInjectIn(t, root); out != "" {
+		t.Errorf("stdout은 비어 있어야 한다: %q", out)
 	}
-	if strings.Contains(out, "hook_event_name") || !strings.Contains(out, "새 결정") {
-		t.Errorf("훅 JSON은 빠지고 실제 항목만 주입되어야 한다:\n%s", out)
+	entries, err := memory.NewStore(root).List("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Key == junk.Key {
+		t.Errorf("훅 JSON은 빠지고 실제 항목만 남아야 한다: %+v", entries)
 	}
 }
 
@@ -189,13 +90,13 @@ func TestMemInject_RemovesLegacyHookEntries(t *testing.T) {
 // 매뉴얼과 AGENTS.md 블록을 낡게 하고, 이제 없는 내장 에이전트를 남긴다.
 func staleClaudeWorkspace(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.MkdirAll(layout.PylonDir(root), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeMemConfig(t, root, "  proactive_injection: true\n  proactive_max_tokens: 2000\n")
+	root := setupTestWorkspace(t)
 	insertMem(t, root, "alpha", "k1", "내용")
 	if err := generateClaudeDir(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"pylon mem inject"}]}]}}`
+	if err := os.WriteFile(filepath.Join(layout.ClaudeDir(root), "settings.json"), []byte(settings), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	manual := filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md")
@@ -217,13 +118,15 @@ func staleClaudeWorkspace(t *testing.T) string {
 	return root
 }
 
-// 업데이트 뒤 첫 세션은 pylon이나 doctor 없이 워크스페이스를 갱신하고, stdout에는 주입 본문만 낸다.
+// 옛 훅이 남은 워크스페이스는 첫 세션에서 스스로 갱신되고 훅이 지워지며, stdout에는 아무것도 내지 않는다.
 func TestMemInject_RefreshesWorkspaceAfterUpgrade(t *testing.T) {
 	root := staleClaudeWorkspace(t)
 
-	out := runMemInjectIn(t, root)
-	if !strings.HasPrefix(out, memInjectHeader) || !strings.HasSuffix(out, memInjectFooter) {
-		t.Errorf("stdout에 주입 본문 외의 내용이 섞였다: %q", out)
+	if out := runMemInjectIn(t, root); out != "" {
+		t.Errorf("훅의 stdout은 세션 컨텍스트가 되므로 비어 있어야 한다: %q", out)
+	}
+	if data, _ := os.ReadFile(filepath.Join(layout.ClaudeDir(root), "settings.json")); strings.Contains(string(data), "pylon mem inject") {
+		t.Errorf("옛 훅이 남았다: %s", data)
 	}
 	manual, _ := os.ReadFile(filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md"))
 	if string(manual) == "old manual" {
@@ -261,7 +164,7 @@ func TestMemInject_NoWritesWhenUpToDate(t *testing.T) {
 	}
 }
 
-// 갱신이 실패해도 메모리는 주입되고, 원인을 고치면 다음 세션이 다시 시도한다.
+// 갱신이 실패해도 세션을 막지 않고, 원인을 고치면 다음 세션이 다시 시도한다.
 func TestMemInject_RetriesRefreshAfterFailure(t *testing.T) {
 	root := staleClaudeWorkspace(t)
 	good, err := os.ReadFile(layout.RootAgentsPath(root))
@@ -273,8 +176,8 @@ func TestMemInject_RetriesRefreshAfterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if out := runMemInjectIn(t, root); !strings.HasPrefix(out, memInjectHeader) {
-		t.Errorf("갱신 실패가 메모리 주입을 막았다: %q", out)
+	if out := runMemInjectIn(t, root); out != "" {
+		t.Errorf("갱신 실패도 stdout으로 내보내면 안 된다: %q", out)
 	}
 	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != broken {
 		t.Errorf("깨진 AGENTS.md를 건드렸다: %q", got)
@@ -291,11 +194,7 @@ func TestMemInject_RetriesRefreshAfterFailure(t *testing.T) {
 
 // Claude Code를 쓰지 않는 워크스페이스에서 수동 실행해도 .claude/를 만들지 않는다.
 func TestMemInject_DoesNotCreateClaudeDir(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(layout.PylonDir(root), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeMemConfig(t, root, "  proactive_injection: true\n")
+	root := setupTestWorkspace(t)
 	runMemInjectIn(t, root)
 	if _, err := os.Stat(layout.ClaudeDir(root)); !os.IsNotExist(err) {
 		t.Errorf(".claude/가 생겼다: %v", err)

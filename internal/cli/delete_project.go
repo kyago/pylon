@@ -45,7 +45,7 @@ func runDeleteProject(name string, purge, force bool) error {
 		return err
 	}
 
-	root, _, err := openWorkspace()
+	root, err := resolveRoot()
 	if err != nil {
 		return err
 	}

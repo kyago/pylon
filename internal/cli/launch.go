@@ -10,19 +10,6 @@ import (
 	"github.com/kyago/pylon/internal/layout"
 )
 
-// openWorkspace finds the workspace root and loads config.
-func openWorkspace() (string, *config.Config, error) {
-	root, err := resolveRoot()
-	if err != nil {
-		return "", nil, err
-	}
-	cfg, err := config.LoadConfig(layout.ConfigPath(root))
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to load config: %w", err)
-	}
-	return root, cfg, nil
-}
-
 // generateClaudeDir creates/updates the .claude/ directory from .pylon/ source of truth.
 func generateClaudeDir(root string, projects []config.ProjectInfo) error {
 	claudeDir := layout.ClaudeDir(root)
@@ -45,16 +32,14 @@ func generateClaudeDir(root string, projects []config.ProjectInfo) error {
 	}
 
 	// Refresh the pylon-owned .pylon/builtin/ resources (agents, commands, reference)
-	// from the embedded set. Shared with `pylon doctor` so launch
-	// and maintenance can never drift, and runs before the .claude/ generation below
+	// from the embedded set. Runs before the .claude/ generation below
 	// so the agent links resolve into an up-to-date builtin dir. User-authored files
 	// are left untouched — see syncBuiltinResources for the ownership contract.
-	if err := syncBuiltinForLaunch(root); err != nil {
-		return err
+	if _, err := syncBuiltinResources(root); err != nil {
+		return fmt.Errorf("내장 리소스 동기화 실패: %w", err)
 	}
 
-	// Reconcile .claude/commands/ with the desired command set. The desired-state
-	// computation is shared with `pylon doctor` so the two never drift.
+	// Reconcile .claude/commands/ with the desired command set.
 	desired := buildDesiredClaudeCommands(root)
 	if err := applyClaudeCommands(commandsDir, desired); err != nil {
 		return err
@@ -64,9 +49,9 @@ func generateClaudeDir(root string, projects []config.ProjectInfo) error {
 		return fmt.Errorf(".claude/agents/ 생성 실패: %w", err)
 	}
 
-	// Generate hooks in .claude/settings.json for Claude Code session lifecycle
-	if err := generateSettingsHooks(claudeDir); err != nil {
-		return fmt.Errorf("settings.json hooks 생성 실패: %w", err)
+	// Earlier releases injected memory from a SessionStart hook; knowledge is now looked up on demand.
+	if _, err := removePylonHooks(claudeDir); err != nil {
+		fmt.Fprintf(os.Stderr, "경고: .claude/settings.json 훅 제거 실패: %v\n", err)
 	}
 
 	return nil
