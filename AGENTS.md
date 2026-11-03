@@ -17,7 +17,8 @@ for Codex) plus `CLAUDE.md`/`AGENTS.md`, and then **replaces its own process** w
 and `/pl:cleanup`. Stage-by-stage execution is moving to the separate Paseo plugin `kyago/paseo-todo-board`.
 `/pl:pipeline` and its stage commands are frozen: no new features, fix real failures only, removal planned after a
 trial on the board. Before adding or hardening anything, check that it solves a problem actually hit and that Claude
-Code, Codex or Paseo does not already cover it.
+Code, Codex or Paseo does not already cover it. Compose existing tools by default and build only what needs the
+multi-repo workspace scope: keep the data as plain markdown, and connect tools through the CLI and files only.
 
 Do not confuse this file with the workspace `AGENTS.md`/`CLAUDE.md`: *this* one guides development of the
 binary; the workspace files are generated at runtime and have no effect on the binary when edited.
@@ -201,6 +202,6 @@ re-implementing discovery.
 - **User-facing strings are Korean**; code identifiers, comments-of-record, and errors wrapped for
   developers may be English. Match the surrounding file.
 - Global CLI flags: `--workspace`, `--verbose/-v`, `--json`. Commands that output data should honor `--json`.
-- **Versioning is CalVer** `YYYY.M.SEQ` (e.g. `2026.6.3`), *not* semver. Release via `make tag TAG=2026.M.N`
-  (validates format + clean tree, pushes tag → goreleaser). Because tags aren't `vX.Y.Z`, `go install @<ver>`
+- **Versioning is CalVer** `YYYY.M.SEQ` (e.g. `2026.6.3`), *not* semver. Every push to `main` that passes CI gets the
+  next tag and a goreleaser release (the `release` job in `.github/workflows/ci.yml`); there is no manual step. Because tags aren't `vX.Y.Z`, `go install @<ver>`
   does not resolve to a release.
