@@ -325,6 +325,19 @@ func reconcileRootAgentFiles(root string) (bool, []string, error) {
 	return ensureRootAgentFiles(root, projects)
 }
 
+// refreshProjectList updates the project list in AGENTS.md after add-project or
+// delete-project. The project change is already done by then, so a failure only warns.
+func refreshProjectList(root string) {
+	_, backedUp, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ AGENTS.md 프로젝트 목록 갱신 실패: %v\n", err)
+		return
+	}
+	for _, name := range backedUp {
+		fmt.Fprintf(os.Stderr, "ℹ 기존 내용을 %s에 백업했습니다.\n", name)
+	}
+}
+
 // syncResourcesIfWorkspace refreshes the pylon-owned .pylon/builtin/ resources if
 // running inside a pylon workspace.
 func syncResourcesIfWorkspace() {

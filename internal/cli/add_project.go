@@ -84,6 +84,7 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	fmt.Printf("Project %s added successfully.\n", projectName)
+	refreshProjectList(root)
 
 	// Exclude .pylon/ from project git tracking via .git/info/exclude
 	if err := excludePylonFromRepo(projectDir); err != nil {

@@ -439,6 +439,14 @@ func TestRunAddProject_UsesPlainClone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workspace, "myproj", ".pylon", "context.md")); err != nil {
 		t.Errorf("expected sub .pylon/context.md, got %v", err)
 	}
+	// 5) AGENTS.md 프로젝트 목록에 바로 반영됨
+	agents, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("AGENTS.md missing: %v", err)
+	}
+	if !strings.Contains(string(agents), "**프로젝트 1개**: myproj") {
+		t.Errorf("AGENTS.md should list the new project")
+	}
 }
 
 func TestRunAddProject_RefusesWorkspaceWorktree(t *testing.T) {
