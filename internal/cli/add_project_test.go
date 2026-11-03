@@ -254,9 +254,6 @@ func TestRunAddProject_SkipCloneWithExistingDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectDir, ".pylon", "context.md")); err != nil {
 		t.Error("expected .pylon/context.md to be created")
 	}
-	if _, err := os.Stat(filepath.Join(projectDir, ".pylon", "verify.yml")); err != nil {
-		t.Error("expected .pylon/verify.yml to be created")
-	}
 
 	// Verify .pylon/ is excluded from git tracking
 	excludePath := filepath.Join(projectDir, ".git", "info", "exclude")

@@ -15,23 +15,6 @@ func ConfigPath(root string) string {
 	return filepath.Join(PylonDir(root), "config.yml")
 }
 
-// Folder names inside a run directory (and VerifyArtifactsDir) that hold project files pylon moved out of a
-// repository: verification artifacts and run leftovers.
-const (
-	VerifyArtifactsName = "verify-artifacts"
-	LeftoversName       = "leftovers"
-)
-
-// RuntimeDir returns the pipeline runtime state directory (.pylon/runtime).
-func RuntimeDir(root string) string {
-	return filepath.Join(PylonDir(root), "runtime")
-}
-
-// VerifyArtifactsDir is where verification artifacts go when there is no run directory.
-func VerifyArtifactsDir(root string) string {
-	return filepath.Join(RuntimeDir(root), VerifyArtifactsName)
-}
-
 // MemoryDir returns the markdown memory store root (.pylon/memory).
 func MemoryDir(root string) string {
 	return filepath.Join(PylonDir(root), "memory")
@@ -40,11 +23,6 @@ func MemoryDir(root string) string {
 // ProjectMemoryDir returns one project's memory directory (.pylon/memory/<project>).
 func ProjectMemoryDir(root, project string) string {
 	return filepath.Join(MemoryDir(root), project)
-}
-
-// HistoryDir returns the file-based work history root (.pylon/history).
-func HistoryDir(root string) string {
-	return filepath.Join(PylonDir(root), "history")
 }
 
 // BuiltinDir returns the pylon-owned resource directory (.pylon/builtin). It holds
@@ -63,17 +41,6 @@ func ResourceDir(root, kind string) string {
 // BuiltinResourceDir returns the pylon-owned resource directory .pylon/builtin/<kind>.
 func BuiltinResourceDir(root, kind string) string {
 	return filepath.Join(BuiltinDir(root), filepath.FromSlash(kind))
-}
-
-// VerifyConfigPath returns the verification config path (.pylon/verify.yml) for a
-// workspace root or a project directory.
-func VerifyConfigPath(dir string) string {
-	return filepath.Join(PylonDir(dir), "verify.yml")
-}
-
-// ScriptsDir returns the pipeline bash script directory (.pylon/builtin/scripts/bash).
-func ScriptsDir(root string) string {
-	return BuiltinResourceDir(root, "scripts/bash")
 }
 
 // CodexSkillsDir returns the repo-scoped codex skill discovery directory

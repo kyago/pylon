@@ -114,8 +114,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Println("⚠ git 미설치로 프로젝트 exclude 검사 건너뜀")
 	}
 
-	if !checkProjectVerifyConfigs() {
-		allPassed = false
+	if root, err := resolveRoot(); err == nil {
+		if projects, err := config.DiscoverProjects(root); err == nil {
+			hintUnscaffoldedProjects(root, projects)
+		}
 	}
 
 	fmt.Println()
@@ -124,7 +126,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// 도구 미설치가 아닌 실패(예: verify.yml 문제)는 위에서 이미 경고로 안내됐다.
+	// 도구 미설치가 아닌 실패(예: exclude 누락)는 위에서 이미 경고로 안내됐다.
 	if len(failures) > 0 {
 		printInstallHints(failures)
 	}
@@ -214,101 +216,6 @@ func checkRepoExcludes(fix bool) bool {
 	}
 	fmt.Println("  수정: pylon doctor --fix-excludes 또는 각 프로젝트의 .git/info/exclude에 '.pylon/' 추가")
 	return false
-}
-
-// checkProjectVerifyConfigs ensures every discovered project has a usable
-// .pylon/verify.yml. verify.yml is local-only state (excluded from the project
-// repo by design), so it is lost outside this machine and nothing else recreates
-// it — a missing file is regenerated from the detected tech stack, the same way
-// `pylon add-project` scaffolds it, and the .pylon/ exclude entry is re-applied
-// so the regenerated file can never become committable. Discovery only sees
-// directories that still have a .pylon/ dir; a fully fresh clone (no .pylon/ at
-// all) is reported as a hint to run `pylon add-project --skip-clone` instead.
-// An existing file is user data and is never overwritten: parse failures and
-// empty command sets are only reported.
-// Returns true when every project ends up with a parseable, non-empty config.
-func checkProjectVerifyConfigs() bool {
-	root, err := resolveRoot()
-	if err != nil {
-		return true // not in a workspace, nothing to check
-	}
-	projects, err := config.DiscoverProjects(root)
-	if err != nil {
-		return true
-	}
-	// 단일 repo 레이아웃: 하위 프로젝트 없이 워크스페이스 루트 자체가 git repo이고
-	// 실제 스택이 감지되는 경우에만 루트가 검증 대상이다. 스택 미감지 루트나 하위
-	// 프로젝트가 있는 워크스페이스에서 루트 verify.yml을 만들면 no-op 검증 파일이
-	// run-verification의 GIT_ROOT 오해석 가드를 무력화한다.
-	if len(projects) == 0 {
-		if _, statErr := os.Stat(filepath.Join(root, ".git")); statErr == nil {
-			if detectTechStack(root).Language != "unknown" {
-				projects = append(projects, config.ProjectInfo{Name: "(workspace root)", Path: root})
-			}
-		}
-	} else if _, statErr := os.Stat(layout.VerifyConfigPath(root)); statErr == nil {
-		fmt.Printf("⚠ 워크스페이스 루트에 verify.yml이 있습니다 — 하위 프로젝트 검증의 GIT_ROOT 오해석 가드를 무력화하므로 삭제를 권장합니다: %s\n",
-			layout.VerifyConfigPath(root))
-	}
-
-	fmt.Println()
-	hintUnscaffoldedProjects(root, projects)
-	if len(projects) == 0 {
-		return true
-	}
-
-	ok := true
-	issues := 0
-	for _, p := range projects {
-		path := layout.VerifyConfigPath(p.Path)
-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-			content := generateVerifyYML(detectTechStack(p.Path))
-			if writeErr := os.WriteFile(path, []byte(content), 0o644); writeErr != nil {
-				fmt.Printf("⚠ %s: verify.yml 재생성 실패: %v\n", p.Name, writeErr)
-				ok = false
-				issues++
-				continue
-			}
-			fmt.Printf("✓ %s: 누락된 verify.yml 재생성됨\n", p.Name)
-			// 재생성한 파일이 프로젝트 repo에 커밋 가능해지지 않도록 exclude를
-			// 보장한다. 하위 프로젝트는 add-project와 동일하게 .pylon/ 전체,
-			// 단일 repo 루트는 워크스페이스 .pylon/이 git-tracked 대상이므로
-			// verify.yml만 제외한다.
-			if isGit, _ := checkExcludeStatus(p.Path); isGit {
-				entry := ".pylon/"
-				if p.Path == root {
-					entry = ".pylon/verify.yml"
-				}
-				if exclErr := excludeEntryFromRepo(p.Path, entry); exclErr != nil {
-					fmt.Printf("⚠ %s: %s exclude 설정 실패: %v\n", p.Name, entry, exclErr)
-					ok = false
-					issues++
-				}
-			}
-		} else if statErr != nil {
-			fmt.Printf("⚠ %s: verify.yml 확인 실패: %v\n", p.Name, statErr)
-			ok = false
-			issues++
-			continue
-		}
-
-		vc, loadErr := config.LoadVerifyConfig(path)
-		if loadErr != nil {
-			fmt.Printf("⚠ %s: verify.yml 파싱 실패 — 직접 수정이 필요합니다: %v\n", p.Name, loadErr)
-			ok = false
-			issues++
-			continue
-		}
-		if len(vc.OrderedSteps())+len(vc.OrderedHeldOutSteps()) == 0 {
-			fmt.Printf("⚠ %s: verify.yml에 실행 가능한 검증 명령이 없습니다: %s\n", p.Name, path)
-			ok = false
-			issues++
-		}
-	}
-	if issues == 0 {
-		fmt.Printf("✓ 모든 프로젝트 verify.yml 정상 (%d개 프로젝트)\n", len(projects))
-	}
-	return ok
 }
 
 // hintUnscaffoldedProjects points out workspace-root git repos that have no

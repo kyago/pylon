@@ -145,10 +145,6 @@ func scaffoldProject(projectDir, projectName string) (string, error) {
 		return "", fmt.Errorf("failed to create context.md: %w", err)
 	}
 	fmt.Println("✓ context.md generated")
-	if err := os.WriteFile(filepath.Join(pylonDir, "verify.yml"), []byte(generateVerifyYML(stack)), 0o644); err != nil {
-		return "", fmt.Errorf("failed to create verify.yml: %w", err)
-	}
-	fmt.Println("✓ verify.yml generated")
 	return contextPath, nil
 }
 

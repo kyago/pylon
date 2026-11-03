@@ -75,7 +75,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		filepath.Join(pylonDir, "domain"),
 		filepath.Join(pylonDir, "agents"),
 		filepath.Join(pylonDir, "commands"),
-		filepath.Join(pylonDir, "runtime"),
 	}
 
 	for _, dir := range dirs {
@@ -118,8 +117,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Step 5: Update .gitignore
 	gitignorePath := filepath.Join(workDir, ".gitignore")
 	gitignoreEntries := []string{
-		"# Pylon runtime (agent communication, state)",
-		".pylon/runtime/",
 		// .pylon/memory/ 는 의도적으로 제외 — 메모리는 git으로 추적/리뷰한다 (D1).
 		"",
 		"# Claude CLI agent symlinks (managed by pylon)",
@@ -189,7 +186,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("  .pylon/builtin/            - built-in agents, commands, manual (regenerated)")
 	fmt.Println("  .pylon/agents/             - your own agents")
 	fmt.Println("  .pylon/commands/           - your own pipeline commands")
-	fmt.Println("  .pylon/runtime/            - agent communication runtime")
 	fmt.Println("  .pylon/memory/             - project memory (git-tracked)")
 	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/builtin/agents/, .pylon/agents/)")
 	fmt.Println("  CLAUDE.md                  - @AGENTS.md import marker")

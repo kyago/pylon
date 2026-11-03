@@ -106,34 +106,6 @@ func generateContextMD(projectName string, stack techStack) string {
 	return b.String()
 }
 
-// generateVerifyYML creates a verify.yml for cross-validation.
-func generateVerifyYML(stack techStack) string {
-	var b strings.Builder
-	b.WriteString("commands:\n")
-
-	if stack.BuildTool != "" {
-		b.WriteString(fmt.Sprintf("  - name: build\n    command: %s\n    timeout: 5m\n", stack.BuildTool))
-	}
-
-	switch stack.Language {
-	case "go":
-		b.WriteString("  - name: test\n    command: go test ./... -race\n    timeout: 10m\n")
-	case "typescript", "javascript":
-		b.WriteString("  - name: test\n    command: npm test\n    timeout: 10m\n")
-	case "python":
-		b.WriteString("  - name: test\n    command: python -m pytest\n    timeout: 10m\n")
-	case "rust":
-		b.WriteString("  - name: test\n    command: cargo test\n    timeout: 10m\n")
-	}
-
-	if stack.LintTool != "" {
-		b.WriteString(fmt.Sprintf("  - name: lint\n    command: %s\n    timeout: 3m\n", stack.LintTool))
-	}
-	b.WriteString("\n# Optional acceptance checks captured in the run criteria snapshot.\nheld_out: []\n")
-
-	return b.String()
-}
-
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()

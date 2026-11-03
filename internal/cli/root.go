@@ -60,7 +60,6 @@ func init() {
 	rootCmd.AddCommand(newDeleteProjectCmd())
 	rootCmd.AddCommand(newMemCmd())
 	rootCmd.AddCommand(newUpdateCmd())
-	rootCmd.AddCommand(newInternalCmd())
 }
 
 // Execute runs the root command.
