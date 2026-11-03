@@ -5,39 +5,19 @@ when working on code in this repository.
 
 ## What this repo is
 
-This repository is the **source of the `pylon` binary**, not a pylon workspace. `pylon` is a Go CLI that
-prepares a workspace and then hands off to an interactive provider — Claude Code or Codex, picked by the
-provider router (`internal/provider/`, `internal/cli/provider_runtime.go`). It is a thin *launcher*: `pylon`
-(no subcommand) regenerates the provider's files from `.pylon/` (`.claude/` for Claude Code, `.agents/skills/`
-for Codex) plus `CLAUDE.md`/`AGENTS.md`, and then **replaces its own process** with the provider CLI via
-`syscall.Exec` (`internal/cli/launch.go`). All actual orchestration happens inside the provider session via
-`/pl:*` commands (`$pl-*` skills on Codex) and bash scripts — the Go code never runs the pipeline itself.
+This repository is the **source of the `pylon` binary**, not a pylon workspace. `pylon` is a small Go CLI that sets
+up a workspace root over several repositories: the root `AGENTS.md`, the project list, a few agents and slash
+commands, and a simple markdown memory. It does not start sessions or run anything: the user opens Claude Code, Codex
+or Paseo in the workspace, and the session reads `AGENTS.md`. Nothing is injected; the manual tells the session where
+to look when it needs something. Go never calls an LLM.
 
-**Direction.** pylon is mainly a personal tool. It owns workspace files, project knowledge, memory, verification
-and `/pl:cleanup`. Stage-by-stage execution is moving to the separate Paseo plugin `kyago/paseo-todo-board`.
-`/pl:pipeline` and its stage commands are frozen: no new features, fix real failures only, removal planned after a
-trial on the board. Before adding or hardening anything, check that it solves a problem actually hit and that Claude
-Code, Codex or Paseo does not already cover it. Compose existing tools by default and build only what needs the
-multi-repo workspace scope: keep the data as plain markdown, and connect tools through the CLI and files only.
+**Direction.** A personal tool, kept to workspace setup and simple memory. Before adding anything, check that it
+solves a problem actually hit and that Claude Code, Codex or Paseo does not already cover it. Compose existing tools
+by default and build only what needs the multi-repo workspace scope: keep the data as plain markdown, and connect tools
+through the CLI and files only. Stage-by-stage execution belongs to the separate Paseo plugin `kyago/paseo-todo-board`.
 
-Do not confuse this file with the workspace `AGENTS.md`/`CLAUDE.md`: *this* one guides development of the
-binary; the workspace files are generated at runtime and have no effect on the binary when edited.
-
-The workspace root prompt is **generated deterministically from the embedded manual**. `ensureRootAgentFiles`
-(`internal/cli/launch_agentsmd.go`) writes workspace `CLAUDE.md` as a deterministic `@AGENTS.md` import
-marker on every launch. Inside `AGENTS.md`, pylon owns only the **managed block** delimited by
-`<!-- pylon:begin -->` / `<!-- pylon:end -->`: `buildAgentsBlock` fills it with the embedded manual
-(`internal/cli/reference/pylon-usage.md`) verbatim plus workspace facts Go knows (project list — never the
-root path, which would churn the file when one directory is reached through different paths), and the
-block is rewritten whenever its bytes differ — there is no version stamp and no session authoring. Edits
-inside the block are reverted; content outside the block is user-owned and never modified, and a user's own
-`AGENTS.md` (no block) keeps its content with the block prepended so Codex sees it within the default
-instruction size limit (keep the manual well under 32KiB). A malformed marker pair (missing, reversed, or
-duplicated whole-line markers) aborts launch/init/doctor before any file is touched; uninstall skips the
-file with a warning and proceeds. A block is replaced without a backup only when `isPylonGeneratedBlock`
-recognizes it as pylon's own output (this generator's manual title + facts heading); anything else is copied to
-the next free `AGENTS.md.pylon-bak[.N]` first, and callers report that exact file name. To change what the root agent
-is told, edit the manual; the next launch propagates it. Go never calls an LLM.
+Do not confuse this file with the workspace `AGENTS.md`/`CLAUDE.md`: *this* one guides development of the binary; the
+workspace files are generated and have no effect on the binary when edited.
 
 ## Build / test / lint
 
@@ -49,161 +29,89 @@ make install # go install to $(go env GOPATH)/bin
 ```
 
 `make lint` needs **golangci-lint v2** (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`).
-CI installs it the same way rather than downloading a release binary: prebuilt binaries are built with an
-older Go than this repo's `toolchain go1.26.0` and refuse to run. `.golangci.yml` restores the v1 default
-exclusions, drops errcheck for `_test.go` setup calls, disables QF1012, and enables the gofmt formatter —
-so `make lint` also fails on formatting drift (`golangci-lint fmt` fixes it).
+CI installs it the same way rather than downloading a release binary: prebuilt binaries are built with an older Go
+than this repo's `toolchain go1.26.0` and refuse to run. `.golangci.yml` restores the v1 default exclusions, drops
+errcheck for `_test.go` setup calls, disables QF1012, and enables the gofmt formatter — so `make lint` also fails on
+formatting drift (`golangci-lint fmt` fixes it).
 
-Run a single test / package:
-
-```bash
-go test ./internal/cli/ -run TestInit -race -count=1
-go test ./internal/memory/... -race
-```
-
-`version` is injected via ldflags (`main.version`); a plain `go build` yields `dev`.
+`version` is injected via ldflags (`main.version`); a plain `go build` or `go install` yields `dev`.
 
 ## Architecture
 
-### Embedded resources are the source of truth for workspace content
+### Workspace root files (`internal/cli/launch_agentsmd.go`)
 
-The agents, pipeline commands, and bash scripts that end up in a user's `.pylon/` are **Go-embedded
-from `internal/cli/`** (`//go:embed` directives in `init_cmd.go`, `launch_commands.go`, `launch_hooks.go`):
+`CLAUDE.md` is a deterministic `@AGENTS.md` import marker. Inside `AGENTS.md`, pylon owns only the **managed block**
+delimited by `<!-- pylon:begin -->` / `<!-- pylon:end -->`: `buildAgentsBlock` fills it with the embedded manual
+(`internal/cli/reference/pylon-usage.md`) verbatim plus the project list, and the block is rewritten whenever its bytes
+differ. Edits inside the block are reverted; content outside the block is user-owned and never modified, and a user's
+own `AGENTS.md` (no block) keeps its content with the block prepended so Codex sees it within the default instruction
+size limit (keep the manual well under 32KiB). A malformed marker pair aborts init/doctor before any file is touched;
+uninstall skips the file with a warning and proceeds. A block is replaced without a backup only when
+`isPylonGeneratedBlock` recognizes it as pylon's own output (manual title + facts heading); anything else is copied to
+the next free `AGENTS.md.pylon-bak[.N]` first, and callers report that exact file name. To change what the root agent
+is told, edit the manual; the next `pylon doctor` propagates it. `add-project` and `delete-project` refresh the project
+list themselves.
 
-- `internal/cli/agents/*.md`   → 14 agent definitions
-- `internal/cli/commands/*.md`  → `/pl:*` slash commands
-- `internal/cli/scripts/bash/*.sh` → atomic pipeline steps
-- `internal/cli/reference/*.md` → the pylon usage manual, copied verbatim into the `AGENTS.md` block
-- `internal/cli/hooks.json`     → Claude Code session hooks
+### Embedded resources are the source of truth
 
-**To change agent behavior, pipeline steps, or slash commands, edit these embedded files** — not any
-`.pylon/builtin/` copy. `pylon init`, every launch, and `pylon doctor` / `pylon update` write them to
-`.pylon/builtin/` (see below).
+`//go:embed` from `internal/cli/`: `agents/*.md` (dev, code-reviewer, critic), `commands/*.md` (`/pl:cleanup`,
+`/pl:add-project`), `reference/*.md` (the manual). Edit these, not any `.pylon/builtin/` copy.
 
-### `.pylon/` (source of truth, git-tracked) vs `.claude/` (generated, git-ignored)
+**Ownership contract** (`syncBuiltinResources` in `doctor.go`, shared by init, doctor and `pylon mem inject`):
+`.pylon/builtin/` (git-ignored) is pylon-owned. Every sync compares each file with the embeds, rewrites missing or
+differing ones and deletes files the embeds no longer have — never a wholesale wipe, so concurrent runs converge.
+Adding, changing or deleting a built-in therefore reaches a workspace on its next `pylon doctor`, with
+`.claude/commands/` and `.claude/agents/` pruned accordingly. `.pylon/{agents,commands}/` hold user resources; readers
+take the built-in first, so a same-named user file is ignored and never modified. Domain knowledge and memory are user
+data and are never overwritten. Only the workspace-root `.pylon/` is synced — per-project `<project>/.pylon/`
+directories are untouched.
 
-In a *runtime workspace*, `.pylon/` holds config + resources and `.claude/` is regenerated on every launch:
-CLAUDE.md, `.claude/agents/` symlinks into `.pylon/builtin/agents/` and `.pylon/agents/`,
-`.claude/commands/`, and `.claude/settings.json` hooks. `generateClaudeDir` (`launch.go`) is the generator.
-`runLaunch` also appends `.claude/`, `CLAUDE.md`, `AGENTS.md`, `.pylon/logs/`, `.pylon/builtin/`, `.agents/skills/pl-*/`
-to `.gitignore`.
+`generateClaudeDir` (`launch.go`) and `pylon doctor` share `buildDesiredClaudeCommands`, so they cannot drift.
 
-**Ownership contract for `.pylon/` resources** (`syncBuiltinResources` in `doctor.go`, shared by launch,
-init, doctor, sync-agents and `pylon mem inject`): the embedded agents, commands, scripts and manual live in
-**`.pylon/builtin/`** (git-ignored), which is pylon-owned. Every sync compares each file with the embeds,
-rewrites missing or differing ones (restoring script exec bits) and deletes files the embeds no longer have —
-never a wholesale wipe, so concurrent launches converge instead of racing and a damaged builtin heals on the
-next launch or doctor. Adding, changing **or deleting** a built-in therefore reaches existing workspaces with
-no migration step (`.claude/commands/`, `.claude/agents/` links and injected files, and Codex pointer skills
-prune the dropped entries).
-The user-owned `.pylon/{agents,skills,commands}/` hold only user resources (`pylon add-agent` /
-`pylon add-skill` or a new filename; `scaffoldMarkdownResource` refuses built-in names). **A built-in name
-always wins**: readers take the built-in first, so a same-named file there is ignored and never modified.
-Paseo starts sessions without `pylon`, so `pylon mem inject` (the SessionStart hook) runs the same sync: when the
-builtin changed it also regenerates the provider files, warns on stderr instead of blocking the session, and retries on
-the next session after a failure. Its stdout is session context, so nothing else may print there. `pylon doctor` also
-rewrites the pylon hook groups in `.claude/settings.json` from the embedded `hooks.json`, as launch does. Readers merge both sources —
-`workspaceAgents`, `loadAgentSkillMap`, `buildDesiredClaudeCommands`, `generateCodexSkills` — built-in
-first. Markdown resources address built-ins as `.pylon/builtin/...` and user agents as `.pylon/agents/...`.
-Config (`config.yml`), domain knowledge, memory, history and runtime state are user data and are never
-overwritten. Only the workspace-root `.pylon/` is synced — per-project `<project>/.pylon/` directories
-are untouched.
+### No hooks
 
-### `doctor` is the reconciliation engine, shared with launch
-
-Desired-state for `.claude/commands/` is computed by `buildDesiredClaudeCommands` (built-ins straight from
-the embeds, then user commands from `.pylon/commands/`) and applied by both `generateClaudeDir` and
-`pylon doctor`, so the launch path and the maintenance path can never drift.
-
-### Verification evidence contract (`internal/cli/verify_worktree.go`)
-
-`verification.json`'s `tree` claims one thing: the frozen checks passed on exactly this commit's project content.
-Project content is the repository minus ignored files, `.pylon/` and `.claude/worktrees/` (`treePathspec`); ignored
-files are local environment and `.pylon/` is pylon state, so neither is part of the claim. Two things must never
-happen, and changes here are judged against them:
-
-1. **A `tree` for code that was not checked.** No tree when, before or after the checks, there is any uncommitted
-   or untracked project file, a staged `.pylon/` edit, a file marked assume-unchanged/skip-worktree present on disk,
-   a tracked edit made by a step, a moved HEAD, or a result that is not `ok`.
-2. **A user file lost.** Pylon never deletes a project file. It only moves untracked files, only into a
-   `.pylon/runtime/` directory, never through a symlink, and replaces only its own earlier artifact at the same path
-   once the new one is in place; emptied directories stay. Run leftovers move only when listed, each call into a
-   fresh directory, and outlive the run (`cleanup-pipeline.sh` keeps them in `.pylon/runtime/leftovers/<run>/`).
-
-Everything else fails closed — no `tree`, a `tree_reason`, and the caller re-verifies or stops — rather than being
-handled: marked files on disk, cross-filesystem moves, edits inside nested repositories, a dirty start (its new
-files stay where they are). Non-goals: unstaged edits to tracked `.pylon/` files, and files another process creates
-in the worktree during verification (moved with the artifacts, recoverable there). A review finding outside these
-two rules is a known limit, not a bug; prefer failing closed over new handling code.
+Pylon installs no hooks. `removePylonHooks` deletes the `pylon mem inject` SessionStart hook earlier releases wrote,
+leaving other hooks alone. The hidden `pylon mem inject` exists only for workspaces that still have that hook: it runs
+`refreshWorkspaceAfterUpgrade`, which removes the hook, and clears old hook junk from memory. Its stdout must stay
+empty, because a hook's stdout becomes session context. Delete it once no workspace in use has the hook.
 
 ### Project discovery contract (`internal/config/workspace.go`)
 
 A workspace subdirectory with `.pylon/` is a project unless it is a **workspace worktree**: a linked git worktree
-whose main checkout is non-bare and is either the workspace root or a non-hidden direct subdirectory. Such a
-worktree is just another checkout of something already here. Two things must never happen, and changes here are
-judged against them:
+whose main checkout is non-bare and is either the workspace root or a non-hidden direct subdirectory. Such a worktree is
+just another checkout of something already here. Two things must never happen, and changes here are judged against them:
 
-1. **A real project disappears.** Whatever cannot be shown to be a workspace worktree stays a project: main
-   checkout outside the workspace, `core.worktree` pointing elsewhere, bare or separate git dir, submodule, a git
-   error, or a main repository that moved. The one exception git cannot reveal: a separate git dir literally named
-   `.git` inside the workspace is taken for its parent's checkout.
+1. **A real project disappears.** Whatever cannot be shown to be a workspace worktree stays a project: main checkout
+   outside the workspace, `core.worktree` pointing elsewhere, bare or separate git dir, submodule, a git error, or a main
+   repository that moved. The one exception git cannot reveal: a separate git dir literally named `.git` inside the
+   workspace is taken for its parent's checkout.
 2. **A command destroys user files in a workspace worktree, or claims to have handled one it skipped.** Uninstall
    deletes only its `.pylon/` directory and keeps the worktree; `add-project` and `delete-project` refuse it; doctor
    neither regenerates anything in it nor suggests `add-project` for it.
 
 The verdict must not depend on how the workspace path is spelled (symlink, case, Unicode normalization) or on the
-caller's `GIT_*` environment and global git config. Non-goals:
-`/pl:pipeline` targeting a workspace worktree (`pylon internal verify --config` checks one), cleaning state left from
-when a worktree counted as a project, repairing a worktree whose main checkout `uninstall --remove-projects` removed,
-and worktrees whose main checkout is nested deeper. A review finding outside these rules is a known limit, not a bug.
-
-### Work branch naming contract (`init-pipeline.sh`, `cleanup-pipeline.sh`)
-
-A repo sub-pipeline's branch is named once, when it starts: `--branch <name>` (the root session's reading of the
-user's naming rules, `/pl:pipeline` Step 3B) > `git.branch_prefix` > `task`. With neither a rule nor a config, the
-name stays `task-<run-id>-<repo-id>` and init touches no network. Only a name containing the run id proves the run
-owns it; a `--branch` name may also be a person's. Two things must never happen, and changes here are judged against them:
-
-1. **A user's work lost.** Scripts delete a branch or remove a worktree by name only when the name contains the run
-   id. Worktrees on a name without it stay and are reported as `kept`, and branches beside such a name stay.
-   `/pl:cleanup` deletes the run's branch only when its merge check passes or it has no commits past `base_revision`,
-   so no unmerged commit is lost.
-2. **A run works on a branch it did not create.** A new name is refused when it is not a valid branch name, is
-   protected (any case), resolves to anything in the repo, or the root run already registered this repo. A `--branch`
-   name is also refused when `origin` has it or cannot be asked. Re-entry keeps the recorded name and refuses a
-   protected one, a mismatch with the root registry, or a different `--branch`.
-
-Non-goals: enforcing that the session followed the rules; `git.branch_prefix` when neither yq nor PyYAML is available;
-agent branches left beside a name without the run id; a name deleted and recreated while its run is still open, including by
-another run; a same name pushed to `origin` after init; case-only collisions with non-protected branches. A review
-finding outside these rules is a known limit, not a bug.
+caller's `GIT_*` environment and global git config. Non-goals: cleaning state left from when a worktree counted as a
+project, repairing a worktree whose main checkout `uninstall --remove-projects` removed, and worktrees whose main
+checkout is nested deeper. A review finding outside these rules is a known limit, not a bug.
 
 ### Package layout
 
 - `cmd/pylon/main.go` — entry point; sets version, calls `cli.Execute()`.
-- `internal/cli/` — every Cobra subcommand (`root.go` registers them); `<name>.go` + `<name>_test.go` pairs.
-  This is also where embedded resources and the launch/generate logic live.
-- `internal/layout/` — **all** `.pylon/` and `.claude/` path construction. Never hand-build these paths;
-  use `layout.*` helpers so the directory contract lives in one place.
-- `internal/config/` — `config.yml` schema + loading. Only `version` is required; every other field is
-  defaulted at load time (`LoadConfig`). `FindWorkspaceRoot` walks up to locate `.pylon/`.
+- `internal/cli/` — every Cobra subcommand (`root.go` registers them) and the generation logic.
+- `internal/layout/` — **all** `.pylon/` and `.claude/` path construction. Never hand-build these paths.
+- `internal/config/` — workspace root and project discovery. `FindWorkspaceRoot` walks up to `.pylon/config.yml`, which
+  only marks a workspace; its content is not read.
 - `internal/memory/` — markdown-file memory store (`<category>/<slug>.md` + `INDEX.md`), token-match search.
-- `internal/history/` — directory-snapshot work history under `.pylon/history/pipelines/`.
-- `internal/criteria/`, `internal/evaluator/`, `internal/provider/`, `internal/trajectory/` — verification
-  gates behind `pylon internal {criteria,evaluator,trajectory,verify}`: immutable criteria snapshots, isolated
-  evaluator bundles/verdicts, and create-once task reports / failure records.
-- `internal/domain/`, `internal/slug/`, `internal/fsutil/` — supporting utilities.
+- `internal/slug/`, `internal/fsutil/` — supporting utilities.
 
-`resolveRoot()` (`workspace.go`) is the shared workspace-locator used by all commands; reuse it rather than
-re-implementing discovery.
+`resolveRoot()` (`workspace.go`) is the shared workspace-locator used by all commands.
 
 ## Conventions
 
-- **Go 1.24+** (toolchain go1.26). Dependencies are minimal by design: Cobra (CLI), charmbracelet/huh
-  (interactive prompts), yaml.v3. Keep it that way — no heavyweight additions without reason.
-- **User-facing strings are Korean**; code identifiers, comments-of-record, and errors wrapped for
-  developers may be English. Match the surrounding file.
+- **Go 1.24+** (toolchain go1.26). Dependencies are minimal by design: Cobra and little else. Keep it that way.
+- **User-facing strings are Korean**; code identifiers, comments-of-record, and errors wrapped for developers may be
+  English. Match the surrounding file.
 - Global CLI flags: `--workspace`, `--verbose/-v`, `--json`. Commands that output data should honor `--json`.
 - **Versioning is CalVer** `YYYY.M.SEQ` (e.g. `2026.6.3`), *not* semver. Every push to `main` that passes CI gets the
-  next tag and a goreleaser release (the `release` job in `.github/workflows/ci.yml`); there is no manual step. Because tags aren't `vX.Y.Z`, `go install @<ver>`
-  does not resolve to a release.
+  next tag and a goreleaser release (the `release` job in `.github/workflows/ci.yml`); there is no manual step. Because
+  tags aren't `vX.Y.Z`, `go install @<ver>` does not resolve to a release.
