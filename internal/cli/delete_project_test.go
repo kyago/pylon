@@ -119,6 +119,13 @@ func TestRunDeleteProject_Default_KeepsSourceRemovesMarker(t *testing.T) {
 	if isDiscovered(t, root, "myapp") {
 		t.Error("project should no longer be discovered after marker removal")
 	}
+	agents, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(agents), "myapp") {
+		t.Error("AGENTS.md should no longer list the deleted project")
+	}
 
 	// Project memory removed
 	mem, err := memory.NewStore(root).List("myapp")

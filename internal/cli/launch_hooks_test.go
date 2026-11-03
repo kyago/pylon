@@ -5,228 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/kyago/pylon/internal/config"
 )
-
-func TestGenerateSettingsHooks(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	if err := generateSettingsHooks(tmpDir); err != nil {
-		t.Fatalf("generateSettingsHooks() error = %v", err)
-	}
-
-	settingsPath := filepath.Join(tmpDir, "settings.json")
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatalf("failed to read settings.json: %v", err)
-	}
-
-	// Parse and verify structure
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatalf("failed to parse settings.json: %v", err)
-	}
-
-	hooks, ok := settings["hooks"]
-	if !ok {
-		t.Fatal("settings.json should have a 'hooks' key")
-	}
-
-	hooksMap, ok := hooks.(map[string]any)
-	if !ok {
-		t.Fatal("hooks should be a map")
-	}
-
-	// Stop hook은 더 이상 설치하지 않는다 — 메모리는 SessionStart에서 주입한다.
-	if _, ok := hooksMap["Stop"]; ok {
-		t.Fatal("Stop hook should not be installed")
-	}
-
-	startHooks, ok := hooksMap["SessionStart"].([]any)
-	if !ok || len(startHooks) != 1 {
-		t.Fatalf("SessionStart should have exactly 1 group, got %v", hooksMap["SessionStart"])
-	}
-	startGroup, ok := startHooks[0].(map[string]any)
-	if !ok {
-		t.Fatal("SessionStart hook group should be a map")
-	}
-	if m, _ := startGroup["matcher"].(string); m != "startup|resume|clear|compact" {
-		t.Errorf("SessionStart matcher = %q, want \"startup|resume|clear|compact\"", m)
-	}
-	inner, ok := startGroup["hooks"].([]any)
-	if !ok || len(inner) != 1 {
-		t.Fatal("SessionStart group should have exactly 1 hook")
-	}
-	startCmd, _ := inner[0].(map[string]any)
-	if startCmd["type"] != "command" || startCmd["command"] != "pylon mem inject" {
-		t.Errorf("SessionStart hook = %v, want command 'pylon mem inject'", startCmd)
-	}
-
-	// PostToolUse hook must NOT be installed by default: it stored raw edit
-	// diffs as memory and polluted BM25 search (issue #76).
-	if _, ok := hooksMap["PostToolUse"]; ok {
-		t.Fatal("PostToolUse hook should not be installed by default (issue #76)")
-	}
-
-	// Verify no description field (not in Claude Code spec)
-	if _, hasDesc := startGroup["description"]; hasDesc {
-		t.Error("hook groups should not have a 'description' field")
-	}
-}
-
-func TestGenerateSettingsHooks_ValidJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	if err := generateSettingsHooks(tmpDir); err != nil {
-		t.Fatalf("generateSettingsHooks() error = %v", err)
-	}
-
-	settingsPath := filepath.Join(tmpDir, "settings.json")
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatalf("failed to read settings.json: %v", err)
-	}
-
-	// Verify it's valid JSON
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("settings.json is not valid JSON: %v", err)
-	}
-
-	// Verify top-level "hooks" key exists
-	if _, ok := raw["hooks"]; !ok {
-		t.Error("settings.json should have a 'hooks' key")
-	}
-}
-
-func TestGenerateSettingsHooks_Idempotent(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Generate twice
-	if err := generateSettingsHooks(tmpDir); err != nil {
-		t.Fatalf("first generateSettingsHooks() error = %v", err)
-	}
-	first, _ := os.ReadFile(filepath.Join(tmpDir, "settings.json"))
-
-	if err := generateSettingsHooks(tmpDir); err != nil {
-		t.Fatalf("second generateSettingsHooks() error = %v", err)
-	}
-	second, _ := os.ReadFile(filepath.Join(tmpDir, "settings.json"))
-
-	if string(first) != string(second) {
-		t.Error("generateSettingsHooks should be idempotent")
-	}
-}
-
-func TestGenerateSettingsHooks_PreservesExisting(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Write existing settings with user hooks (in Claude Code format)
-	existingSettings := map[string]any{
-		"theme": "dark",
-		"hooks": map[string]any{
-			"Stop": []any{
-				map[string]any{
-					"matcher": "",
-					"hooks": []any{
-						map[string]any{
-							"type":    "command",
-							"command": "my-custom-hook --on-stop",
-						},
-					},
-				},
-			},
-			"PreToolUse": []any{
-				map[string]any{
-					"matcher": "",
-					"hooks": []any{
-						map[string]any{
-							"type":    "command",
-							"command": "my-linter --check",
-						},
-					},
-				},
-			},
-		},
-	}
-	data, _ := json.MarshalIndent(existingSettings, "", "  ")
-	settingsPath := filepath.Join(tmpDir, "settings.json")
-	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Generate pylon hooks
-	if err := generateSettingsHooks(tmpDir); err != nil {
-		t.Fatalf("generateSettingsHooks() error = %v", err)
-	}
-
-	// Read result
-	result, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var settings map[string]any
-	if err := json.Unmarshal(result, &settings); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify non-hook settings preserved
-	if settings["theme"] != "dark" {
-		t.Error("existing non-hook settings should be preserved")
-	}
-
-	// Verify user hooks preserved
-	hooks := settings["hooks"].(map[string]any)
-
-	// PreToolUse should be untouched
-	preHooks, ok := hooks["PreToolUse"]
-	if !ok {
-		t.Fatal("user PreToolUse hook should be preserved")
-	}
-	preArr := preHooks.([]any)
-	if len(preArr) != 1 {
-		t.Errorf("PreToolUse should have 1 entry, got %d", len(preArr))
-	}
-
-	// Stop의 사용자 hook은 그대로 남는다
-	stopHooks := hooks["Stop"].([]any)
-	if len(stopHooks) != 1 {
-		t.Fatalf("Stop should keep only the user hook group, got %d", len(stopHooks))
-	}
-	userGroup := stopHooks[0].(map[string]any)
-	userInnerHooks := userGroup["hooks"].([]any)
-	userCmd := userInnerHooks[0].(map[string]any)
-	if userCmd["command"] != "my-custom-hook --on-stop" {
-		t.Error("user's custom Stop hook should be preserved")
-	}
-
-	// pylon hook은 SessionStart에 추가된다
-	startHooks, ok := hooks["SessionStart"].([]any)
-	if !ok || len(startHooks) != 1 {
-		t.Fatalf("SessionStart should have the pylon hook group, got %v", hooks["SessionStart"])
-	}
-	pylonCmd := startHooks[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
-	if pylonCmd["command"] != "pylon mem inject" {
-		t.Errorf("pylon SessionStart hook should be added, got %v", pylonCmd["command"])
-	}
-}
-
-func TestIsPylonHookCommand(t *testing.T) {
-	tests := []struct {
-		command string
-		want    bool
-	}{
-		{"pylon mem inject", true},
-		{"my-custom-hook --on-stop", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		if got := isPylonHookCommand(tt.command); got != tt.want {
-			t.Errorf("isPylonHookCommand(%q) = %v, want %v", tt.command, got, tt.want)
-		}
-	}
-}
 
 func setupTestWorkspace(t *testing.T) string {
 	t.Helper()
@@ -241,52 +20,101 @@ func setupTestWorkspace(t *testing.T) string {
 	return tmpDir
 }
 
-func TestGenerateClaudeDir_IncludesSettings(t *testing.T) {
-	tmpDir := t.TempDir()
-	claudeDir := filepath.Join(tmpDir, ".claude")
+func writeSettings(t *testing.T, dir, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
-	// Create minimal config using ParseConfig (which applies defaults)
-	cfg, err := config.ParseConfig([]byte("version: \"0.1\"\n"))
+// pylon 훅만 지우고, 같은 그룹의 사용자 훅과 다른 설정은 남긴다.
+func TestRemovePylonHooks_KeepsUserHooksAndSettings(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSettings(t, dir, `{"theme":"dark","hooks":{
+  "SessionStart":[
+    {"matcher":"startup","hooks":[{"type":"command","command":"pylon mem inject"}]},
+    {"matcher":"resume","hooks":[{"type":"command","command":"pylon mem inject"},{"type":"command","command":"my-start"}]}
+  ],
+  "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-guard"}]}]
+}}`)
+	removed, err := removePylonHooks(dir)
+	if err != nil || !removed {
+		t.Fatalf("removed=%v err=%v", removed, err)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("ParseConfig() error = %v", err)
+		t.Fatal(err)
 	}
-
-	err = generateClaudeDir(tmpDir, cfg, nil)
-	if err != nil {
-		t.Fatalf("generateClaudeDir() error = %v", err)
+	var got struct {
+		Theme string `json:"theme"`
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
 	}
-
-	// Verify settings.json was created (not hooks.json)
-	settingsPath := filepath.Join(claudeDir, "settings.json")
-	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
-		t.Fatal("settings.json should be created by generateClaudeDir")
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
 	}
-
-	// Verify hooks.json was NOT created
-	hooksPath := filepath.Join(claudeDir, "hooks.json")
-	if _, err := os.Stat(hooksPath); !os.IsNotExist(err) {
-		t.Error("hooks.json should NOT be created (use settings.json instead)")
+	if got.Theme != "dark" {
+		t.Errorf("other settings lost: %s", data)
 	}
-
-	// Verify settings.json has correct structure
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatalf("failed to read settings.json: %v", err)
+	start := got.Hooks["SessionStart"]
+	if len(start) != 1 || start[0].Matcher != "resume" || len(start[0].Hooks) != 1 || start[0].Hooks[0].Command != "my-start" {
+		t.Errorf("SessionStart = %+v", start)
 	}
-
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatalf("settings.json is invalid JSON: %v", err)
+	if pre := got.Hooks["PreToolUse"]; len(pre) != 1 || pre[0].Hooks[0].Command != "my-guard" {
+		t.Errorf("PreToolUse = %+v", pre)
 	}
+}
 
-	hooks, ok := settings["hooks"]
-	if !ok {
-		t.Error("settings.json should contain 'hooks' key")
-		return
+// 훅이 pylon 것뿐이면 hooks 키까지 지운다.
+func TestRemovePylonHooks_RemovesEmptyHooksKey(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSettings(t, dir, `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"pylon mem inject"}]}]}}`)
+	if removed, err := removePylonHooks(dir); err != nil || !removed {
+		t.Fatalf("removed=%v err=%v", removed, err)
 	}
+	data, _ := os.ReadFile(path)
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["hooks"]; ok {
+		t.Errorf("empty hooks key left: %s", data)
+	}
+}
 
-	hooksMap, ok := hooks.(map[string]any)
-	if !ok || len(hooksMap) == 0 {
-		t.Error("settings.json hooks should contain hook definitions")
+// pylon 훅이 없으면 파일을 다시 쓰지 않는다.
+func TestRemovePylonHooks_NoChangeWithoutPylonHook(t *testing.T) {
+	dir := t.TempDir()
+	body := `{ "hooks":   {"Stop":[{"matcher":"","hooks":[{"type":"command","command":"my-stop"}]}]} }`
+	path := writeSettings(t, dir, body)
+	if removed, err := removePylonHooks(dir); err != nil || removed {
+		t.Fatalf("removed=%v err=%v", removed, err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != body {
+		t.Errorf("file rewritten: %s", data)
+	}
+}
+
+// 파일이 없으면 만들지 않고, 깨진 파일은 고치지 않고 알린다.
+func TestRemovePylonHooks_MissingAndInvalidFiles(t *testing.T) {
+	dir := t.TempDir()
+	if removed, err := removePylonHooks(dir); err != nil || removed {
+		t.Fatalf("missing file: removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "settings.json")); !os.IsNotExist(err) {
+		t.Error("settings.json must not be created")
+	}
+	path := writeSettings(t, dir, "{not json")
+	if removed, err := removePylonHooks(dir); err == nil || removed {
+		t.Fatalf("invalid file: removed=%v err=%v", removed, err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "{not json" {
+		t.Errorf("invalid file rewritten: %s", data)
 	}
 }

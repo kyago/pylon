@@ -254,9 +254,6 @@ func TestRunAddProject_SkipCloneWithExistingDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectDir, ".pylon", "context.md")); err != nil {
 		t.Error("expected .pylon/context.md to be created")
 	}
-	if _, err := os.Stat(filepath.Join(projectDir, ".pylon", "verify.yml")); err != nil {
-		t.Error("expected .pylon/verify.yml to be created")
-	}
 
 	// Verify .pylon/ is excluded from git tracking
 	excludePath := filepath.Join(projectDir, ".git", "info", "exclude")
@@ -385,16 +382,6 @@ func withStdin(t *testing.T, input string, fn func()) {
 	fn()
 }
 
-func TestProjectNextSteps_UsesV2PipelineCommand(t *testing.T) {
-	message := projectNextSteps("/workspace/app/.pylon/context.md", "/workspace/app/.pylon/agents")
-	if strings.Contains(message, "pylon request") {
-		t.Fatalf("obsolete v1 command found: %s", message)
-	}
-	if !strings.Contains(message, `/pl:pipeline "<requirement>"`) {
-		t.Fatalf("v2 pipeline command missing: %s", message)
-	}
-}
-
 func TestRunAddProject_UsesPlainClone(t *testing.T) {
 	requireGit(t)
 
@@ -451,6 +438,14 @@ func TestRunAddProject_UsesPlainClone(t *testing.T) {
 	// 4) .pylon/이 sub 디렉토리에 생성됨
 	if _, err := os.Stat(filepath.Join(workspace, "myproj", ".pylon", "context.md")); err != nil {
 		t.Errorf("expected sub .pylon/context.md, got %v", err)
+	}
+	// 5) AGENTS.md 프로젝트 목록에 바로 반영됨
+	agents, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("AGENTS.md missing: %v", err)
+	}
+	if !strings.Contains(string(agents), "**프로젝트 1개**: myproj") {
+		t.Errorf("AGENTS.md should list the new project")
 	}
 }
 

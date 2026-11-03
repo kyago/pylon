@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
 )
 
@@ -15,7 +14,7 @@ func TestGenerateClaudeDirWritesPointerAndBootstrap(t *testing.T) {
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := generateClaudeDir(root, &config.Config{}, nil); err != nil {
+	if err := generateClaudeDir(root, nil); err != nil {
 		t.Fatal(err)
 	}
 	ptr, _ := os.ReadFile(layout.RootClaudePath(root))
@@ -36,14 +35,14 @@ func TestGenerateClaudeDirKeepsUserRulesAndLinksBuiltinAgents(t *testing.T) {
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(userRules), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := generateClaudeDir(root, &config.Config{}, nil); err != nil {
+	if err := generateClaudeDir(root, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
 	if string(got) != buildAgentsBlock(nil)+userRules {
 		t.Errorf("user rules must survive behind the generated block: %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(layout.ClaudeAgentsDir(root), "architect.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(layout.ClaudeAgentsDir(root), "dev.md")); err != nil {
 		t.Errorf("built-in agent link missing or dangling: %v", err)
 	}
 }

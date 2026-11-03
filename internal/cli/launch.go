@@ -1,177 +1,17 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
-	"github.com/charmbracelet/huh"
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
-	"github.com/kyago/pylon/internal/provider"
 )
 
-var buildLaunchProviderCatalog = newProviderCatalog
-var replaceLaunchProcess = syscall.Exec
-
-// runLaunch is the main entry point when `pylon` is invoked without subcommands.
-// It selects an interactive provider, materializes provider-owned resources from
-// .pylon/, and replaces the current process with the provider executable.
-func runLaunch() error {
-	// Step 1: Find workspace
-	root, err := resolveRoot()
-	if err != nil {
-		return err
-	}
-
-	// Step 2: Load config
-	cfg, err := config.LoadConfig(layout.ConfigPath(root))
-	if err != nil {
-		return fmt.Errorf("설정 로드 실패: %w", err)
-	}
-
-	// Step 3: Discover projects
-	projects, err := config.DiscoverProjects(root)
-	if err != nil {
-		// Non-fatal: workspace may not have projects yet
-		projects = nil
-	}
-
-	// Step 3.5: Resolve and pin the primary provider (하나만 설치 → 자동,
-	// 둘 이상 설치 & 미지정 → 인터랙티브 선택 후 전용)
-	cfg, _ = ensurePrimaryProvider(root, cfg, true)
-
-	// Step 4: Select an interactive provider
-	catalog, err := buildLaunchProviderCatalog(cfg)
-	if err != nil {
-		return fmt.Errorf("provider catalog 구성 실패: %w", err)
-	}
-	entry, selection, err := catalog.selectInteractive(context.Background(), cfg)
-	if err != nil {
-		return fmt.Errorf("interactive provider 선택 실패: %w", err)
-	}
-
-	// Step 5: Materialize provider-owned workspace resources
-	if entry.prepareWorkspace != nil {
-		if err := entry.prepareWorkspace(root, cfg, projects); err != nil {
-			return fmt.Errorf("provider %s workspace 준비 실패: %w", selection.Adapter.Name(), err)
-		}
-	}
-
-	// Ensure generated provider resources are ignored where applicable.
-	ensureGitignore(root)
-
-	// Step 6: Select provider permission mode
-	permissionMode := cfg.Runtime.PermissionMode
-	if entry.selectPermission != nil {
-		permissionMode, err = entry.selectPermission(permissionMode)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Step 7: Build and launch the provider process.
-	interactiveAdapter, ok := selection.Adapter.(provider.InteractiveAdapter)
-	if !ok {
-		return fmt.Errorf("provider %s does not support interactive launch", selection.Adapter.Name())
-	}
-	process, err := interactiveAdapter.PrepareInteractive(context.Background(), provider.InteractiveSpec{
-		PermissionMode:      permissionMode,
-		Effort:              cfg.Runtime.Effort,
-		Model:               cfg.Runtime.Model,
-		Environment:         os.Environ(),
-		EnvironmentOverride: cfg.Runtime.Env,
-	})
-	if err != nil {
-		return fmt.Errorf("provider %s 실행 준비 실패: %w", selection.Adapter.Name(), err)
-	}
-	// syscall.Exec에는 cwd 인자가 없으므로 여기서 워크스페이스 루트로 이동해 provider가
-	// 루트에서 뜨게 한다. config의 상대경로 command는 이동 전에 절대경로로 고정하고,
-	// exec된 프로세스의 PWD가 실제 cwd와 어긋나지 않게 맞춘다.
-	if !filepath.IsAbs(process.Executable) {
-		abs, err := filepath.Abs(process.Executable)
-		if err != nil {
-			return fmt.Errorf("provider 실행 파일 경로 확인 실패: %w", err)
-		}
-		process.Executable = abs
-	}
-	if err := os.Chdir(root); err != nil {
-		return fmt.Errorf("워크스페이스 루트 이동 실패: %w", err)
-	}
-	process.Environment = upsertEnv(process.Environment, "PWD", root)
-
-	fmt.Printf("%s를 시작합니다...\n", process.DisplayName)
-	return replaceLaunchProcess(process.Executable, process.Args, process.Environment)
-}
-
-// upsertEnv replaces key's entry in env in place, or appends one when absent.
-func upsertEnv(env []string, key, value string) []string {
-	prefix := key + "="
-	for i, kv := range env {
-		if strings.HasPrefix(kv, prefix) {
-			env[i] = prefix + value
-			return env
-		}
-	}
-	return append(env, prefix+value)
-}
-
-// openWorkspace finds the workspace root and loads config.
-func openWorkspace() (string, *config.Config, error) {
-	root, err := resolveRoot()
-	if err != nil {
-		return "", nil, err
-	}
-	cfg, err := config.LoadConfig(layout.ConfigPath(root))
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to load config: %w", err)
-	}
-	return root, cfg, nil
-}
-
-// selectPermissionMode presents an interactive selector for Claude Code permission mode.
-func selectPermissionMode(defaultMode string) (string, error) {
-	if defaultMode == "" {
-		defaultMode = "default"
-	}
-
-	modes := []huh.Option[string]{
-		huh.NewOption("default — 매번 권한 확인", "default"),
-		huh.NewOption("acceptEdits — 파일 편집 자동 허용", "acceptEdits"),
-		huh.NewOption("bypassPermissions — 모든 권한 자동 허용", "bypassPermissions"),
-	}
-
-	// Pre-select the default from config
-	for i, m := range modes {
-		if m.Value == defaultMode {
-			modes[i] = modes[i].Selected(true)
-			break
-		}
-	}
-
-	var selected string
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Permission Mode 선택").
-				Description("Claude Code 실행 권한을 설정합니다").
-				Options(modes...).
-				Value(&selected),
-		),
-	)
-
-	if err := form.Run(); err != nil {
-		return "", fmt.Errorf("선택 취소됨: %w", err)
-	}
-
-	return selected, nil
-}
-
 // generateClaudeDir creates/updates the .claude/ directory from .pylon/ source of truth.
-func generateClaudeDir(root string, cfg *config.Config, projects []config.ProjectInfo) error {
+func generateClaudeDir(root string, projects []config.ProjectInfo) error {
 	claudeDir := layout.ClaudeDir(root)
 	commandsDir := filepath.Join(claudeDir, "commands")
 
@@ -191,30 +31,27 @@ func generateClaudeDir(root string, cfg *config.Config, projects []config.Projec
 		fmt.Fprintf(os.Stderr, "ℹ 기존 내용을 %s에 백업했습니다.\n", name)
 	}
 
-	// Refresh the pylon-owned .pylon/builtin/ resources (agents, skills, commands,
-	// scripts, reference) from the embedded set. Shared with `pylon doctor` so launch
-	// and maintenance can never drift, and runs before the .claude/ generation below
+	// Refresh the pylon-owned .pylon/builtin/ resources (agents, commands, reference)
+	// from the embedded set. Runs before the .claude/ generation below
 	// so the agent links resolve into an up-to-date builtin dir. User-authored files
 	// are left untouched — see syncBuiltinResources for the ownership contract.
-	if err := syncBuiltinForLaunch(root); err != nil {
-		return err
+	if _, err := syncBuiltinResources(root); err != nil {
+		return fmt.Errorf("내장 리소스 동기화 실패: %w", err)
 	}
 
-	// Reconcile .claude/commands/ with the desired command set. The desired-state
-	// computation is shared with `pylon doctor` so the two never drift.
+	// Reconcile .claude/commands/ with the desired command set.
 	desired := buildDesiredClaudeCommands(root)
 	if err := applyClaudeCommands(commandsDir, desired); err != nil {
 		return err
 	}
 
-	// Generate .claude/agents/ with skill injection
-	if err := generateClaudeAgentsWithSkills(root, cfg); err != nil {
+	if err := syncClaudeAgentLinks(root); err != nil {
 		return fmt.Errorf(".claude/agents/ 생성 실패: %w", err)
 	}
 
-	// Generate hooks in .claude/settings.json for Claude Code session lifecycle
-	if err := generateSettingsHooks(claudeDir); err != nil {
-		return fmt.Errorf("settings.json hooks 생성 실패: %w", err)
+	// Earlier releases injected memory from a SessionStart hook; knowledge is now looked up on demand.
+	if _, err := removePylonHooks(claudeDir); err != nil {
+		fmt.Fprintf(os.Stderr, "경고: .claude/settings.json 훅 제거 실패: %v\n", err)
 	}
 
 	return nil
@@ -229,9 +66,7 @@ func addClaudeDirToGitignore(root string) error {
 
 	// Collect missing entries
 	var missing []string
-	// .agents/skills/pl-*/ 는 codex용으로 생성되는 워크플로우 스킬 포인터다.
-	// .agents/ 전체를 무시하면 사용자 저작 스킬까지 가려지므로 생성 패턴만 무시한다.
-	for _, entry := range []string{".claude/", "CLAUDE.md", "AGENTS.md", ".pylon/logs/", ".pylon/builtin/", ".agents/skills/pl-*/"} {
+	for _, entry := range []string{".claude/", "CLAUDE.md", "AGENTS.md", ".pylon/builtin/"} {
 		if !strings.Contains(content, entry) {
 			missing = append(missing, entry)
 		}
@@ -255,7 +90,7 @@ func addClaudeDirToGitignore(root string) error {
 	return err
 }
 
-// ensureGitignore is called on first launch to add .claude/ to .gitignore.
+// ensureGitignore adds the generated paths to .gitignore.
 func ensureGitignore(root string) {
 	_ = addClaudeDirToGitignore(root)
 }

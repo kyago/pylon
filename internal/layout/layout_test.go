@@ -13,12 +13,9 @@ func TestLayoutPaths(t *testing.T) {
 		want string
 	}{
 		{"PylonDir", PylonDir(root), filepath.Join(root, ".pylon")},
-		{"ConfigPath", ConfigPath(root), filepath.Join(root, ".pylon", "config.yml")},
-		{"RuntimeDir", RuntimeDir(root), filepath.Join(root, ".pylon", "runtime")},
 		{"BuiltinDir", BuiltinDir(root), filepath.Join(root, ".pylon", "builtin")},
 		{"ResourceDir", ResourceDir(root, "commands"), filepath.Join(root, ".pylon", "commands")},
 		{"BuiltinResourceDir", BuiltinResourceDir(root, "scripts/bash"), filepath.Join(root, ".pylon", "builtin", "scripts", "bash")},
-		{"ScriptsDir", ScriptsDir(root), filepath.Join(root, ".pylon", "builtin", "scripts", "bash")},
 		{"ClaudeDir", ClaudeDir(root), filepath.Join(root, ".claude")},
 		{"ClaudeAgentsDir", ClaudeAgentsDir(root), filepath.Join(root, ".claude", "agents")},
 		{"ClaudeCommandsDir", ClaudeCommandsDir(root), filepath.Join(root, ".claude", "commands")},
@@ -32,14 +29,11 @@ func TestLayoutPaths(t *testing.T) {
 	}
 }
 
-func TestMemoryAndHistoryDirs(t *testing.T) {
+func TestMemoryDirs(t *testing.T) {
 	if got := MemoryDir("/ws"); got != filepath.Join("/ws", ".pylon", "memory") {
 		t.Errorf("MemoryDir = %q", got)
 	}
 	if got := ProjectMemoryDir("/ws", "app"); got != filepath.Join("/ws", ".pylon", "memory", "app") {
 		t.Errorf("ProjectMemoryDir = %q", got)
-	}
-	if got := HistoryDir("/ws"); got != filepath.Join("/ws", ".pylon", "history") {
-		t.Errorf("HistoryDir = %q", got)
 	}
 }

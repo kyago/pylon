@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -175,79 +176,55 @@ func newMemPruneCmd() *cobra.Command {
 	return cmd
 }
 
+// newMemInjectCmd stays as a hidden command for workspaces that still have the old
+// SessionStart hook. Running it updates the workspace, which removes that hook.
+// shortcut: 옛 훅을 지우는 전환용이다, 사용 중인 워크스페이스에서 훅이 모두 사라지면 이 명령과 PruneLegacyHookEntries를 지운다.
 func newMemInjectCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "inject",
-		Short: "Print project memory for session context (SessionStart hook)",
-		Long: `프로젝트 메모리 요약을 stdout으로 출력합니다.
-
-Claude Code SessionStart hook이 호출하며, 출력이 그대로 세션 컨텍스트에 들어갑니다.
-memory.proactive_injection이 false이거나 메모리가 없으면 아무것도 출력하지 않습니다.
-출력 전에 memory.retention_days를 넘긴 항목을 정리합니다. pylon 업데이트 뒤 첫 세션이면
-내장 리소스와 생성 파일도 갱신합니다.`,
-		Args: cobra.NoArgs,
+		Use:    "inject",
+		Short:  "(deprecated) 이전 릴리스의 SessionStart 훅이 호출합니다",
+		Hidden: true,
+		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMemInject()
 		},
 	}
 }
 
-// runMemInject prints every project's memory within the injection budget.
-// SessionStart hook의 stdout이 그대로 컨텍스트가 되므로 --json은 무시하고
-// stdout에는 주입 본문만 쓴다.
+// runMemInject writes nothing to stdout: a hook's stdout becomes session context, and
+// memory is now looked up on demand. 경고와 알림은 stderr로만 쓴다.
 func runMemInject() error {
-	root, cfg, err := openWorkspace()
+	root, err := resolveRoot()
 	if err != nil {
 		return err
 	}
-	refreshWorkspaceAfterUpgrade(root, cfg)
+	refreshWorkspaceAfterUpgrade(root)
+	pruneLegacyHookMemory(root)
+	return nil
+}
+
+// pruneLegacyHookMemory deletes old Stop-hook payloads from every project's memory. It
+// reports to stderr only, because runMemInject's stdout must stay empty.
+func pruneLegacyHookMemory(root string) {
 	memStore := memory.NewStore(root)
 	projects, err := memStore.ListProjects()
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "경고: 구버전 훅 항목 정리 실패: %v\n", err)
+		return
 	}
-	// 세션 시작이 메모리 정리 시점이다. 실패해도 주입은 계속하고, stdout은
-	// 세션 컨텍스트이므로 알림·경고는 stderr로만 쓴다.
 	for _, project := range projects {
 		if n, err := memStore.PruneLegacyHookEntries(project); err != nil {
 			fmt.Fprintf(os.Stderr, "경고: %s 구버전 훅 항목 정리 실패: %v\n", project, err)
 		} else if n > 0 {
 			fmt.Fprintf(os.Stderr, "%s: 구버전 Stop 훅이 저장한 항목 %d건 삭제\n", project, n)
 		}
-		if _, err := memStore.PruneExpired(project, cfg.Memory.RetentionDays); err != nil {
-			fmt.Fprintf(os.Stderr, "경고: %s 만료 메모리 정리 실패: %v\n", project, err)
-		}
 	}
-	if !cfg.Memory.ProactiveInjection {
-		return nil
-	}
-	// shortcut: 토큰→바이트 4배 근사, 계측이 생기면 실측으로 교체
-	remaining := cfg.Memory.ProactiveMaxTokens * 4
-	var b strings.Builder
-	for _, project := range projects {
-		if remaining <= 0 {
-			break // InjectionMarkdown은 0 이하를 무제한으로 취급한다
-		}
-		md, err := memStore.InjectionMarkdown(project, remaining)
-		if err != nil {
-			return err
-		}
-		b.WriteString(md)
-		remaining -= len(md)
-	}
-	if b.Len() == 0 {
-		return nil
-	}
-	fmt.Print("## pylon 프로젝트 메모리\n" + b.String() +
-		"각 줄 끝의 경로(`.pylon/memory/` 기준)가 전문 파일입니다. 같은 key로 `pylon mem store` 하면 갱신됩니다.\n")
-	return nil
 }
 
-// refreshWorkspaceAfterUpgrade brings a workspace up to date on the first session after
-// an update: Paseo starts sessions without `pylon`, so launch never gets to do this.
+// refreshWorkspaceAfterUpgrade brings a workspace up to date, which also removes the old hook.
 // 내장 리소스가 임베드와 같으면 아무것도 쓰지 않는다. 세션 시작을 막지 않도록 실패는 stderr
 // 경고로 끝내고, stdout은 세션 컨텍스트이므로 쓰지 않는다.
-func refreshWorkspaceAfterUpgrade(root string, cfg *config.Config) {
+func refreshWorkspaceAfterUpgrade(root string) {
 	changed, err := syncBuiltinResources(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "경고: 내장 리소스 갱신 실패: %v\n", err)
@@ -262,16 +239,34 @@ func refreshWorkspaceAfterUpgrade(root string, cfg *config.Config) {
 	}
 	var genErr error
 	if dirExists(layout.ClaudeDir(root)) {
-		genErr = generateClaudeDir(root, cfg, projects)
+		genErr = generateClaudeDir(root, projects)
+	} else {
+		_, _, genErr = ensureRootAgentFiles(root, projects)
 	}
-	if genErr == nil && dirExists(layout.CodexSkillsDir(root)) {
-		genErr = prepareCodexWorkspace(root, cfg, projects)
-	}
+	pruneCodexSkills(root)
 	if genErr != nil {
 		fmt.Fprintf(os.Stderr, "경고: 워크스페이스 파일 갱신 실패 (다음 세션에서 다시 시도합니다): %v\n", genErr)
 		// 내장 리소스가 최신이면 다음 세션이 갱신을 건너뛰므로 하나를 지워 재시도하게 한다.
 		_ = os.Remove(filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md"))
 	}
+}
+
+func printJSON(value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
+}
+
+func printJSONIndent(value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
+	return nil
 }
 
 // confirmDeletion asks the user to confirm a destructive operation.
@@ -299,7 +294,7 @@ func printPruneResult(action string, count int64, dryRun bool) {
 }
 
 func runMemDelete(project, category, key string, dryRun, yes bool) error {
-	root, _, err := openWorkspace()
+	root, err := resolveRoot()
 	if err != nil {
 		return err
 	}
@@ -330,7 +325,7 @@ func runMemDelete(project, category, key string, dryRun, yes bool) error {
 }
 
 func runMemPrune(project, category string, dryRun, yes bool) error {
-	root, _, err := openWorkspace()
+	root, err := resolveRoot()
 	if err != nil {
 		return err
 	}
@@ -361,7 +356,7 @@ func runMemPrune(project, category string, dryRun, yes bool) error {
 }
 
 func runMemSearch(project, query string, limit int) error {
-	root, _, err := openWorkspace()
+	root, err := resolveRoot()
 	if err != nil {
 		return err
 	}
@@ -411,7 +406,7 @@ func runMemSearch(project, query string, limit int) error {
 }
 
 func runMemStore(project, key, content, category, author string, confidence float64) error {
-	root, _, err := openWorkspace()
+	root, err := resolveRoot()
 	if err != nil {
 		return err
 	}
@@ -460,7 +455,7 @@ func runMemStore(project, key, content, category, author string, confidence floa
 }
 
 func runMemList(project, category string) error {
-	root, _, err := openWorkspace()
+	root, err := resolveRoot()
 	if err != nil {
 		return err
 	}

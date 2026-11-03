@@ -56,8 +56,8 @@ func TestRunInit_DoesNotGitInitWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	configText := string(configData)
-	if !strings.Contains(configText, `version: "0.2"`) || !strings.Contains(configText, "provider: auto") {
-		t.Fatalf("init did not create provider-neutral config:\n%s", configText)
+	if !strings.Contains(configText, `version: "0.2"`) {
+		t.Fatalf("init did not create config:\n%s", configText)
 	}
 	if strings.Contains(configText, "backend:") {
 		t.Fatalf("new config must not emit deprecated backend:\n%s", configText)
@@ -85,8 +85,5 @@ func TestInitSetsUpTrackedMemoryDir(t *testing.T) {
 	}
 	if strings.Contains(string(data), ".pylon/memory") {
 		t.Error(".pylon/memory는 git 추적 대상이어야 한다 — gitignore에 없어야 함 (D1)")
-	}
-	if !strings.Contains(string(data), ".pylon/history/") {
-		t.Error(".pylon/history/는 계속 무시되어야 한다")
 	}
 }

@@ -1,3 +1,4 @@
+// Package config locates the workspace root and its projects.
 package config
 
 import (

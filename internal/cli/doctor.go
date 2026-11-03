@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"embed"
 	"fmt"
 	"io"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
-	"github.com/kyago/pylon/internal/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +26,6 @@ type Check struct {
 	Verify      func() (version string, err error)
 	InstallURL  string
 	BrewFormula string // Homebrew formula name; empty when brew install is not documented
-	Warn        bool   // Verify 실패를 경고로만 표시하고 doctor 실패로 세지 않는다
 }
 
 var baseChecks = []Check{
@@ -49,12 +46,12 @@ var baseChecks = []Check{
 func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check required tool installations and versions",
-		Long: `Verify that required tools and the selected runtime provider are installed and configured.
+		Short: "Check required tools and refresh the workspace files",
+		Long: `Verify that required tools are installed and refresh the generated workspace files.
 
-Also restores the pylon-owned .pylon/builtin/ (agents, commands, scripts, manual) to
+Also restores the pylon-owned .pylon/builtin/ (agents, commands, manual) to
 the versions shipped with this binary. Your own resources in .pylon/agents/,
-.pylon/skills/ and .pylon/commands/ are left alone; a built-in with the same name wins.
+.pylon/commands/ are left alone; a built-in with the same name wins.
 
 Use --fix-excludes to automatically add .pylon/ to project .git/info/exclude
 for any projects that are missing the local-scope ignore entry.`,
@@ -62,7 +59,7 @@ for any projects that are missing the local-scope ignore entry.`,
 	}
 
 	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in project repos")
-	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화, provider 선택)를 건너뛰고 비인터랙티브로 실행")
+	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화)를 건너뛰고 비인터랙티브로 실행")
 
 	return cmd
 }
@@ -76,9 +73,7 @@ func runChecks(checks []Check) (allPassed bool, failures []Check) {
 		if check.Required {
 			reqLabel = " [required]"
 		}
-		if err != nil && check.Warn {
-			fmt.Printf("\u26a0 %-10s %v\n", check.Name, err)
-		} else if err != nil {
+		if err != nil {
 			allPassed = false
 			failures = append(failures, check)
 			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "missing", reqLabel)
@@ -93,22 +88,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println("Pylon Doctor")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
-	// provider check\uac00 \ud655\uc815\ub41c primary\ub97c \uac80\uc0ac\ud558\ub3c4\ub85d \uba3c\uc800 \uacb0\uc815\ud55c\ub2e4.
-	doctorAutoYes, _ := cmd.Flags().GetBool("yes")
-	ensurePrimaryProviderIfWorkspace(!doctorAutoYes)
-
 	allPassed, failures := runChecks(currentDoctorChecks())
 
-	// Sync config defaults if in a workspace
+	// Sync the embedded resources and the files generated from them if in a workspace.
 	fmt.Println()
-	syncConfigIfWorkspace()
-
-	// Sync provider-neutral embedded resources if in a workspace.
 	syncResourcesIfWorkspace()
-
-	// Reconcile resources owned by the selected provider.
 	autoYes, _ := cmd.Flags().GetBool("yes")
-	syncSelectedProviderResourcesIfWorkspace(cmd.InOrStdin(), autoYes)
+	syncGeneratedFilesIfWorkspace(cmd.InOrStdin(), autoYes)
 
 	// Check project repo .pylon/ exclude settings (skip if git is missing)
 	fixExcludes, _ := cmd.Flags().GetBool("fix-excludes")
@@ -128,8 +114,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Println("⚠ git 미설치로 프로젝트 exclude 검사 건너뜀")
 	}
 
-	if !checkProjectVerifyConfigs() {
-		allPassed = false
+	if root, err := resolveRoot(); err == nil {
+		if projects, err := config.DiscoverProjects(root); err == nil {
+			hintUnscaffoldedProjects(root, projects)
+		}
 	}
 
 	fmt.Println()
@@ -138,7 +126,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// 도구 미설치가 아닌 실패(예: verify.yml 문제)는 위에서 이미 경고로 안내됐다.
+	// 도구 미설치가 아닌 실패(예: exclude 누락)는 위에서 이미 경고로 안내됐다.
 	if len(failures) > 0 {
 		printInstallHints(failures)
 	}
@@ -230,101 +218,6 @@ func checkRepoExcludes(fix bool) bool {
 	return false
 }
 
-// checkProjectVerifyConfigs ensures every discovered project has a usable
-// .pylon/verify.yml. verify.yml is local-only state (excluded from the project
-// repo by design), so it is lost outside this machine and nothing else recreates
-// it — a missing file is regenerated from the detected tech stack, the same way
-// `pylon add-project` scaffolds it, and the .pylon/ exclude entry is re-applied
-// so the regenerated file can never become committable. Discovery only sees
-// directories that still have a .pylon/ dir; a fully fresh clone (no .pylon/ at
-// all) is reported as a hint to run `pylon add-project --skip-clone` instead.
-// An existing file is user data and is never overwritten: parse failures and
-// empty command sets are only reported.
-// Returns true when every project ends up with a parseable, non-empty config.
-func checkProjectVerifyConfigs() bool {
-	root, err := resolveRoot()
-	if err != nil {
-		return true // not in a workspace, nothing to check
-	}
-	projects, err := config.DiscoverProjects(root)
-	if err != nil {
-		return true
-	}
-	// 단일 repo 레이아웃: 하위 프로젝트 없이 워크스페이스 루트 자체가 git repo이고
-	// 실제 스택이 감지되는 경우에만 루트가 검증 대상이다. 스택 미감지 루트나 하위
-	// 프로젝트가 있는 워크스페이스에서 루트 verify.yml을 만들면 no-op 검증 파일이
-	// run-verification의 GIT_ROOT 오해석 가드를 무력화한다.
-	if len(projects) == 0 {
-		if _, statErr := os.Stat(filepath.Join(root, ".git")); statErr == nil {
-			if detectTechStack(root).Language != "unknown" {
-				projects = append(projects, config.ProjectInfo{Name: "(workspace root)", Path: root})
-			}
-		}
-	} else if _, statErr := os.Stat(layout.VerifyConfigPath(root)); statErr == nil {
-		fmt.Printf("⚠ 워크스페이스 루트에 verify.yml이 있습니다 — 하위 프로젝트 검증의 GIT_ROOT 오해석 가드를 무력화하므로 삭제를 권장합니다: %s\n",
-			layout.VerifyConfigPath(root))
-	}
-
-	fmt.Println()
-	hintUnscaffoldedProjects(root, projects)
-	if len(projects) == 0 {
-		return true
-	}
-
-	ok := true
-	issues := 0
-	for _, p := range projects {
-		path := layout.VerifyConfigPath(p.Path)
-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-			content := generateVerifyYML(detectTechStack(p.Path))
-			if writeErr := os.WriteFile(path, []byte(content), 0o644); writeErr != nil {
-				fmt.Printf("⚠ %s: verify.yml 재생성 실패: %v\n", p.Name, writeErr)
-				ok = false
-				issues++
-				continue
-			}
-			fmt.Printf("✓ %s: 누락된 verify.yml 재생성됨\n", p.Name)
-			// 재생성한 파일이 프로젝트 repo에 커밋 가능해지지 않도록 exclude를
-			// 보장한다. 하위 프로젝트는 add-project와 동일하게 .pylon/ 전체,
-			// 단일 repo 루트는 워크스페이스 .pylon/이 git-tracked 대상이므로
-			// verify.yml만 제외한다.
-			if isGit, _ := checkExcludeStatus(p.Path); isGit {
-				entry := ".pylon/"
-				if p.Path == root {
-					entry = ".pylon/verify.yml"
-				}
-				if exclErr := excludeEntryFromRepo(p.Path, entry); exclErr != nil {
-					fmt.Printf("⚠ %s: %s exclude 설정 실패: %v\n", p.Name, entry, exclErr)
-					ok = false
-					issues++
-				}
-			}
-		} else if statErr != nil {
-			fmt.Printf("⚠ %s: verify.yml 확인 실패: %v\n", p.Name, statErr)
-			ok = false
-			issues++
-			continue
-		}
-
-		vc, loadErr := config.LoadVerifyConfig(path)
-		if loadErr != nil {
-			fmt.Printf("⚠ %s: verify.yml 파싱 실패 — 직접 수정이 필요합니다: %v\n", p.Name, loadErr)
-			ok = false
-			issues++
-			continue
-		}
-		if len(vc.OrderedSteps())+len(vc.OrderedHeldOutSteps()) == 0 {
-			fmt.Printf("⚠ %s: verify.yml에 실행 가능한 검증 명령이 없습니다: %s\n", p.Name, path)
-			ok = false
-			issues++
-		}
-	}
-	if issues == 0 {
-		fmt.Printf("✓ 모든 프로젝트 verify.yml 정상 (%d개 프로젝트)\n", len(projects))
-	}
-	return ok
-}
-
 // hintUnscaffoldedProjects points out workspace-root git repos that have no
 // .pylon/ at all (e.g. a fresh clone) — doctor cannot regenerate verify.yml
 // for them because project discovery requires .pylon/ to exist.
@@ -390,79 +283,7 @@ func RunDoctorChecks() (bool, error) {
 }
 
 func currentDoctorChecks() []Check {
-	checks := append([]Check(nil), baseChecks...)
-	cfg, err := doctorProviderConfig()
-	return append(checks, newProviderCheck(cfg, err), newRuntimeEnvCheck(cfg))
-}
-
-func doctorProviderConfig() (*config.Config, error) {
-	root, err := resolveRoot()
-	if err != nil {
-		return config.ParseConfig([]byte("version: \"0.2\"\n"))
-	}
-	return config.LoadConfig(layout.ConfigPath(root))
-}
-
-func newProviderCheck(cfg *config.Config, configErr error) Check {
-	installURL := claudeInstallURL
-	if cfg != nil {
-		providerName := cfg.Runtime.EffectiveProvider()
-		if catalog, err := newProviderCatalog(cfg); err == nil {
-			installURL = catalog.installURL(providerName)
-		}
-	}
-
-	return Check{
-		Name:       "provider",
-		Required:   true,
-		InstallURL: installURL,
-		Verify: func() (string, error) {
-			if configErr != nil {
-				return "", fmt.Errorf("provider config load failed: %w", configErr)
-			}
-			catalog, err := newProviderCatalog(cfg)
-			if err != nil {
-				return "", err
-			}
-			_, selection, err := catalog.selectInteractive(context.Background(), cfg)
-			if err != nil {
-				return "", err
-			}
-			versioned, ok := selection.Adapter.(provider.VersionedAdapter)
-			if !ok {
-				return selection.Adapter.Name(), nil
-			}
-			version, err := versioned.Version(context.Background())
-			if err != nil {
-				return "", err
-			}
-			return selection.Adapter.Name() + " " + version, nil
-		},
-	}
-}
-
-// newRuntimeEnvCheck warns when runtime.env pins env vars that override every
-// per-session and per-agent effort/compact control (Claude Code gives them top priority).
-func newRuntimeEnvCheck(cfg *config.Config) Check {
-	return Check{
-		Name: "runtime.env",
-		Warn: true,
-		Verify: func() (string, error) {
-			if cfg == nil {
-				return "ok", nil // 설정 로드 실패는 provider 체크가 보고한다
-			}
-			var keys []string
-			for _, key := range []string{"CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"} {
-				if _, ok := cfg.Runtime.Env[key]; ok {
-					keys = append(keys, key)
-				}
-			}
-			if len(keys) == 0 {
-				return "ok", nil
-			}
-			return "", fmt.Errorf("runtime.env의 %s는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. 이 키를 제거해야 runtime.effort가 적용됩니다", strings.Join(keys, ", "))
-		},
-	}
+	return baseChecks
 }
 
 func verifyGit() (string, error) {
@@ -493,42 +314,6 @@ func verifyGH() (string, error) {
 	return lines[0], nil
 }
 
-// ensurePrimaryProviderIfWorkspace resolves and pins the primary provider when
-// running inside a pylon workspace.
-func ensurePrimaryProviderIfWorkspace(interactive bool) {
-	root, err := resolveRoot()
-	if err != nil {
-		return
-	}
-	cfg, err := config.LoadConfig(layout.ConfigPath(root))
-	if err != nil {
-		return // 설정 로드 실패는 이후 단계가 보고한다
-	}
-	ensurePrimaryProvider(root, cfg, interactive)
-}
-
-// syncConfigIfWorkspace syncs config.yml defaults if running inside a pylon workspace.
-func syncConfigIfWorkspace() {
-	root, err := resolveRoot()
-	if err != nil {
-		return // not in a workspace, skip
-	}
-
-	_, added, err := config.SyncConfigDefaults(layout.ConfigPath(root))
-	if err != nil {
-		fmt.Printf("⚠ 설정 동기화 실패: %v\n", err)
-		return
-	}
-	if len(added) > 0 {
-		fmt.Println("✓ config.yml에 누락된 기본값 추가:")
-		for _, field := range added {
-			fmt.Printf("  + %s\n", field)
-		}
-	} else {
-		fmt.Println("✓ config.yml 최신 상태")
-	}
-}
-
 // reconcileRootAgentFiles refreshes the CLAUDE.md marker and the pylon block in
 // AGENTS.md, so `pylon doctor` recovers a workspace whose root files drifted. Returns
 // whether AGENTS.md was written and the names of any root files backed up first.
@@ -540,6 +325,19 @@ func reconcileRootAgentFiles(root string) (bool, []string, error) {
 	return ensureRootAgentFiles(root, projects)
 }
 
+// refreshProjectList updates the project list in AGENTS.md after add-project or
+// delete-project. The project change is already done by then, so a failure only warns.
+func refreshProjectList(root string) {
+	_, backedUp, err := reconcileRootAgentFiles(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ AGENTS.md 프로젝트 목록 갱신 실패: %v\n", err)
+		return
+	}
+	for _, name := range backedUp {
+		fmt.Fprintf(os.Stderr, "ℹ 기존 내용을 %s에 백업했습니다.\n", name)
+	}
+}
+
 // syncResourcesIfWorkspace refreshes the pylon-owned .pylon/builtin/ resources if
 // running inside a pylon workspace.
 func syncResourcesIfWorkspace() {
@@ -549,7 +347,7 @@ func syncResourcesIfWorkspace() {
 	}
 
 	reportBuiltinSync(syncBuiltinResources(root))
-	ensureGitignore(root) // .pylon/builtin/ 이 launch 전에도 git에 잡히지 않도록
+	ensureGitignore(root) // .pylon/builtin/ 이 git에 잡히지 않도록
 }
 
 // reportBuiltinSync prints the outcome of syncBuiltinResources for doctor and sync-agents.
@@ -565,40 +363,11 @@ func reportBuiltinSync(wrote bool, err error) {
 	}
 }
 
-func syncSelectedProviderResourcesIfWorkspace(in io.Reader, autoYes bool) {
+func syncGeneratedFilesIfWorkspace(in io.Reader, autoYes bool) {
 	root, err := resolveRoot()
 	if err != nil {
 		return
 	}
-	cfg, err := config.LoadConfig(layout.ConfigPath(root))
-	if err != nil {
-		fmt.Printf("⚠ provider 리소스 동기화 건너뜀: %v\n", err)
-		return
-	}
-	catalog, err := newProviderCatalog(cfg)
-	if err != nil {
-		fmt.Printf("⚠ provider 리소스 동기화 건너뜀: %v\n", err)
-		return
-	}
-	entry, selection, err := catalog.selectInteractive(context.Background(), cfg)
-	if err != nil {
-		fmt.Printf("⚠ provider 리소스 동기화 건너뜀: %v\n", err)
-		return
-	}
-	if entry.syncDoctor == nil {
-		fmt.Printf("✓ provider %s 전용 리소스 동기화 불필요\n", selection.Adapter.Name())
-		return
-	}
-	entry.syncDoctor(in, autoYes)
-}
-
-func syncClaudeProviderResourcesIfWorkspace(in io.Reader, autoYes bool) {
-	root, err := resolveRoot()
-	if err != nil {
-		return
-	}
-	pylonDir := layout.PylonDir(root)
-
 	updated, backedUp, err := reconcileRootAgentFiles(root)
 	if err != nil {
 		fmt.Printf("⚠ 루트 에이전트 파일 갱신 실패: %v\n", err)
@@ -611,22 +380,17 @@ func syncClaudeProviderResourcesIfWorkspace(in io.Reader, autoYes bool) {
 		}
 	}
 
-	cfg, err := config.LoadConfig(filepath.Join(pylonDir, "config.yml"))
-	if err != nil {
-		if linkErr := syncClaudeAgentLinks(root); linkErr != nil {
-			fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", linkErr)
-		}
-	} else if genErr := generateClaudeAgentsWithSkills(root, cfg); genErr != nil {
-		fmt.Printf("⚠ .claude/agents/ 생성 실패: %v\n", genErr)
+	if err := syncClaudeAgentLinks(root); err != nil {
+		fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", err)
 	}
+	pruneCodexSkills(root)
 
-	// launch 없이 `claude`를 직접 띄우는 사용자도 구버전 훅이 남지 않도록 여기서도 갱신한다.
-	// .claude/는 위 에이전트 동기화가 만든다.
-	if err := generateSettingsHooks(layout.ClaudeDir(root)); err != nil {
-		fmt.Printf("⚠ .claude/settings.json 훅 갱신 실패: %v\n", err)
-	} else {
-		fmt.Println("✓ .claude/settings.json 훅 갱신")
+	if removed, err := removePylonHooks(layout.ClaudeDir(root)); err != nil {
+		fmt.Printf("⚠ .claude/settings.json 훅 제거 실패: %v\n", err)
+	} else if removed {
+		fmt.Println("✓ .claude/settings.json에서 pylon 훅 제거")
 	}
+	pruneLegacyHookMemory(root)
 
 	syncClaudeCommandsIfWorkspace(in, autoYes)
 }
@@ -646,7 +410,6 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 	}{
 		{embeddedAgents, "agents"},
 		{embeddedCommands, "commands"},
-		{embeddedScripts, "scripts/bash"},
 		{embeddedReference, "reference"},
 	}
 	var files []builtinFile
@@ -676,10 +439,10 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 // Ownership contract: .pylon/builtin/ belongs to pylon. Every run compares each file
 // with the embeds, rewrites the missing or differing ones and deletes files the embeds
 // no longer have — so a dropped built-in disappears with no migration step and a
-// damaged builtin heals on the next launch or doctor. Nothing is removed wholesale, so
+// damaged builtin heals on the next doctor. Nothing is removed wholesale, so
 // concurrent runs converge instead of racing. User files in .pylon/<kind>/ are never
 // touched; readers take the built-in first, so a same-named user file is ignored.
-// Shared by launch, init, doctor and sync-agents so they can never drift.
+// Shared by init, doctor and `pylon mem inject` so they can never drift.
 func syncBuiltinResources(root string) (bool, error) {
 	files, err := embeddedBuiltinFiles()
 	if err != nil {
@@ -736,14 +499,6 @@ func syncBuiltinResources(root string) (bool, error) {
 		return changed, fmt.Errorf(".pylon/builtin 정리 실패: %w", err)
 	}
 	return changed, nil
-}
-
-// syncBuiltinForLaunch is the launch-path wrapper around syncBuiltinResources.
-func syncBuiltinForLaunch(root string) error {
-	if _, err := syncBuiltinResources(root); err != nil {
-		return fmt.Errorf("내장 리소스 동기화 실패: %w", err)
-	}
-	return nil
 }
 
 // commandDiff describes how the on-disk .claude/commands/ differs from the

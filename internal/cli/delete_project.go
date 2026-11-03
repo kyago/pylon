@@ -45,7 +45,7 @@ func runDeleteProject(name string, purge, force bool) error {
 		return err
 	}
 
-	root, _, err := openWorkspace()
+	root, err := resolveRoot()
 	if err != nil {
 		return err
 	}
@@ -85,6 +85,7 @@ func runDeleteProject(name string, purge, force bool) error {
 			removed = true
 		}
 	}
+	refreshProjectList(root)
 
 	if flagJSON {
 		out := map[string]any{

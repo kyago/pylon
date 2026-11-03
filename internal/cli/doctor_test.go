@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
+	"github.com/kyago/pylon/internal/memory"
 )
 
 func TestSyncBuiltinResources_WritesEmbedsAndIsIdempotent(t *testing.T) {
@@ -51,7 +51,7 @@ func TestSyncBuiltinResources_WritesEmbedsAndIsIdempotent(t *testing.T) {
 // 사용자 디렉터리의 파일은 내장과 이름이 같아도 건드리지 않는다. 읽는 쪽이 내장을 먼저 고른다.
 func TestSyncBuiltinResources_LeavesUserFilesAlone(t *testing.T) {
 	root := t.TempDir()
-	sameName := filepath.Join(layout.ResourceDir(root, "agents"), "architect.md")
+	sameName := filepath.Join(layout.ResourceDir(root, "agents"), "dev.md")
 	mine := filepath.Join(layout.ResourceDir(root, "agents"), "my-agent.md")
 	if err := os.MkdirAll(filepath.Dir(mine), 0o755); err != nil {
 		t.Fatal(err)
@@ -71,16 +71,15 @@ func TestSyncBuiltinResources_LeavesUserFilesAlone(t *testing.T) {
 	}
 }
 
-// pylon doctor/update도 .claude/settings.json 훅을 현재 hooks.json으로 갱신한다 — 구버전 Stop 훅이
-// `claude`를 직접 띄운 세션에서 매 턴 실패하지 않도록. 사용자 훅은 남는다.
-func TestSyncClaudeProviderResources_RefreshesSettingsHooks(t *testing.T) {
+// doctor는 이전 릴리스의 훅을 지우고 사용자 훅은 남긴다.
+func TestSyncGeneratedFiles_RemovesPylonHook(t *testing.T) {
 	root := setupTestWorkspace(t)
 	claudeDir := layout.ClaudeDir(root)
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stale := `{"hooks":{
-  "SessionStart":[{"matcher":"stale","hooks":[{"type":"command","command":"pylon mem inject"}]}],
+  "SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"pylon mem inject"}]}],
   "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"my-guard"}]}]
 }}`
 	settingsPath := filepath.Join(claudeDir, "settings.json")
@@ -91,23 +90,34 @@ func TestSyncClaudeProviderResources_RefreshesSettingsHooks(t *testing.T) {
 	flagWorkspace = root
 	t.Cleanup(func() { flagWorkspace = oldWorkspace })
 
-	captureStdout(t, func() { syncClaudeProviderResourcesIfWorkspace(bytes.NewBuffer(nil), true) })
+	captureStdout(t, func() { syncGeneratedFilesIfWorkspace(bytes.NewBuffer(nil), true) })
 
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var settings struct {
-		Hooks map[string][]settingsHookEntry `json:"hooks"`
+	if strings.Contains(string(data), "pylon mem inject") || !strings.Contains(string(data), "my-guard") {
+		t.Errorf("settings.json = %s", data)
 	}
-	if err := json.Unmarshal(data, &settings); err != nil {
+}
+
+// doctor가 먼저 돌아 옛 훅이 사라져도 구버전 Stop 훅 항목은 지워진다.
+func TestSyncGeneratedFiles_RemovesLegacyHookMemory(t *testing.T) {
+	root := setupTestWorkspace(t)
+	junkKey := insertLegacyHookEntry(t, root)
+	insertMem(t, root, "alpha", "새 결정", "아직 유효한 새 결정 요약")
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = oldWorkspace })
+
+	captureStdout(t, func() { syncGeneratedFilesIfWorkspace(bytes.NewBuffer(nil), true) })
+
+	entries, err := memory.NewStore(root).List("alpha")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if start := settings.Hooks["SessionStart"]; len(start) != 1 || start[0].Matcher == "stale" {
-		t.Errorf("SessionStart hook not refreshed: %s", data)
-	}
-	if pre := settings.Hooks["PreToolUse"]; len(pre) != 1 || pre[0].Hooks[0].Command != "my-guard" {
-		t.Errorf("user hook must be kept: %s", data)
+	if len(entries) != 1 || entries[0].Key == junkKey {
+		t.Errorf("훅 JSON은 빠지고 실제 항목만 남아야 한다: %+v", entries)
 	}
 }
 
@@ -118,8 +128,8 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 	if _, err := syncBuiltinResources(root); err != nil {
 		t.Fatal(err)
 	}
-	common := filepath.Join(layout.ScriptsDir(root), "common.sh")
-	builtinAgent := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "architect.md")
+	common := filepath.Join(layout.BuiltinResourceDir(root, "commands"), "pl-cleanup.md")
+	builtinAgent := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dev.md")
 	dropped := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dropped-in-new-release.md")
 	if err := os.Remove(common); err != nil {
 		t.Fatal(err)
@@ -138,10 +148,10 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 	if !changed {
 		t.Error("a damaged builtin must be reported as changed")
 	}
-	if info, err := os.Stat(common); err != nil || info.Mode().Perm()&0o100 == 0 {
-		t.Errorf("deleted script not restored as executable: %v", err)
+	if _, err := os.Stat(common); err != nil {
+		t.Errorf("deleted file not restored: %v", err)
 	}
-	want, _ := embeddedAgents.ReadFile("agents/architect.md")
+	want, _ := embeddedAgents.ReadFile("agents/dev.md")
 	if got, _ := os.ReadFile(builtinAgent); !bytes.Equal(got, want) {
 		t.Error("edited builtin file not restored")
 	}
@@ -446,10 +456,7 @@ func TestBuildDesiredClaudeCommands_Keyset(t *testing.T) {
 
 	desired := buildDesiredClaudeCommands(root)
 
-	want := map[string]bool{
-		filepath.Join("pl", "index.md"):        true,
-		filepath.Join("pl", "project-list.md"): true,
-	}
+	want := map[string]bool{}
 	embedded, err := embeddedCommands.ReadDir("commands")
 	if err != nil {
 		t.Fatal(err)
@@ -480,7 +487,7 @@ func TestBuildDesiredClaudeCommands_Keyset(t *testing.T) {
 func TestBuildDesiredClaudeCommands_UserCommands(t *testing.T) {
 	root := newTestWorkspace(t)
 	userDir := layout.ResourceDir(root, "commands")
-	for name, body := range map[string]string{"pl-mine.md": "# mine\n", "pl-verify.md": "# shadow\n"} {
+	for name, body := range map[string]string{"pl-mine.md": "# mine\n", "pl-cleanup.md": "# shadow\n"} {
 		if err := os.WriteFile(filepath.Join(userDir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -489,8 +496,8 @@ func TestBuildDesiredClaudeCommands_UserCommands(t *testing.T) {
 	if desired[filepath.Join("pl", "mine.md")] != "# mine\n" {
 		t.Error("user command missing from desired set")
 	}
-	want, _ := embeddedCommands.ReadFile("commands/pl-verify.md")
-	if desired[filepath.Join("pl", "verify.md")] != string(want) {
+	want, _ := embeddedCommands.ReadFile("commands/pl-cleanup.md")
+	if desired[filepath.Join("pl", "cleanup.md")] != string(want) {
 		t.Error("user file must not shadow a built-in command")
 	}
 }
@@ -513,7 +520,7 @@ func TestDiffClaudeCommands(t *testing.T) {
 	if err := applyClaudeCommands(commandsDir, desired); err != nil {
 		t.Fatal(err)
 	}
-	staleTarget := filepath.Join("pl", "index.md")
+	staleTarget := filepath.Join("pl", "cleanup.md")
 	if err := os.WriteFile(filepath.Join(commandsDir, staleTarget), []byte("STALE\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -572,8 +579,8 @@ func TestSyncClaudeCommands_ConsentApplies(t *testing.T) {
 
 	syncClaudeCommandsIfWorkspace(bytes.NewBufferString("y\n"), false)
 
-	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); err != nil {
-		t.Errorf("expected pl/index.md to be created after consent: %v", err)
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "cleanup.md")); err != nil {
+		t.Errorf("expected pl/cleanup.md to be created after consent: %v", err)
 	}
 }
 
@@ -583,7 +590,7 @@ func TestSyncClaudeCommands_DeclineDoesNothing(t *testing.T) {
 
 	syncClaudeCommandsIfWorkspace(bytes.NewBufferString("n\n"), false)
 
-	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "cleanup.md")); !os.IsNotExist(err) {
 		t.Errorf("expected no commands written after decline, got err=%v", err)
 	}
 }
@@ -595,7 +602,7 @@ func TestSyncClaudeCommands_EmptyInputDeclines(t *testing.T) {
 
 	syncClaudeCommandsIfWorkspace(bytes.NewBufferString(""), false)
 
-	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "cleanup.md")); !os.IsNotExist(err) {
 		t.Errorf("expected no commands written on empty input, got err=%v", err)
 	}
 }
@@ -607,7 +614,7 @@ func TestSyncClaudeCommands_AutoYesSkipsPrompt(t *testing.T) {
 
 	syncClaudeCommandsIfWorkspace(bytes.NewBufferString(""), true)
 
-	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "index.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(commandsDir, "pl", "cleanup.md")); err != nil {
 		t.Errorf("expected commands written with autoYes, got err=%v", err)
 	}
 }
@@ -632,62 +639,6 @@ func TestNewDoctorCmd_FixExcludesFlag(t *testing.T) {
 	}
 	if f.DefValue != "false" {
 		t.Errorf("--fix-excludes default = %q, want %q", f.DefValue, "false")
-	}
-}
-
-func TestProviderDoctorCheckUsesConfiguredCommand(t *testing.T) {
-	dir := t.TempDir()
-	command := filepath.Join(dir, "custom-claude")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\necho custom-version\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{
-		Runtime: config.RuntimeConfig{Provider: "claude-code"},
-		Providers: map[string]config.ProviderConfig{
-			"claude-code": {Command: command},
-		},
-	}
-
-	version, err := newProviderCheck(cfg, nil).Verify()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(version, "claude-code") || !strings.Contains(version, "custom-version") {
-		t.Fatalf("provider version = %q", version)
-	}
-}
-
-func TestProviderDoctorCheckDoesNotFallbackForExplicitUnknownProvider(t *testing.T) {
-	cfg := &config.Config{Runtime: config.RuntimeConfig{Provider: "provider-b"}}
-	_, err := newProviderCheck(cfg, nil).Verify()
-	if err == nil || !strings.Contains(err.Error(), "provider-b") || !strings.Contains(err.Error(), "not registered") {
-		t.Fatalf("provider check error = %v", err)
-	}
-}
-
-func TestUnknownProviderDoesNotMaterializeClaudeResources(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".pylon", "config.yml"), []byte(`version: "0.2"
-runtime:
-  provider: provider-b
-`), 0644); err != nil {
-		t.Fatal(err)
-	}
-	oldWorkspace := flagWorkspace
-	flagWorkspace = root
-	t.Cleanup(func() { flagWorkspace = oldWorkspace })
-
-	output := captureStdout(t, func() {
-		syncSelectedProviderResourcesIfWorkspace(bytes.NewBuffer(nil), true)
-	})
-	if !strings.Contains(output, "provider-b") || !strings.Contains(output, "건너뜀") {
-		t.Fatalf("provider sync failure not reported:\n%s", output)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".claude")); !os.IsNotExist(err) {
-		t.Fatalf("unselected Claude resources were materialized: %v", err)
 	}
 }
 
@@ -742,54 +693,6 @@ func TestInstallHint_NoBrewFormula(t *testing.T) {
 	}
 }
 
-func TestRuntimeEnvCheckWarnsOnOverridingKeys(t *testing.T) {
-	const suffix = "는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. 이 키를 제거해야 runtime.effort가 적용됩니다"
-	tests := []struct {
-		name string
-		env  map[string]string
-		want string
-	}{
-		{"nil env", nil, ""},
-		{"unrelated key", map[string]string{"FOO": "1"}, ""},
-		{"effort key", map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "high"}, "runtime.env의 CLAUDE_CODE_EFFORT_LEVEL" + suffix},
-		{"both keys", map[string]string{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80", "CLAUDE_CODE_EFFORT_LEVEL": "high"},
-			"runtime.env의 CLAUDE_CODE_EFFORT_LEVEL, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" + suffix},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			check := newRuntimeEnvCheck(&config.Config{Runtime: config.RuntimeConfig{Env: tt.env}})
-			_, err := check.Verify()
-			got := ""
-			if err != nil {
-				got = err.Error()
-			}
-			if got != tt.want {
-				t.Fatalf("Verify() error = %q, want %q", got, tt.want)
-			}
-		})
-	}
-	// 설정 로드 실패(cfg nil)는 provider 체크가 보고하므로 여기서는 통과시킨다.
-	if _, err := newRuntimeEnvCheck(nil).Verify(); err != nil {
-		t.Fatalf("nil config must not warn: %v", err)
-	}
-}
-
-func TestRunChecksTreatsWarnCheckAsNonFailure(t *testing.T) {
-	var allPassed bool
-	var failures []Check
-	output := captureStdout(t, func() {
-		allPassed, failures = runChecks([]Check{
-			newRuntimeEnvCheck(&config.Config{Runtime: config.RuntimeConfig{Env: map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "high"}}}),
-		})
-	})
-	if !allPassed || len(failures) != 0 {
-		t.Fatalf("warn check must not fail doctor: allPassed=%v failures=%v", allPassed, failures)
-	}
-	if !strings.Contains(output, "⚠ runtime.env") || !strings.Contains(output, "CLAUDE_CODE_EFFORT_LEVEL는") {
-		t.Fatalf("warning not printed:\n%s", output)
-	}
-}
-
 func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
@@ -809,205 +712,6 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
 	if string(got) != current {
 		t.Errorf("current AGENTS.md was overwritten: %q", got)
-	}
-}
-
-func TestCheckProjectVerifyConfigs_RegeneratesMissing(t *testing.T) {
-	requireGit(t)
-
-	tmpDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	projectDir := filepath.Join(tmpDir, "goproject")
-	if out, err := exec.Command("git", "init", projectDir).CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
-	}
-	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/goproject\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// exclude 엔트리가 없는 상태에서 재생성이 일어나는 시나리오
-	os.Remove(filepath.Join(projectDir, ".git", "info", "exclude"))
-	// .pylon/ 없이 clone만 된 프로젝트는 재생성 대상이 아니어야 한다 (힌트만 출력)
-	unscaffolded := filepath.Join(tmpDir, "freshclone")
-	if err := os.MkdirAll(filepath.Join(unscaffolded, ".git"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	oldWorkspace := flagWorkspace
-	flagWorkspace = tmpDir
-	defer func() { flagWorkspace = oldWorkspace }()
-
-	if ok := checkProjectVerifyConfigs(); !ok {
-		t.Fatal("expected regeneration to succeed")
-	}
-	verifyPath := layout.VerifyConfigPath(projectDir)
-	vc, err := config.LoadVerifyConfig(verifyPath)
-	if err != nil {
-		t.Fatalf("regenerated verify.yml must parse: %v", err)
-	}
-	if len(vc.OrderedSteps()) == 0 {
-		t.Fatal("regenerated verify.yml for a Go project must contain commands")
-	}
-	// 재생성된 verify.yml이 커밋 가능해지면 안 된다 — exclude 엔트리가 함께 보장된다.
-	if isGit, hasEntry := checkExcludeStatus(projectDir); !isGit || !hasEntry {
-		t.Fatalf("regeneration must ensure .pylon/ exclude entry: isGit=%v hasEntry=%v", isGit, hasEntry)
-	}
-	// .pylon/ 없는 프로젝트에는 아무것도 쓰지 않는다.
-	if _, err := os.Stat(filepath.Join(unscaffolded, ".pylon")); !os.IsNotExist(err) {
-		t.Fatal("unscaffolded project must not be scaffolded by doctor")
-	}
-}
-
-func TestCheckProjectVerifyConfigs_ReportsInvalidWithoutOverwriting(t *testing.T) {
-	tmpDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	projectDir := filepath.Join(tmpDir, "broken")
-	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	invalid := "commands: [not: valid: yaml\n"
-	verifyPath := layout.VerifyConfigPath(projectDir)
-	if err := os.WriteFile(verifyPath, []byte(invalid), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	oldWorkspace := flagWorkspace
-	flagWorkspace = tmpDir
-	defer func() { flagWorkspace = oldWorkspace }()
-
-	if ok := checkProjectVerifyConfigs(); ok {
-		t.Fatal("expected invalid verify.yml to fail the check")
-	}
-	data, err := os.ReadFile(verifyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != invalid {
-		t.Fatal("existing verify.yml must never be overwritten")
-	}
-}
-
-func TestCheckProjectVerifyConfigs_SingleRepoRootIsCovered(t *testing.T) {
-	requireGit(t)
-
-	tmpDir := t.TempDir()
-	if out, err := exec.Command("git", "init", tmpDir).CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
-	}
-	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module example.com/single\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	oldWorkspace := flagWorkspace
-	flagWorkspace = tmpDir
-	defer func() { flagWorkspace = oldWorkspace }()
-
-	if ok := checkProjectVerifyConfigs(); !ok {
-		t.Fatal("single-repo root regeneration must succeed")
-	}
-	vc, err := config.LoadVerifyConfig(layout.VerifyConfigPath(tmpDir))
-	if err != nil {
-		t.Fatalf("root verify.yml must be regenerated and parseable: %v", err)
-	}
-	if len(vc.OrderedSteps()) == 0 {
-		t.Fatal("root verify.yml for a Go repo must contain commands")
-	}
-	// 루트 repo에서는 .pylon/ 전체가 아니라 verify.yml만 exclude된다 —
-	// 워크스페이스 .pylon/은 git-tracked 대상이다.
-	exclude, err := os.ReadFile(filepath.Join(tmpDir, ".git", "info", "exclude"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(exclude), ".pylon/verify.yml") {
-		t.Fatalf("root exclude must contain .pylon/verify.yml:\n%s", exclude)
-	}
-	for _, line := range strings.Split(string(exclude), "\n") {
-		if strings.TrimSpace(line) == ".pylon/" {
-			t.Fatalf("root exclude must not hide the whole .pylon/:\n%s", exclude)
-		}
-	}
-}
-
-func TestCheckProjectVerifyConfigs_RootSkippedWhenSubprojectsExist(t *testing.T) {
-	requireGit(t)
-
-	tmpDir := t.TempDir()
-	if out, err := exec.Command("git", "init", tmpDir).CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
-	}
-	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	projectDir := filepath.Join(tmpDir, "svc")
-	if err := os.MkdirAll(filepath.Join(projectDir, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/svc\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	oldWorkspace := flagWorkspace
-	flagWorkspace = tmpDir
-	defer func() { flagWorkspace = oldWorkspace }()
-
-	if ok := checkProjectVerifyConfigs(); !ok {
-		t.Fatal("subproject regeneration must succeed")
-	}
-	// 하위 프로젝트가 있으면 루트는 검증 대상이 아니다 — 비어 있는 루트
-	// verify.yml은 GIT_ROOT 오해석 가드를 무력화한다.
-	if _, err := os.Stat(layout.VerifyConfigPath(tmpDir)); !os.IsNotExist(err) {
-		t.Fatal("workspace root must not get a verify.yml when subprojects exist")
-	}
-	if _, err := os.Stat(layout.VerifyConfigPath(projectDir)); err != nil {
-		t.Fatalf("subproject verify.yml must be regenerated: %v", err)
-	}
-}
-
-func TestCheckProjectVerifyConfigs_UnknownStackRootIsSkipped(t *testing.T) {
-	requireGit(t)
-
-	tmpDir := t.TempDir()
-	if out, err := exec.Command("git", "init", tmpDir).CombinedOutput(); err != nil {
-		t.Fatalf("git init failed: %v\n%s", err, out)
-	}
-	if err := os.MkdirAll(filepath.Join(tmpDir, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmpDir, ".pylon", "config.yml"), []byte("version: \"0.1\"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	oldWorkspace := flagWorkspace
-	flagWorkspace = tmpDir
-	defer func() { flagWorkspace = oldWorkspace }()
-
-	if ok := checkProjectVerifyConfigs(); !ok {
-		t.Fatal("workspace-holder root must not fail the check")
-	}
-	// 스택 미감지 루트에 no-op verify.yml을 만들면 GIT_ROOT 가드가 무력화된다.
-	if _, err := os.Stat(layout.VerifyConfigPath(tmpDir)); !os.IsNotExist(err) {
-		t.Fatal("unknown-stack root must not get a verify.yml")
 	}
 }
 

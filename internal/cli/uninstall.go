@@ -130,7 +130,7 @@ func buildUninstallPlan(root string, removeProjects, removeBinary bool) (*uninst
 		}
 	}
 	// codex용으로 생성된 워크플로우 스킬(마커 보유)만 제거 — 사용자 스킬은 남긴다.
-	plan.runtimeFiles = append(plan.runtimeFiles, generatedCodexSkillDirs(root, nil)...)
+	plan.runtimeFiles = append(plan.runtimeFiles, generatedCodexSkillDirs(root)...)
 
 	// 2. Discover projects and their .pylon/ directories
 	projects, err := config.DiscoverProjects(root)
@@ -409,7 +409,7 @@ func cleanGitignoreFull(path string) error {
 		if trimmed == "# pylon" || trimmed == "# Pylon" ||
 			trimmed == "# Pylon runtime (agent communication, state)" ||
 			trimmed == "# Pylon-generated Claude Code config (dynamically generated)" ||
-			// launch(addClaudeDirToGitignore)이 쓰는 헤더 — init의 헤더와 문구가 다르다.
+			// addClaudeDirToGitignore가 쓰는 헤더 — init의 헤더와 문구가 다르다.
 			trimmed == "# Pylon-generated (dynamically generated)" ||
 			trimmed == "# Pylon built-in resources (regenerated)" ||
 			trimmed == "# Pylon root agent files (regenerated)" ||

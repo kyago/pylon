@@ -1,5 +1,0 @@
-version: "0.1"
-
-runtime:
-  provider: claude-code
-  permission_mode: acceptEdits
