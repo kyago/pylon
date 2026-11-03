@@ -390,6 +390,7 @@ func syncGeneratedFilesIfWorkspace(in io.Reader, autoYes bool) {
 	} else if removed {
 		fmt.Println("✓ .claude/settings.json에서 pylon 훅 제거")
 	}
+	pruneLegacyHookMemory(root)
 
 	syncClaudeCommandsIfWorkspace(in, autoYes)
 }

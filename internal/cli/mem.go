@@ -199,10 +199,18 @@ func runMemInject() error {
 		return err
 	}
 	refreshWorkspaceAfterUpgrade(root)
+	pruneLegacyHookMemory(root)
+	return nil
+}
+
+// pruneLegacyHookMemory deletes old Stop-hook payloads from every project's memory. It
+// reports to stderr only, because runMemInject's stdout must stay empty.
+func pruneLegacyHookMemory(root string) {
 	memStore := memory.NewStore(root)
 	projects, err := memStore.ListProjects()
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "경고: 구버전 훅 항목 정리 실패: %v\n", err)
+		return
 	}
 	for _, project := range projects {
 		if n, err := memStore.PruneLegacyHookEntries(project); err != nil {
@@ -211,7 +219,6 @@ func runMemInject() error {
 			fmt.Fprintf(os.Stderr, "%s: 구버전 Stop 훅이 저장한 항목 %d건 삭제\n", project, n)
 		}
 	}
-	return nil
 }
 
 // refreshWorkspaceAfterUpgrade brings a workspace up to date, which also removes the old hook.

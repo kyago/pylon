@@ -337,9 +337,8 @@ func isLegacyHookEntry(e Entry) bool {
 }
 
 // PruneLegacyHookEntries deletes the raw hook payloads the removed Stop-hook sync stored
-// (isLegacyHookEntry) and returns how many it removed. It runs regardless of
-// memory.retention_days, because opted-out workspaces would otherwise keep them forever.
-// 세션 시작마다 호출되므로 먼저 잠금 없이 훑고, 지울 항목이 있을 때만 잠근 뒤 다시 조회한다.
+// (isLegacyHookEntry) and returns how many it removed.
+// 먼저 잠금 없이 훑고, 지울 항목이 있을 때만 잠근 뒤 다시 조회한다.
 func (s *Store) PruneLegacyHookEntries(project string) (int64, error) {
 	hasLegacy := func(entries []Entry) bool {
 		for _, e := range entries {

@@ -63,15 +63,22 @@ func TestMemStore_ReportsUpdate(t *testing.T) {
 	}
 }
 
-// 구버전 Stop 훅이 저장한 훅 JSON 원문은 옛 훅이 마지막으로 돌 때 지운다.
-func TestMemInject_RemovesLegacyHookEntries(t *testing.T) {
-	root := setupTestWorkspace(t)
+// insertLegacyHookEntry stores the hook JSON the old Stop hook wrote and returns its key.
+func insertLegacyHookEntry(t *testing.T, root string) string {
+	t.Helper()
 	junk := &memory.Entry{ProjectID: "alpha", Category: "learning", Author: "claude", Confidence: 0.8,
 		Key:     `session-20261029-172146/{"session_id"-"8c1d2e3f`,
 		Content: `{"session_id":"8c1d2e3f-0a9b-4c8d-b7e6-f5a4b3c2d1e0","transcript_path":"/x.jsonl","hook_event_name":"Stop","stop_hook_active":false}`}
 	if err := memory.NewStore(root).Insert(junk); err != nil {
 		t.Fatal(err)
 	}
+	return junk.Key
+}
+
+// 구버전 Stop 훅이 저장한 훅 JSON 원문은 옛 훅이 마지막으로 돌 때 지운다.
+func TestMemInject_RemovesLegacyHookEntries(t *testing.T) {
+	root := setupTestWorkspace(t)
+	junkKey := insertLegacyHookEntry(t, root)
 	insertMem(t, root, "alpha", "새 결정", "아직 유효한 새 결정 요약")
 
 	if out := runMemInjectIn(t, root); out != "" {
@@ -81,7 +88,7 @@ func TestMemInject_RemovesLegacyHookEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Key == junk.Key {
+	if len(entries) != 1 || entries[0].Key == junkKey {
 		t.Errorf("훅 JSON은 빠지고 실제 항목만 남아야 한다: %+v", entries)
 	}
 }

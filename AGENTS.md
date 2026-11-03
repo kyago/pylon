@@ -72,8 +72,9 @@ directories are untouched.
 
 Pylon installs no hooks. `removePylonHooks` deletes the `pylon mem inject` SessionStart hook earlier releases wrote,
 leaving other hooks alone. The hidden `pylon mem inject` exists only for workspaces that still have that hook: it runs
-`refreshWorkspaceAfterUpgrade`, which removes the hook, and clears old hook junk from memory. Its stdout must stay
-empty, because a hook's stdout becomes session context. Delete it once no workspace in use has the hook.
+`refreshWorkspaceAfterUpgrade`, which removes the hook. Both it and `pylon doctor` clear old hook junk from memory
+(`pruneLegacyHookMemory`). Its stdout must stay empty, because a hook's stdout becomes session context. Delete these
+once no workspace in use has the hook.
 
 ### Project discovery contract (`internal/config/workspace.go`)
 

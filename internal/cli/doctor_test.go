@@ -10,6 +10,7 @@ import (
 
 	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
+	"github.com/kyago/pylon/internal/memory"
 )
 
 func TestSyncBuiltinResources_WritesEmbedsAndIsIdempotent(t *testing.T) {
@@ -97,6 +98,26 @@ func TestSyncGeneratedFiles_RemovesPylonHook(t *testing.T) {
 	}
 	if strings.Contains(string(data), "pylon mem inject") || !strings.Contains(string(data), "my-guard") {
 		t.Errorf("settings.json = %s", data)
+	}
+}
+
+// doctor가 먼저 돌아 옛 훅이 사라져도 구버전 Stop 훅 항목은 지워진다.
+func TestSyncGeneratedFiles_RemovesLegacyHookMemory(t *testing.T) {
+	root := setupTestWorkspace(t)
+	junkKey := insertLegacyHookEntry(t, root)
+	insertMem(t, root, "alpha", "새 결정", "아직 유효한 새 결정 요약")
+	oldWorkspace := flagWorkspace
+	flagWorkspace = root
+	t.Cleanup(func() { flagWorkspace = oldWorkspace })
+
+	captureStdout(t, func() { syncGeneratedFilesIfWorkspace(bytes.NewBuffer(nil), true) })
+
+	entries, err := memory.NewStore(root).List("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Key == junkKey {
+		t.Errorf("훅 JSON은 빠지고 실제 항목만 남아야 한다: %+v", entries)
 	}
 }
 
