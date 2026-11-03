@@ -192,9 +192,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("  AGENTS.md                  - operating guide (pylon block regenerated; write your own rules outside it)")
 	fmt.Println()
 	fmt.Println("Next steps:")
-	fmt.Println("  1. Edit .pylon/config.yml to customize settings")
-	fmt.Println("  2. Add projects: pylon add-project <name>")
-	fmt.Println("  3. Start working: open the workspace in Claude Code, Codex, or Paseo")
+	fmt.Println("  1. Add projects: pylon add-project <git-url>")
+	fmt.Println("  2. Start working: open the workspace in Claude Code, Codex, or Paseo")
 
 	return nil
 }

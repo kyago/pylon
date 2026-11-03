@@ -10,11 +10,6 @@ func PylonDir(root string) string {
 	return filepath.Join(root, ".pylon")
 }
 
-// ConfigPath returns the workspace config file path (.pylon/config.yml).
-func ConfigPath(root string) string {
-	return filepath.Join(PylonDir(root), "config.yml")
-}
-
 // MemoryDir returns the markdown memory store root (.pylon/memory).
 func MemoryDir(root string) string {
 	return filepath.Join(PylonDir(root), "memory")

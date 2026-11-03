@@ -26,7 +26,7 @@ func buildDesiredClaudeCommands(root string) map[string]string {
 
 	// Slash commands → pl/: the built-ins come straight from the embeds
 	// (.pylon/builtin/commands/ is a copy of them), then user-added commands from
-	// .pylon/commands/. A built-in name always wins — see syncBuiltinResources.
+	// .pylon/commands/. A built-in name always wins.
 	embedded, _ := embeddedCommands.ReadDir("commands")
 	for _, entry := range embedded {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
