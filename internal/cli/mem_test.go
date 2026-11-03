@@ -2,11 +2,13 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/memory"
 )
@@ -181,5 +183,129 @@ func TestMemInject_RemovesLegacyHookEntries(t *testing.T) {
 	}
 	if strings.Contains(out, "hook_event_name") || !strings.Contains(out, "새 결정") {
 		t.Errorf("훅 JSON은 빠지고 실제 항목만 주입되어야 한다:\n%s", out)
+	}
+}
+
+// staleClaudeWorkspace는 이전 버전 pylon이 만든 상태를 흉내 낸다: 생성 파일을 만든 뒤
+// 매뉴얼과 AGENTS.md 블록을 낡게 하고, 이제 없는 내장 에이전트를 남긴다.
+func staleClaudeWorkspace(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(layout.PylonDir(root), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMemConfig(t, root, "  proactive_injection: true\n  proactive_max_tokens: 2000\n")
+	insertMem(t, root, "alpha", "k1", "내용")
+	cfg, err := config.LoadConfig(layout.ConfigPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := generateClaudeDir(root, cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	manual := filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md")
+	if err := os.WriteFile(manual, []byte("old manual"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	retired := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "retired.md")
+	if err := os.WriteFile(retired, []byte("---\nname: retired\nrole: Old\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agents, err := os.ReadFile(layout.RootAgentsPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := strings.Replace(string(agents), "## 작업 진행 방식", "## 옛 제목", 1)
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte("# 내 규칙\n\n"+stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// 업데이트 뒤 첫 세션은 pylon이나 doctor 없이 워크스페이스를 갱신하고, stdout에는 주입 본문만 낸다.
+func TestMemInject_RefreshesWorkspaceAfterUpgrade(t *testing.T) {
+	root := staleClaudeWorkspace(t)
+
+	out := runMemInjectIn(t, root)
+	if !strings.HasPrefix(out, memInjectHeader) || !strings.HasSuffix(out, memInjectFooter) {
+		t.Errorf("stdout에 주입 본문 외의 내용이 섞였다: %q", out)
+	}
+	manual, _ := os.ReadFile(filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md"))
+	if string(manual) == "old manual" {
+		t.Error("내장 매뉴얼이 갱신되지 않았다")
+	}
+	if _, err := os.Stat(filepath.Join(layout.BuiltinResourceDir(root, "agents"), "retired.md")); !os.IsNotExist(err) {
+		t.Error("없어진 내장 에이전트가 남았다")
+	}
+	if _, err := os.Lstat(filepath.Join(layout.ClaudeAgentsDir(root), "retired.md")); !os.IsNotExist(err) {
+		t.Error("없어진 에이전트의 .claude/agents 링크가 남았다")
+	}
+	agents, _ := os.ReadFile(layout.RootAgentsPath(root))
+	if !strings.HasPrefix(string(agents), "# 내 규칙\n\n") || !strings.Contains(string(agents), "## 작업 진행 방식") {
+		t.Errorf("AGENTS.md 갱신 또는 사용자 내용 보존 실패: %.80q", agents)
+	}
+}
+
+// 최신 상태에서는 파일을 다시 쓰지 않는다 — 세션마다 mtime을 바꿔 파일 워처를 깨우지 않기 위해.
+func TestMemInject_NoWritesWhenUpToDate(t *testing.T) {
+	root := staleClaudeWorkspace(t)
+	runMemInjectIn(t, root)
+
+	settings := filepath.Join(layout.ClaudeDir(root), "settings.json")
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(settings, old, old); err != nil {
+		t.Fatal(err)
+	}
+	runMemInjectIn(t, root)
+	info, err := os.Stat(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(old) {
+		t.Errorf("최신 상태인데 settings.json을 다시 썼다: %v", info.ModTime())
+	}
+}
+
+// 갱신이 실패해도 메모리는 주입되고, 원인을 고치면 다음 세션이 다시 시도한다.
+func TestMemInject_RetriesRefreshAfterFailure(t *testing.T) {
+	root := staleClaudeWorkspace(t)
+	good, err := os.ReadFile(layout.RootAgentsPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := agentsBlockBegin + "\n마커가 깨진 블록\n"
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if out := runMemInjectIn(t, root); !strings.HasPrefix(out, memInjectHeader) {
+		t.Errorf("갱신 실패가 메모리 주입을 막았다: %q", out)
+	}
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != broken {
+		t.Errorf("깨진 AGENTS.md를 건드렸다: %q", got)
+	}
+
+	if err := os.WriteFile(layout.RootAgentsPath(root), good, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runMemInjectIn(t, root)
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); !strings.Contains(string(got), "## 작업 진행 방식") {
+		t.Errorf("다음 세션이 다시 시도하지 않았다: %.80q", got)
+	}
+}
+
+// Claude Code를 쓰지 않는 워크스페이스에서 수동 실행해도 .claude/를 만들지 않는다.
+func TestMemInject_DoesNotCreateClaudeDir(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(layout.PylonDir(root), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMemConfig(t, root, "  proactive_injection: true\n")
+	runMemInjectIn(t, root)
+	if _, err := os.Stat(layout.ClaudeDir(root)); !os.IsNotExist(err) {
+		t.Errorf(".claude/가 생겼다: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md")); err != nil {
+		t.Errorf("내장 리소스가 갱신되지 않았다: %v", err)
 	}
 }

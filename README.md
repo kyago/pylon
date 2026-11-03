@@ -77,9 +77,10 @@ pylon update x.x.x        # 특정 버전 설치 (CalVer)
 
 `pylon update`는 플랫폼에 맞는 바이너리를 내려받아 현재 실행 파일을 교체한 뒤, 자동으로
 `pylon doctor`를 실행하여 워크스페이스의 내장 리소스(에이전트/커맨드/스크립트/매뉴얼)와 설정
-기본값을 최신 상태로 동기화합니다. 동기화 대상은 실행한 위치의 워크스페이스 하나이므로, 다른 워크스페이스에서는
-각각 `pylon doctor`를 실행하세요. 없어진 내장 리소스는 함께 지워지지만, 더 이상 쓰지 않는 설정 키와 빈 디렉터리,
-`*.pylon-bak` 백업은 남습니다(동작에는 영향 없음).
+기본값을 최신 상태로 동기화합니다. 동기화 대상은 실행한 위치의 워크스페이스 하나입니다. 다른 워크스페이스는 다음
+Claude Code 세션이 시작될 때 내장 리소스와 생성 파일이 자동으로 갱신됩니다(`SessionStart` 훅이 있는 경우). Codex만 쓰거나
+설정 기본값까지 맞추려면 `pylon doctor`를 실행하세요. 없어진 내장 리소스는 함께 지워지지만, 더 이상 쓰지 않는 설정 키와
+빈 디렉터리, `*.pylon-bak` 백업은 남습니다(동작에는 영향 없음).
 
 릴리스 조회에는 `GITHUB_TOKEN`, 없으면 `gh auth token` 값을 사용합니다. 둘 다 없으면 토큰 없이
 조회하며 GitHub API rate limit(공인 IP 기준)에 걸릴 수 있습니다.
@@ -353,7 +354,7 @@ pylon mem prune --category <category>                 # 오염 항목 일괄 삭
 | 명령어 | 설명 |
 |--------|------|
 | `pylon sync-agents` | 내장 리소스(`.pylon/builtin/`)와 `.claude/agents/` 심링크를 즉시 동기화 |
-| `pylon mem inject` | 세션 시작 시 호출(Claude Code 훅; Codex는 수동 `pylon mem inject`) — 구버전 Stop 훅이 저장한 훅 JSON 항목과 만료 메모리(`retention_days`)를 정리한 뒤 프로젝트 메모리를 세션 컨텍스트에 주입 |
+| `pylon mem inject` | 세션 시작 시 호출(Claude Code 훅; Codex는 수동 `pylon mem inject`) — 업데이트 뒤 첫 세션이면 내장 리소스와 생성 파일을 갱신하고, 구버전 Stop 훅이 저장한 훅 JSON 항목과 만료 메모리(`retention_days`)를 정리한 뒤 프로젝트 메모리를 세션 컨텍스트에 주입 |
 
 ### 작업 이력
 
