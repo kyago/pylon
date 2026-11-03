@@ -201,7 +201,7 @@ func runMemInject() error {
 	if err != nil {
 		return err
 	}
-	refreshWorkspaceAfterUpgrade(root, cfg)
+	refreshWorkspaceAfterUpgrade(root)
 	memStore := memory.NewStore(root)
 	projects, err := memStore.ListProjects()
 	if err != nil {
@@ -248,7 +248,7 @@ func runMemInject() error {
 // an update: Paseo starts sessions without `pylon`, so launch never gets to do this.
 // 내장 리소스가 임베드와 같으면 아무것도 쓰지 않는다. 세션 시작을 막지 않도록 실패는 stderr
 // 경고로 끝내고, stdout은 세션 컨텍스트이므로 쓰지 않는다.
-func refreshWorkspaceAfterUpgrade(root string, cfg *config.Config) {
+func refreshWorkspaceAfterUpgrade(root string) {
 	changed, err := syncBuiltinResources(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "경고: 내장 리소스 갱신 실패: %v\n", err)
@@ -263,11 +263,11 @@ func refreshWorkspaceAfterUpgrade(root string, cfg *config.Config) {
 	}
 	var genErr error
 	if dirExists(layout.ClaudeDir(root)) {
-		genErr = generateClaudeDir(root, cfg, projects)
+		genErr = generateClaudeDir(root, projects)
+	} else {
+		_, _, genErr = ensureRootAgentFiles(root, projects)
 	}
-	if genErr == nil && dirExists(layout.CodexSkillsDir(root)) {
-		genErr = prepareCodexWorkspace(root, cfg, projects)
-	}
+	pruneCodexSkills(root)
 	if genErr != nil {
 		fmt.Fprintf(os.Stderr, "경고: 워크스페이스 파일 갱신 실패 (다음 세션에서 다시 시도합니다): %v\n", genErr)
 		// 내장 리소스가 최신이면 다음 세션이 갱신을 건너뛰므로 하나를 지워 재시도하게 한다.

@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/kyago/pylon/internal/config"
 )
 
 func TestGenerateSettingsHooks(t *testing.T) {
@@ -245,13 +243,7 @@ func TestGenerateClaudeDir_IncludesSettings(t *testing.T) {
 	tmpDir := t.TempDir()
 	claudeDir := filepath.Join(tmpDir, ".claude")
 
-	// Create minimal config using ParseConfig (which applies defaults)
-	cfg, err := config.ParseConfig([]byte("version: \"0.1\"\n"))
-	if err != nil {
-		t.Fatalf("ParseConfig() error = %v", err)
-	}
-
-	err = generateClaudeDir(tmpDir, cfg, nil)
+	err := generateClaudeDir(tmpDir, nil)
 	if err != nil {
 		t.Fatalf("generateClaudeDir() error = %v", err)
 	}

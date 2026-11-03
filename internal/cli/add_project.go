@@ -1,12 +1,10 @@
 package cli
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -79,7 +77,7 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	_, contextPath, agentsDir, err := scaffoldProject(projectDir, projectName)
+	contextPath, err := scaffoldProject(projectDir, projectName)
 	if err != nil {
 		return err
 	}
@@ -96,7 +94,7 @@ func runAddProject(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
-	fmt.Print(projectNextSteps(contextPath, agentsDir))
+	fmt.Print(projectNextSteps(contextPath))
 
 	return nil
 }
@@ -135,56 +133,30 @@ func cloneProject(root, repoURL, projectName string) error {
 	return nil
 }
 
-func scaffoldProject(projectDir, projectName string) (techStack, string, string, error) {
+func scaffoldProject(projectDir, projectName string) (string, error) {
 	pylonDir := layout.PylonDir(projectDir)
-	agentsDir := filepath.Join(pylonDir, "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
-		return techStack{}, "", "", fmt.Errorf("failed to create project .pylon/: %w", err)
+	if err := os.MkdirAll(pylonDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create project .pylon/: %w", err)
 	}
 	fmt.Println("Analyzing codebase...")
 	stack := detectTechStack(projectDir)
 	contextPath := filepath.Join(pylonDir, "context.md")
 	if err := os.WriteFile(contextPath, []byte(generateContextMD(projectName, stack)), 0o644); err != nil {
-		return techStack{}, "", "", fmt.Errorf("failed to create context.md: %w", err)
+		return "", fmt.Errorf("failed to create context.md: %w", err)
 	}
 	fmt.Println("✓ context.md generated")
 	if err := os.WriteFile(filepath.Join(pylonDir, "verify.yml"), []byte(generateVerifyYML(stack)), 0o644); err != nil {
-		return techStack{}, "", "", fmt.Errorf("failed to create verify.yml: %w", err)
+		return "", fmt.Errorf("failed to create verify.yml: %w", err)
 	}
 	fmt.Println("✓ verify.yml generated")
-	if err := promptAgentCreation(agentsDir, suggestAgents(stack)); err != nil {
-		return techStack{}, "", "", err
-	}
-	return stack, contextPath, agentsDir, nil
+	return contextPath, nil
 }
 
-func promptAgentCreation(agentsDir string, agents []agentSuggestion) error {
-	fmt.Println("\nSuggested agents:")
-	for _, agent := range agents {
-		fmt.Printf("  - %-15s %s\n", agent.name, agent.description)
-	}
-	fmt.Print("\nCreate these agents? [Y/n]: ")
-	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
-	if answer != "" && answer != "y" && answer != "yes" {
-		fmt.Println("Skipped agent creation. Create manually in .pylon/agents/")
-		return nil
-	}
-	for _, agent := range agents {
-		if err := os.WriteFile(filepath.Join(agentsDir, agent.name+".md"), []byte(agent.content), 0o644); err != nil {
-			return fmt.Errorf("failed to create agent %s: %w", agent.name, err)
-		}
-	}
-	fmt.Printf("✓ %d agent(s) created\n", len(agents))
-	return nil
-}
-
-func projectNextSteps(contextPath, agentsDir string) string {
+func projectNextSteps(contextPath string) string {
 	return fmt.Sprintf(`Next steps:
   1. Review: %s
-  2. Customize agents: %s
-  3. Start working: open the workspace in Claude Code, Codex, or Paseo
-`, contextPath, agentsDir)
+  2. Start working: open the workspace in Claude Code, Codex, or Paseo
+`, contextPath)
 }
 
 // validateProjectName ensures the project name is a safe single directory name

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
 )
 
@@ -50,13 +49,8 @@ func TestAgentReferencesResolveToBuiltins(t *testing.T) {
 			t.Errorf("%s references agent %q with no agents/%s.md", where, name, name)
 			continue
 		}
-		agent, err := config.ParseAgentData(data)
-		if err != nil {
-			t.Errorf("parse agents/%s.md: %v", name, err)
-			continue
-		}
-		if agent.Name != name {
-			t.Errorf("agents/%s.md has name %q, referenced as %q in %s", name, agent.Name, name, where)
+		if !strings.Contains(string(data), "\nname: "+name+"\n") {
+			t.Errorf("agents/%s.md: frontmatter name differs (referenced from %s)", name, where)
 		}
 	}
 }
@@ -73,7 +67,7 @@ func TestGenerateClaudeDir_UserCommandNeverShadowsBuiltin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := generateClaudeDir(root, &config.Config{}, nil); err != nil {
+	if err := generateClaudeDir(root, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,7 +91,7 @@ func TestGenerateClaudeDir_UserCommandNeverShadowsBuiltin(t *testing.T) {
 func TestGenerateClaudeDir_InstallsCleanupCommand(t *testing.T) {
 	root := t.TempDir()
 
-	if err := generateClaudeDir(root, &config.Config{}, nil); err != nil {
+	if err := generateClaudeDir(root, nil); err != nil {
 		t.Fatal(err)
 	}
 

@@ -69,15 +69,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("Pylon Workspace Initialization")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
-	providerInput := "auto"
-	fmt.Printf("Runtime provider: %s\n", providerInput)
-
 	// Step 4: Create directory structure
 	// Spec Reference: Section 4 "Workspace Structure", Section 7 "pylon init"
 	dirs := []string{
 		filepath.Join(pylonDir, "domain"),
 		filepath.Join(pylonDir, "agents"),
-		filepath.Join(pylonDir, "skills"),
 		filepath.Join(pylonDir, "commands"),
 		filepath.Join(pylonDir, "runtime"),
 	}
@@ -89,12 +85,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create config.yml (Spec Section 16: minimal config after init)
-	configContent := fmt.Sprintf(`version: "0.2"
-
-runtime:
-  provider: %s
-  permission_mode: acceptEdits
-`, providerInput)
+	configContent := "version: \"0.2\"\n"
 
 	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to create config.yml: %w", err)
@@ -196,8 +187,7 @@ runtime:
 	fmt.Println("  .pylon/config.yml          - workspace configuration")
 	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
 	fmt.Println("  .pylon/builtin/            - built-in agents, commands, manual (regenerated)")
-	fmt.Println("  .pylon/agents/             - your own agents (pylon add-agent)")
-	fmt.Println("  .pylon/skills/             - your own skills (pylon add-skill)")
+	fmt.Println("  .pylon/agents/             - your own agents")
 	fmt.Println("  .pylon/commands/           - your own pipeline commands")
 	fmt.Println("  .pylon/runtime/            - agent communication runtime")
 	fmt.Println("  .pylon/memory/             - project memory (git-tracked)")

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kyago/pylon/internal/config"
 	"github.com/kyago/pylon/internal/layout"
 	"github.com/kyago/pylon/internal/memory"
 )
@@ -196,11 +195,7 @@ func staleClaudeWorkspace(t *testing.T) string {
 	}
 	writeMemConfig(t, root, "  proactive_injection: true\n  proactive_max_tokens: 2000\n")
 	insertMem(t, root, "alpha", "k1", "내용")
-	cfg, err := config.LoadConfig(layout.ConfigPath(root))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := generateClaudeDir(root, cfg, nil); err != nil {
+	if err := generateClaudeDir(root, nil); err != nil {
 		t.Fatal(err)
 	}
 	manual := filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md")

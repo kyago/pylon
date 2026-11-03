@@ -56,8 +56,8 @@ func TestRunInit_DoesNotGitInitWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	configText := string(configData)
-	if !strings.Contains(configText, `version: "0.2"`) || !strings.Contains(configText, "provider: auto") {
-		t.Fatalf("init did not create provider-neutral config:\n%s", configText)
+	if !strings.Contains(configText, `version: "0.2"`) {
+		t.Fatalf("init did not create config:\n%s", configText)
 	}
 	if strings.Contains(configText, "backend:") {
 		t.Fatalf("new config must not emit deprecated backend:\n%s", configText)

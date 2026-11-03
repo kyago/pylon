@@ -73,7 +73,7 @@ func TestSyncBuiltinResources_LeavesUserFilesAlone(t *testing.T) {
 
 // pylon doctor/update도 .claude/settings.json 훅을 현재 hooks.json으로 갱신한다 — 구버전 Stop 훅이
 // `claude`를 직접 띄운 세션에서 매 턴 실패하지 않도록. 사용자 훅은 남는다.
-func TestSyncClaudeProviderResources_RefreshesSettingsHooks(t *testing.T) {
+func TestSyncGeneratedFiles_RefreshesSettingsHooks(t *testing.T) {
 	root := setupTestWorkspace(t)
 	claudeDir := layout.ClaudeDir(root)
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
@@ -91,7 +91,7 @@ func TestSyncClaudeProviderResources_RefreshesSettingsHooks(t *testing.T) {
 	flagWorkspace = root
 	t.Cleanup(func() { flagWorkspace = oldWorkspace })
 
-	captureStdout(t, func() { syncClaudeProviderResourcesIfWorkspace(bytes.NewBuffer(nil), true) })
+	captureStdout(t, func() { syncGeneratedFilesIfWorkspace(bytes.NewBuffer(nil), true) })
 
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
@@ -632,62 +632,6 @@ func TestNewDoctorCmd_FixExcludesFlag(t *testing.T) {
 	}
 }
 
-func TestProviderDoctorCheckUsesConfiguredCommand(t *testing.T) {
-	dir := t.TempDir()
-	command := filepath.Join(dir, "custom-claude")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\necho custom-version\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{
-		Runtime: config.RuntimeConfig{Provider: "claude-code"},
-		Providers: map[string]config.ProviderConfig{
-			"claude-code": {Command: command},
-		},
-	}
-
-	version, err := newProviderCheck(cfg, nil).Verify()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(version, "claude-code") || !strings.Contains(version, "custom-version") {
-		t.Fatalf("provider version = %q", version)
-	}
-}
-
-func TestProviderDoctorCheckDoesNotFallbackForExplicitUnknownProvider(t *testing.T) {
-	cfg := &config.Config{Runtime: config.RuntimeConfig{Provider: "provider-b"}}
-	_, err := newProviderCheck(cfg, nil).Verify()
-	if err == nil || !strings.Contains(err.Error(), "provider-b") || !strings.Contains(err.Error(), "not registered") {
-		t.Fatalf("provider check error = %v", err)
-	}
-}
-
-func TestUnknownProviderDoesNotMaterializeClaudeResources(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".pylon"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".pylon", "config.yml"), []byte(`version: "0.2"
-runtime:
-  provider: provider-b
-`), 0644); err != nil {
-		t.Fatal(err)
-	}
-	oldWorkspace := flagWorkspace
-	flagWorkspace = root
-	t.Cleanup(func() { flagWorkspace = oldWorkspace })
-
-	output := captureStdout(t, func() {
-		syncSelectedProviderResourcesIfWorkspace(bytes.NewBuffer(nil), true)
-	})
-	if !strings.Contains(output, "provider-b") || !strings.Contains(output, "건너뜀") {
-		t.Fatalf("provider sync failure not reported:\n%s", output)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".claude")); !os.IsNotExist(err) {
-		t.Fatalf("unselected Claude resources were materialized: %v", err)
-	}
-}
-
 func TestResolveGitExcludePath(t *testing.T) {
 	requireGit(t)
 	tmpDir := t.TempDir()
@@ -736,54 +680,6 @@ func TestInstallHint_NoBrewFormula(t *testing.T) {
 	c := Check{Name: "git", InstallURL: "https://git-scm.com/downloads"}
 	if got := installHint(c, true); got != c.InstallURL {
 		t.Errorf("installHint = %q, want %q", got, c.InstallURL)
-	}
-}
-
-func TestRuntimeEnvCheckWarnsOnOverridingKeys(t *testing.T) {
-	const suffix = "는 세션·에이전트별 effort/compact 설정을 모두 덮어씁니다. 이 키를 제거해야 runtime.effort가 적용됩니다"
-	tests := []struct {
-		name string
-		env  map[string]string
-		want string
-	}{
-		{"nil env", nil, ""},
-		{"unrelated key", map[string]string{"FOO": "1"}, ""},
-		{"effort key", map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "high"}, "runtime.env의 CLAUDE_CODE_EFFORT_LEVEL" + suffix},
-		{"both keys", map[string]string{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80", "CLAUDE_CODE_EFFORT_LEVEL": "high"},
-			"runtime.env의 CLAUDE_CODE_EFFORT_LEVEL, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" + suffix},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			check := newRuntimeEnvCheck(&config.Config{Runtime: config.RuntimeConfig{Env: tt.env}})
-			_, err := check.Verify()
-			got := ""
-			if err != nil {
-				got = err.Error()
-			}
-			if got != tt.want {
-				t.Fatalf("Verify() error = %q, want %q", got, tt.want)
-			}
-		})
-	}
-	// 설정 로드 실패(cfg nil)는 provider 체크가 보고하므로 여기서는 통과시킨다.
-	if _, err := newRuntimeEnvCheck(nil).Verify(); err != nil {
-		t.Fatalf("nil config must not warn: %v", err)
-	}
-}
-
-func TestRunChecksTreatsWarnCheckAsNonFailure(t *testing.T) {
-	var allPassed bool
-	var failures []Check
-	output := captureStdout(t, func() {
-		allPassed, failures = runChecks([]Check{
-			newRuntimeEnvCheck(&config.Config{Runtime: config.RuntimeConfig{Env: map[string]string{"CLAUDE_CODE_EFFORT_LEVEL": "high"}}}),
-		})
-	})
-	if !allPassed || len(failures) != 0 {
-		t.Fatalf("warn check must not fail doctor: allPassed=%v failures=%v", allPassed, failures)
-	}
-	if !strings.Contains(output, "⚠ runtime.env") || !strings.Contains(output, "CLAUDE_CODE_EFFORT_LEVEL는") {
-		t.Fatalf("warning not printed:\n%s", output)
 	}
 }
 

@@ -24,21 +24,16 @@ func SetVersion(v string) {
 }
 
 // rootCmd is the base command for pylon.
-// When invoked without subcommands, it launches the selected interactive provider.
 var rootCmd = &cobra.Command{
 	Use:   "pylon",
 	Short: "Workspace tool for Claude Code and Codex across multiple repositories",
 	Long: `Pylon - workspace tool for Claude Code and Codex across multiple repositories.
 
-Pylon prepares a workspace and looks after project knowledge, memory,
-verification and session wrap-up.
-
-Run 'pylon' without subcommands to launch the interactive AI session.`,
+Pylon sets up a workspace root over several repositories: the root AGENTS.md,
+project list, agents, and a simple project memory. Start sessions yourself in
+Claude Code, Codex or Paseo.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runLaunch()
-	},
 }
 
 // versionCmd prints build version information.
@@ -64,10 +59,7 @@ func init() {
 	rootCmd.AddCommand(newAddProjectCmd())
 	rootCmd.AddCommand(newDeleteProjectCmd())
 	rootCmd.AddCommand(newMemCmd())
-	rootCmd.AddCommand(newSyncAgentsCmd())
 	rootCmd.AddCommand(newUpdateCmd())
-	rootCmd.AddCommand(newAddAgentCmd())
-	rootCmd.AddCommand(newAddSkillCmd())
 	rootCmd.AddCommand(newInternalCmd())
 }
 
