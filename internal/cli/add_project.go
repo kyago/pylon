@@ -151,6 +151,7 @@ func scaffoldProject(projectDir, projectName string) (string, error) {
 	_, writeErr := f.WriteString(generateContextMD(projectName, stack))
 	closeErr := f.Close()
 	if writeErr != nil {
+		_ = os.Remove(contextPath) // 빈 파일이 남으면 다음 실행이 "기존 파일"로 보존한다
 		return "", fmt.Errorf("failed to write context.md: %w", writeErr)
 	}
 	if closeErr != nil {

@@ -57,7 +57,7 @@ func generateClaudeDir(root string, projects []config.ProjectInfo) error {
 	return nil
 }
 
-// addToGitignore appends pylon-managed entries to .gitignore if not already present.
+// addClaudeDirToGitignore appends pylon-managed entries to .gitignore if not already present.
 func addClaudeDirToGitignore(root string) error {
 	gitignorePath := filepath.Join(root, ".gitignore")
 
