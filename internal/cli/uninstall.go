@@ -24,7 +24,7 @@ func newUninstallCmd() *cobra.Command {
 This removes:
   1. Runtime artifacts (.claude/, CLAUDE.md, AGENTS.md)
   2. Project-level .pylon/ directories
-  3. Workspace .pylon/ directory (config, domain, agents, database)
+  3. Workspace .pylon/ directory (config, domain, agents, memory)
   4. Pylon entries from .gitignore
 
 Project source code is preserved by default.
@@ -412,6 +412,7 @@ func cleanGitignoreFull(path string) error {
 			// addClaudeDirToGitignore가 쓰는 헤더 — init의 헤더와 문구가 다르다.
 			trimmed == "# Pylon-generated (dynamically generated)" ||
 			trimmed == "# Pylon built-in resources (regenerated)" ||
+			trimmed == "# Claude CLI agent symlinks (managed by pylon)" ||
 			trimmed == "# Pylon root agent files (regenerated)" ||
 			// 이전 릴리스의 init이 쓴 헤더 — 기존 워크스페이스 정리를 위해 계속 인식한다.
 			trimmed == "# Pylon root agent files (regenerated; AI-authored)" {

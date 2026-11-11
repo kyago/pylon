@@ -13,10 +13,10 @@ Pylon이 하는 일은 파일을 준비하는 것까지입니다. 세션은 Clau
 | 도구 | 용도 | 설치 |
 |------|------|------|
 | **git** | 프로젝트 clone과 제외 설정 | 기본 설치 |
-| **gh** | `/pl:cleanup`의 PR 머지 확인 | `brew install gh` |
+| **gh** | `init`·`doctor`의 필수 검사, `/pl:cleanup`의 PR 머지 확인 | `brew install gh` |
 | **Go** 1.24+ | `go install`·소스 빌드 시에만 | https://go.dev/dl/ |
 
-`pylon doctor`로 git과 gh 설치 상태를 확인할 수 있습니다.
+git과 gh가 없으면 `pylon init`이 실패합니다. `pylon doctor`로 설치 상태를 확인할 수 있습니다.
 
 ## 설치
 
@@ -60,12 +60,12 @@ pylon add-project https://github.com/user/my-api.git
 | 명령어 | 설명 |
 |--------|------|
 | `pylon init` | 워크스페이스 초기화 |
-| `pylon add-project <url>` | 프로젝트를 clone하여 추가 (`--name`, `--force`로 재clone, `--skip-clone`으로 기존 디렉터리에 `.pylon/`만 생성) |
-| `pylon delete-project <name>` | 프로젝트 등록 해제 (`--purge`로 디렉터리까지 삭제, `--force`로 확인 생략) |
+| `pylon add-project <git-url>` | 프로젝트를 clone하여 추가 (`--name`, `--force`로 재clone, `--skip-clone`으로 기존 디렉터리에 `.pylon/`만 생성) |
+| `pylon delete-project <name>` | 프로젝트 등록 해제 (`--purge`로 디렉터리까지 삭제, `--force`/`-f`로 확인 생략) |
 | `pylon doctor` | 도구 확인, 내장 리소스와 생성 파일 갱신 (`--fix-excludes`, `--yes`로 비인터랙티브) |
 | `pylon mem` | 프로젝트 메모리 (`store`, `search`, `list`, `delete`, `prune`) |
 | `pylon update [version]` | 바이너리 업데이트 후 `doctor` 실행 |
-| `pylon uninstall` | 워크스페이스 제거 (`--dry-run`, `--force`, `--remove-projects`, `--remove-binary`) |
+| `pylon uninstall` | 워크스페이스 제거 (`--dry-run`, `--force`/`-f`, `--remove-projects`, `--remove-binary`) |
 | `pylon version` | 버전 정보 |
 
 `mem`과 `delete-project`는 `--json`을 붙이면 JSON으로 출력합니다.
@@ -77,12 +77,12 @@ pylon add-project https://github.com/user/my-api.git
 메모리는 `.pylon/memory/<project>/<category>/<slug>.md`에 저장되는 마크다운 파일이고, 프로젝트별 `INDEX.md`가 목록입니다. 세션에 자동으로 주입되지 않으며, 필요할 때 찾습니다.
 
 ```bash
-pylon mem search --project <name> --query "검색어"
+pylon mem search --project <name> --query "검색어"            # --limit (기본 10)
 pylon mem store --project <name> --category decision --key "슬러그" --content "한 줄 요약
 근거와 맥락"                                                  # 같은 category와 key면 갱신
-pylon mem list --project <name>
-pylon mem delete --project <name> --key "슬러그"              # --category, --dry-run 지원
-pylon mem prune --category <category>                       # --project 생략 시 전체, --dry-run 지원
+pylon mem list --project <name>                             # --category로 필터
+pylon mem delete --project <name> --key "슬러그"              # --category, --dry-run, --yes 지원
+pylon mem prune --category <category>                       # --project 생략 시 전체, --dry-run, --yes 지원
 ```
 
 ## 워크스페이스 구조
@@ -127,7 +127,8 @@ workspace/
 개발 가이드는 [AGENTS.md](AGENTS.md)에 있습니다.
 
 ```bash
-make build       # 빌드
+make build       # 빌드 (bin/pylon)
+make install     # $(go env GOPATH)/bin에 설치
 make test        # 테스트
 make lint        # 린트
 make clean       # 정리

@@ -3,54 +3,30 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/kyago/pylon/internal/layout"
 )
 
-// 매뉴얼 서브 에이전트 표가 부르는 이름은 모두 내장 에이전트 파일로 존재하고
-// 그 name: 과 같아야 한다 — 에이전트를 통합·삭제하면서 남은 옛 이름이 호출되지 않도록.
-func TestAgentReferencesResolveToBuiltins(t *testing.T) {
-	refs := map[string]string{} // 이름 → 처음 발견한 위치
-	manual, err := embeddedReference.ReadFile("reference/pylon-usage.md")
+// 내장 에이전트 파일의 name: 은 파일명과 같아야 한다 — Claude Code가 .claude/agents/ 로
+// 자동 등록할 때 매뉴얼·사용자가 부르는 이름과 어긋나지 않도록.
+func TestBuiltinAgentNamesMatchFilenames(t *testing.T) {
+	entries, err := embeddedAgents.ReadDir("agents")
 	if err != nil {
 		t.Fatal(err)
 	}
-	section := string(manual)
-	start := strings.Index(section, "### 서브 에이전트 선택 기준")
-	if start < 0 {
-		t.Fatal("manual agent selection section missing")
+	if len(entries) == 0 {
+		t.Fatal("no embedded agents")
 	}
-	section = section[start:]
-	if end := strings.Index(section, "\n## "); end >= 0 {
-		section = section[:end]
-	}
-	backtick := regexp.MustCompile("`([^`]+)`")
-	found := 0
-	for _, line := range strings.Split(section, "\n") {
-		cells := strings.Split(line, "|")
-		if !strings.HasPrefix(line, "|") || len(cells) < 3 {
-			continue
-		}
-		for _, m := range backtick.FindAllStringSubmatch(cells[2], -1) {
-			refs[m[1]] = "reference/pylon-usage.md"
-			found++
-		}
-	}
-	if found < 3 {
-		t.Fatalf("manual table agent names found = %d, parser likely broken", found)
-	}
-
-	for name, where := range refs {
-		data, err := embeddedAgents.ReadFile("agents/" + name + ".md")
+	for _, e := range entries {
+		name := strings.TrimSuffix(e.Name(), ".md")
+		data, err := embeddedAgents.ReadFile("agents/" + e.Name())
 		if err != nil {
-			t.Errorf("%s references agent %q with no agents/%s.md", where, name, name)
-			continue
+			t.Fatal(err)
 		}
 		if !strings.Contains(string(data), "\nname: "+name+"\n") {
-			t.Errorf("agents/%s.md: frontmatter name differs (referenced from %s)", name, where)
+			t.Errorf("agents/%s: frontmatter name differs from filename", e.Name())
 		}
 	}
 }

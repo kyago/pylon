@@ -21,15 +21,14 @@ func newMemCmd() *cobra.Command {
 		Short: "Manage project memory (knowledge store)",
 		Long: `프로젝트 메모리(지식 저장소)를 관리합니다.
 
-루트 에이전트(PO)가 프로젝트 지식을 저장/검색할 때 사용합니다.
+루트 에이전트가 프로젝트 지식을 저장/검색할 때 사용합니다.
 
 사용 가능한 하위 명령:
   search  토큰 매칭 검색
   store   메모리 저장
   list    메모리 목록
   delete  메모리 삭제 (키/카테고리 단위)
-  prune   오염 메모리 정리 (카테고리 일괄 삭제)
-  inject  프로젝트 메모리를 세션 컨텍스트로 출력 (SessionStart hook 전용)`,
+  prune   오염 메모리 정리 (카테고리 일괄 삭제)`,
 	}
 
 	cmd.AddCommand(newMemSearchCmd())

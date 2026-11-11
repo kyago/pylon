@@ -1,7 +1,6 @@
 ---
 name: dev
-description: Implements a scoped task (backend, frontend, or tests) in an existing codebase following its conventions; use for independent implementation tasks from tasks.json
-role: Developer
+description: Implements a scoped task (backend, frontend, or tests) in an existing codebase following its conventions; use for independent, non-overlapping implementation tasks
 ---
 
 # Developer
