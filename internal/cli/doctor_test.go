@@ -731,3 +731,55 @@ func TestHintUnscaffoldedProjects_SkipsWorkspaceWorktree(t *testing.T) {
 		t.Errorf("unexpected hint for worktree: %q", out)
 	}
 }
+
+func TestReportLegacy_PruneRemovesLeftoversIncludingReadOnly(t *testing.T) {
+	root := t.TempDir()
+	runtimeDir := filepath.Join(root, ".pylon", "runtime", "ro")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "state.json"), []byte("{}"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(runtimeDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	bak := filepath.Join(root, "AGENTS.md.pylon-bak.1")
+	if err := os.WriteFile(bak, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(root, "app")
+	verify := filepath.Join(proj, ".pylon", "verify.yml")
+	if err := os.MkdirAll(filepath.Dir(verify), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(verify, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(root, ".pylon", "memory")
+	if err := os.MkdirAll(keep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projects := []config.ProjectInfo{{Name: "app", Path: proj}}
+
+	if got := len(legacyLeftovers(root, projects)); got != 3 {
+		t.Fatalf("leftovers = %d, want 3", got)
+	}
+	reportLegacy(root, projects, false)
+	if _, err := os.Stat(bak); err != nil {
+		t.Fatal("without --prune-legacy nothing may be deleted")
+	}
+
+	reportLegacy(root, projects, true)
+	for _, p := range []string{filepath.Join(root, ".pylon", "runtime"), bak, verify} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed", p)
+		}
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Error(".pylon/memory must survive")
+	}
+	if _, err := os.Stat(filepath.Join(proj, ".pylon")); err != nil {
+		t.Error("project .pylon/ marker must survive")
+	}
+}

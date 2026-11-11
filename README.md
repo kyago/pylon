@@ -62,7 +62,7 @@ pylon add-project https://github.com/user/my-api.git
 | `pylon init` | 워크스페이스 초기화 |
 | `pylon add-project <git-url>` | 프로젝트를 clone하여 추가 (`--name`, `--force`로 재clone, `--skip-clone`으로 기존 디렉터리에 `.pylon/`만 생성) |
 | `pylon delete-project <name>` | 프로젝트 등록 해제 (`--purge`로 디렉터리까지 삭제, `--force`/`-f`로 확인 생략) |
-| `pylon doctor` | 도구 확인, 내장 리소스와 생성 파일 갱신 (`--fix-excludes`, `--yes`로 비인터랙티브) |
+| `pylon doctor` | 도구 확인, 내장 리소스와 생성 파일 갱신 (`--fix-excludes`, `--yes`로 비인터랙티브, `--prune-legacy`로 이전 버전 잔여 파일 삭제) |
 | `pylon mem` | 프로젝트 메모리 (`store`, `search`, `list`, `delete`, `prune`) |
 | `pylon update [version]` | 바이너리 업데이트 후 `doctor` 실행 |
 | `pylon uninstall` | 워크스페이스 제거 (`--dry-run`, `--force`/`-f`, `--remove-projects`, `--remove-binary`) |
@@ -119,7 +119,7 @@ workspace/
 - `pylon update`를 실행한 워크스페이스는 바로 정리됩니다. 다른 워크스페이스는 `pylon doctor`를 실행하거나, 옛 훅이 남아 있으면 다음 Claude Code 세션이 시작될 때 자동으로 정리됩니다.
 - 이 정리에서 구버전 Stop 훅이 메모리에 저장한 훅 JSON 항목도 지웁니다. 되돌릴 수 없으니 워크스페이스가 git 저장소가 아니면 필요할 때 `.pylon/memory`를 먼저 복사해 두세요.
 - 없어지는 것: `/pl:pipeline`과 단계 커맨드, 파이프라인 스크립트, `pylon` 단독 실행, `SessionStart` 훅, 11개 에이전트, Codex `$pl-*` 스킬.
-- 남는 것: `.pylon/runtime/`, `.pylon/history/`, `.pylon/skills/`, `*.pylon-bak` 파일, 프로젝트의 `.pylon/verify.yml`, `config.yml`의 옛 키. 더 이상 읽지 않으니 필요 없으면 직접 지우세요. `.pylon/runtime/`에는 읽기 전용 파일이 있어 `chmod -R u+w .pylon/runtime`을 먼저 실행해야 합니다.
+- 남는 것: `.pylon/runtime/`, `.pylon/history/`, `.pylon/skills/`, `*.pylon-bak` 파일, 프로젝트의 `.pylon/verify.yml`. 더 이상 읽지 않습니다. `pylon doctor`가 목록을 보여 주고, `pylon doctor --prune-legacy`가 삭제합니다. `config.yml`의 옛 키는 그대로 두어도 됩니다.
 - 진행 중인 파이프라인 run은 업데이트 전에 마감하세요. 끝나지 않은 run의 브랜치와 워크트리는 자동으로 정리되지 않습니다.
 
 ## 개발
