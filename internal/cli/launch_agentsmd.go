@@ -49,8 +49,6 @@ func buildAgentsBlock(projects []config.ProjectInfo) string {
 	b.WriteString(agentsBlockBegin + "\n")
 	b.WriteString(strings.TrimSpace(string(manual)) + "\n\n")
 	b.WriteString(agentsFactsHeading + "\n\n")
-	b.WriteString("- **도메인 지식**: `.pylon/domain/`\n")
-	b.WriteString("- **에이전트**: `.pylon/builtin/agents/`(내장), `.pylon/agents/`(사용자 추가)\n")
 	if len(projects) > 0 {
 		names := make([]string, len(projects))
 		for i, p := range projects {
