@@ -25,10 +25,8 @@ func newInitCmd() *cobra.Command {
 		Short: "Initialize a new pylon workspace",
 		Long: `Initialize the current directory as a pylon workspace.
 
-Creates the .pylon/ directory structure with default configuration,
-agent definitions, and runtime directories.
-
-Spec Reference: Section 7 "pylon init"`,
+Creates .pylon/ (config, domain knowledge, built-in agents and commands,
+memory), the Claude Code symlinks and the root AGENTS.md/CLAUDE.md.`,
 		RunE: runInit,
 	}
 }
@@ -70,7 +68,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println(strings.Repeat("\u2500", 40))
 
 	// Step 4: Create directory structure
-	// Spec Reference: Section 4 "Workspace Structure", Section 7 "pylon init"
 	dirs := []string{
 		filepath.Join(pylonDir, "domain"),
 		filepath.Join(pylonDir, "agents"),
@@ -119,8 +116,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	gitignoreEntries := []string{
 		// .pylon/memory/ 는 의도적으로 제외 — 메모리는 git으로 추적/리뷰한다 (D1).
 		"",
-		"# Claude CLI agent symlinks (managed by pylon)",
-		".claude/agents/",
+		"# Pylon-generated (dynamically generated)",
+		".claude/",
 		"",
 		"# Pylon built-in resources (regenerated)",
 		".pylon/builtin/",
@@ -185,9 +182,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
 	fmt.Println("  .pylon/builtin/            - built-in agents, commands, manual (regenerated)")
 	fmt.Println("  .pylon/agents/             - your own agents")
-	fmt.Println("  .pylon/commands/           - your own pipeline commands")
+	fmt.Println("  .pylon/commands/           - your own slash commands")
 	fmt.Println("  .pylon/memory/             - project memory (git-tracked)")
-	fmt.Println("  .claude/agents/            - Claude CLI symlinks (-> .pylon/builtin/agents/, .pylon/agents/)")
+	fmt.Println("  .claude/                   - Claude Code agents (symlinks) and slash commands (regenerated)")
 	fmt.Println("  CLAUDE.md                  - @AGENTS.md import marker")
 	fmt.Println("  AGENTS.md                  - operating guide (pylon block regenerated; write your own rules outside it)")
 	fmt.Println()

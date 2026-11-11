@@ -62,12 +62,15 @@ func addClaudeDirToGitignore(root string) error {
 	gitignorePath := filepath.Join(root, ".gitignore")
 
 	existing, _ := os.ReadFile(gitignorePath)
-	content := string(existing)
+	present := map[string]bool{}
+	for _, line := range strings.Split(string(existing), "\n") {
+		present[strings.TrimSpace(line)] = true
+	}
 
-	// Collect missing entries
+	// Whole-line match: ".claude/agents/" (old init) must not count as ".claude/".
 	var missing []string
 	for _, entry := range []string{".claude/", "CLAUDE.md", "AGENTS.md", ".pylon/builtin/"} {
-		if !strings.Contains(content, entry) {
+		if !present[entry] {
 			missing = append(missing, entry)
 		}
 	}
