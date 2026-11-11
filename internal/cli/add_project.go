@@ -14,17 +14,15 @@ import (
 
 func newAddProjectCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "add-project [git-url]",
+		Use:   "add-project <git-url>",
 		Short: "Add a project as a standalone git clone in the workspace",
 		Long: `Add a project to the workspace as a standalone git clone.
 
-Analyzes the codebase and creates project-level .pylon/ configuration
-including context.md and default agent definitions.
+Analyzes the codebase and creates the project-level .pylon/context.md,
+then refreshes the project list in the root AGENTS.md.
 
 If the project directory already exists, use --force to re-clone or
---skip-clone to keep the existing directory and only generate .pylon/ config.
-
-Spec Reference: spec 003.`,
+--skip-clone to keep the existing directory and only generate .pylon/ config.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runAddProject,
 	}
@@ -139,11 +137,24 @@ func scaffoldProject(projectDir, projectName string) (string, error) {
 	if err := os.MkdirAll(pylonDir, 0o755); err != nil {
 		return "", fmt.Errorf("failed to create project .pylon/: %w", err)
 	}
+	contextPath := filepath.Join(pylonDir, "context.md")
+	f, err := os.OpenFile(contextPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if os.IsExist(err) {
+		fmt.Println("✓ 기존 context.md 유지")
+		return contextPath, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to create context.md: %w", err)
+	}
 	fmt.Println("Analyzing codebase...")
 	stack := detectTechStack(projectDir)
-	contextPath := filepath.Join(pylonDir, "context.md")
-	if err := os.WriteFile(contextPath, []byte(generateContextMD(projectName, stack)), 0o644); err != nil {
-		return "", fmt.Errorf("failed to create context.md: %w", err)
+	_, writeErr := f.WriteString(generateContextMD(projectName, stack))
+	closeErr := f.Close()
+	if writeErr != nil {
+		return "", fmt.Errorf("failed to write context.md: %w", writeErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("failed to close context.md: %w", closeErr)
 	}
 	fmt.Println("✓ context.md generated")
 	return contextPath, nil

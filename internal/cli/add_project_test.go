@@ -266,6 +266,26 @@ func TestRunAddProject_SkipCloneWithExistingDir(t *testing.T) {
 	}
 }
 
+func TestScaffoldProjectPreservesExistingContext(t *testing.T) {
+	projectDir := t.TempDir()
+	pylonDir := filepath.Join(projectDir, ".pylon")
+	if err := os.MkdirAll(pylonDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contextPath := filepath.Join(pylonDir, "context.md")
+	want := []byte("사용자가 기록한 프로젝트 지식\n")
+	if err := os.WriteFile(contextPath, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scaffoldProject(projectDir, "project"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(contextPath)
+	if err != nil || string(got) != string(want) {
+		t.Fatalf("existing context changed: %q, %v", got, err)
+	}
+}
+
 func TestValidateProjectName(t *testing.T) {
 	valid := []string{"my-project", "repo123", "a"}
 	for _, name := range valid {
