@@ -54,12 +54,17 @@ the versions shipped with this binary. Your own resources in .pylon/agents/,
 .pylon/commands/ are left alone; a built-in with the same name wins.
 
 Use --fix-excludes to automatically add .pylon/ to project .git/info/exclude
-for any projects that are missing the local-scope ignore entry.`,
+for any projects that are missing the local-scope ignore entry.
+
+Files earlier releases wrote and nothing reads any more (.pylon/runtime/,
+.pylon/history/, .pylon/skills/, *.pylon-bak, project .pylon/verify.yml) are
+listed; --prune-legacy deletes them.`,
 		RunE: runDoctor,
 	}
 
 	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in project repos")
 	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화)를 건너뛰고 비인터랙티브로 실행")
+	cmd.Flags().Bool("prune-legacy", false, "이전 버전이 남긴 파일(.pylon/runtime·history·skills, *.pylon-bak, 프로젝트 verify.yml) 삭제")
 
 	return cmd
 }
@@ -117,6 +122,8 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	if root, err := resolveRoot(); err == nil {
 		if projects, err := config.DiscoverProjects(root); err == nil {
 			hintUnscaffoldedProjects(root, projects)
+			pruneLegacy, _ := cmd.Flags().GetBool("prune-legacy")
+			reportLegacy(root, projects, pruneLegacy)
 		}
 	}
 
