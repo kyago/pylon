@@ -558,3 +558,14 @@ func TestSearchLeadingBigramRule(t *testing.T) {
 		t.Fatalf("하기로는 매치되면 안 된다: %+v", r)
 	}
 }
+
+func TestSearchNoFallbackForLatinPrefixWithParticle(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "repo 구조",
+		Content: "return 값 규칙", Confidence: 0.9})
+
+	// "redis를"의 앞 두 글자 "re"로 폴백하면 repo·return이 걸린다
+	if r, _ := s.Search("app", "redis를", 10); len(r) != 0 {
+		t.Fatalf("영문 접두 + 조사 토큰은 폴백하면 안 된다: %+v", r)
+	}
+}

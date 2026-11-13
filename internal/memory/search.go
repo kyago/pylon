@@ -63,13 +63,14 @@ func (s *Store) Search(project, query string, limit int) ([]SearchResult, error)
 }
 
 // tokenScore returns 1 for a substring match, fuzzyTokenScore when a Hangul
-// token's first bigram appears, 0 otherwise. 영문 토큰은 노이즈를 피하려 폴백하지 않는다.
+// token's first bigram appears, 0 otherwise. 영문으로 시작하는 토큰은 노이즈를 피하려 폴백하지 않는다.
 func tokenScore(text, tok string) float64 {
 	if strings.Contains(text, tok) {
 		return 1
 	}
 	runes := []rune(tok)
-	if len(runes) < 3 || !containsHangul(runes) {
+	// 앞 두 글자가 모두 한글일 때만: "redis를"의 "re"처럼 영문 접두로 폴백하면 노이즈가 된다
+	if len(runes) < 3 || !isHangul(runes[0]) || !isHangul(runes[1]) {
 		return 0
 	}
 	if strings.Contains(text, string(runes[:2])) {
@@ -78,11 +79,4 @@ func tokenScore(text, tok string) float64 {
 	return 0
 }
 
-func containsHangul(runes []rune) bool {
-	for _, r := range runes {
-		if unicode.Is(unicode.Hangul, r) {
-			return true
-		}
-	}
-	return false
-}
+func isHangul(r rune) bool { return unicode.Is(unicode.Hangul, r) }
