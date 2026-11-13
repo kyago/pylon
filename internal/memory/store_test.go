@@ -515,7 +515,7 @@ func TestSearchMatchesKoreanInflectionInQuery(t *testing.T) {
 func TestSearchHangulFallbackOnlyOnLeadingBigram(t *testing.T) {
 	s := newTestStore(t)
 	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "k",
-		Content: "배포 파이프라인 설명", Confidence: 0.8})
+		Content: "api 배포 파이프라인 설명", Confidence: 0.8})
 
 	// "배포를"은 첫 bigram "배포"가 있어 매치, 무관한 "인증서를"은 매치되지 않는다
 	if r, _ := s.Search("app", "배포를", 10); len(r) != 1 {
@@ -538,6 +538,11 @@ func TestSearchNormalizesNFDAndMatchesCategory(t *testing.T) {
 	nfd := "세션" // "세션"의 NFD(자모 분해) 표기
 	if r, _ := s.Search("app", nfd, 10); len(r) != 1 {
 		t.Fatalf("NFD 쿼리도 매치되어야 한다: %+v", r)
+	}
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "nfd",
+		Content: "\u1110\u1169\u110f\u1173\u11ab \u1100\u1162\u11bc\u1109\u1175\u11ab", Confidence: 0.8}) // "토큰 갱신"의 NFD
+	if r, _ := s.Search("app", "토큰", 10); len(r) != 1 || r[0].Key != "nfd" {
+		t.Fatalf("NFD로 저장된 본문도 NFC 쿼리로 매치되어야 한다: %+v", r)
 	}
 	if r, _ := s.Search("app", "decision", 10); len(r) != 1 {
 		t.Fatalf("카테고리명으로도 검색되어야 한다: %+v", r)
