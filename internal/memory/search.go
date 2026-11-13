@@ -5,21 +5,29 @@ package memory
 import (
 	"sort"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // SearchResult is a search hit with a normalized match score.
 type SearchResult struct {
 	Entry
-	Rank float64 // 일치한 토큰 수 / 전체 토큰 수 (1.0 = 모든 토큰 일치)
+	Rank float64 // 토큰별 점수 합 / 전체 토큰 수 (1.0 = 모든 토큰이 부분 문자열로 일치)
 }
 
+// fuzzyTokenScore: 첫 bigram만 일치한 토큰의 점수. 정확 일치(1.0)보다 낮게 둬 순위에서 밀린다.
+const fuzzyTokenScore = 0.5
+
 // Search scores entries by case-insensitive substring containment per query
-// token. 부분 문자열 매칭이므로 한국어 조사 변형("메모리를")도 "메모리"로 검색된다.
+// token over key, category and content (양쪽 NFC 정규화). 부분 문자열로 안 맞는
+// 한글 토큰은 첫 두 글자(첫 bigram)가 있으면 약하게 일치로 본다 — 한국어 조사·어미는
+// 뒤에 붙으므로 "인증을"·"세션으로"가 "인증은"·"세션"과 맞고, "하기로"는 "쓰기로"와 맞지 않는다.
 func (s *Store) Search(project, query string, limit int) ([]SearchResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	tokens := strings.Fields(strings.ToLower(query))
+	tokens := strings.Fields(strings.ToLower(norm.NFC.String(query)))
 	if len(tokens) == 0 {
 		return nil, nil
 	}
@@ -29,17 +37,15 @@ func (s *Store) Search(project, query string, limit int) ([]SearchResult, error)
 	}
 	var results []SearchResult
 	for _, e := range entries {
-		text := strings.ToLower(e.Key + "\n" + e.Content)
-		matched := 0
+		text := strings.ToLower(norm.NFC.String(e.Key + "\n" + e.Category + "\n" + e.Content))
+		score := 0.0
 		for _, tok := range tokens {
-			if strings.Contains(text, tok) {
-				matched++
-			}
+			score += tokenScore(text, tok)
 		}
-		if matched == 0 {
+		if score == 0 {
 			continue
 		}
-		results = append(results, SearchResult{Entry: e, Rank: float64(matched) / float64(len(tokens))})
+		results = append(results, SearchResult{Entry: e, Rank: score / float64(len(tokens))})
 	}
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Rank != results[j].Rank {
@@ -55,3 +61,22 @@ func (s *Store) Search(project, query string, limit int) ([]SearchResult, error)
 	}
 	return results, nil
 }
+
+// tokenScore returns 1 for a substring match, fuzzyTokenScore when a Hangul
+// token's first bigram appears, 0 otherwise. 영문으로 시작하는 토큰은 노이즈를 피하려 폴백하지 않는다.
+func tokenScore(text, tok string) float64 {
+	if strings.Contains(text, tok) {
+		return 1
+	}
+	runes := []rune(tok)
+	// 앞 두 글자가 모두 한글일 때만: "redis를"의 "re"처럼 영문 접두로 폴백하면 노이즈가 된다
+	if len(runes) < 3 || !isHangul(runes[0]) || !isHangul(runes[1]) {
+		return 0
+	}
+	if strings.Contains(text, string(runes[:2])) {
+		return fuzzyTokenScore
+	}
+	return 0
+}
+
+func isHangul(r rune) bool { return unicode.Is(unicode.Hangul, r) }
