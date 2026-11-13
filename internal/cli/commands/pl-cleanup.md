@@ -56,6 +56,8 @@ pylon mem search --project <프로젝트> --query "<주제 키워드>"
 
 같은 주제가 있으면 **같은 `--category`와 `--key`**로 저장해 갱신합니다(갱신은 카테고리와 key가 모두 같아야
 일어납니다). 본문 첫 줄은 한 줄 요약으로 씁니다 — `INDEX.md`에 그 줄이 보입니다.
+검색은 글자 일치로만 찾으므로, 본문에 핵심 용어의 영문·한글 표기와 흔한 별칭을 함께 적습니다(예: `Redis(레디스)`,
+`인증(auth)`).
 
 ```bash
 pylon mem store --project <프로젝트> --category decision --key <슬러그> --content "결정 요약

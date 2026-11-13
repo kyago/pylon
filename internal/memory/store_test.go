@@ -494,3 +494,67 @@ func TestPruneLegacyHookEntries_SkipsLockWhenNothingToDelete(t *testing.T) {
 		t.Errorf("waited %v on the lock with nothing to delete", elapsed)
 	}
 }
+
+func TestSearchMatchesKoreanInflectionInQuery(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "decision", Key: "auth-session",
+		Content: "인증은 JWT 대신 세션 쿠키를 쓴다", Confidence: 0.8})
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "redis-timeout",
+		Content: "Redis 연결 타임아웃은 30초", Confidence: 0.8})
+
+	// 쿼리 쪽에 조사가 붙어도("인증을", "세션으로") 본문의 "인증은", "세션"과 매치되어야 한다
+	results, err := s.Search("app", "인증을 세션으로", 10)
+	if err != nil {
+		t.Fatalf("Search 실패: %v", err)
+	}
+	if len(results) != 1 || results[0].Key != "auth-session" {
+		t.Fatalf("조사 붙은 쿼리 검색 실패: %+v", results)
+	}
+}
+
+func TestSearchHangulFallbackOnlyOnLeadingBigram(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "k",
+		Content: "배포 파이프라인 설명", Confidence: 0.8})
+
+	// "배포를"은 첫 bigram "배포"가 있어 매치, 무관한 "인증서를"은 매치되지 않는다
+	if r, _ := s.Search("app", "배포를", 10); len(r) != 1 {
+		t.Fatalf("첫 bigram이 있으면 매치되어야 한다: %+v", r)
+	}
+	if r, _ := s.Search("app", "인증서를", 10); len(r) != 0 {
+		t.Fatalf("무관한 토큰은 매치되면 안 된다: %+v", r)
+	}
+	// 영문은 bigram 폴백을 쓰지 않는다 (configuration ↔ pipeline류 노이즈 방지)
+	if r, _ := s.Search("app", "pipelines", 10); len(r) != 0 {
+		t.Fatalf("영문 토큰은 부분 문자열로만 매치되어야 한다: %+v", r)
+	}
+}
+
+func TestSearchNormalizesNFDAndMatchesCategory(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "decision", Key: "k",
+		Content: "세션 쿠키 사용", Confidence: 0.8})
+
+	nfd := "세션" // "세션"의 NFD(자모 분해) 표기
+	if r, _ := s.Search("app", nfd, 10); len(r) != 1 {
+		t.Fatalf("NFD 쿼리도 매치되어야 한다: %+v", r)
+	}
+	if r, _ := s.Search("app", "decision", 10); len(r) != 1 {
+		t.Fatalf("카테고리명으로도 검색되어야 한다: %+v", r)
+	}
+}
+
+func TestSearchLeadingBigramRule(t *testing.T) {
+	s := newTestStore(t)
+	mustInsert(t, s, &Entry{ProjectID: "app", Category: "learning", Key: "k",
+		Content: "세션 쿠키를 쓰기로 했다", Confidence: 0.8})
+
+	// 2음절 어간 + 2음절 조사도 첫 bigram으로 매치된다
+	if r, _ := s.Search("app", "세션으로", 10); len(r) != 1 || r[0].Rank != fuzzyTokenScore {
+		t.Fatalf("세션으로는 약한 일치여야 한다: %+v", r)
+	}
+	// 끝 bigram만 겹치는 경우(하기로 ↔ 쓰기로)는 매치되지 않는다
+	if r, _ := s.Search("app", "하기로", 10); len(r) != 0 {
+		t.Fatalf("하기로는 매치되면 안 된다: %+v", r)
+	}
+}
