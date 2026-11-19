@@ -1,0 +1,9 @@
+bin/
+dist/
+pylon
+*.db
+*.db-wal
+*.db-shm
+.pylon/
+.omc/
+.DS_Store

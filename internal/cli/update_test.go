@@ -1,0 +1,340 @@
+package cli
+
+import (
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestValidateVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// CalVer valid
+		{"2026.3.1", true},
+		{"2026.12.15", true},
+		{"2025.1.1", true},
+		{"2030.6.100", true},
+		{"latest", true},
+		{"Latest", true},
+		{"LATEST", true},
+
+		// Invalid
+		{"abc", false},
+		{"", false},
+		{"v1.2.3", false},
+		{"2026", false},
+		{"2026.3", false},
+		{"hello-world", false},
+		{"2026.3.1.4", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := validateVersion(tt.input)
+			if got != tt.want {
+				t.Errorf("validateVersion(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveUpdateTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		want    string
+		wantErr bool
+	}{
+		{"no args", nil, "latest", false},
+		{"empty args", []string{}, "latest", false},
+		{"empty string", []string{""}, "latest", false},
+		{"whitespace only", []string{"  "}, "latest", false},
+		{"latest keyword", []string{"latest"}, "latest", false},
+		{"latest uppercase", []string{"LATEST"}, "latest", false},
+		{"latest mixed case", []string{"Latest"}, "latest", false},
+		{"calver version", []string{"2026.3.1"}, "2026.3.1", false},
+		{"calver high seq", []string{"2026.12.100"}, "2026.12.100", false},
+		{"invalid version", []string{"abc"}, "", true},
+		{"semver rejected", []string{"v1.2.3"}, "", true},
+		{"partial version", []string{"2026.3"}, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveUpdateTarget(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("resolveUpdateTarget(%v) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("resolveUpdateTarget(%v) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDoctorSyncArgs(t *testing.T) {
+	tests := []struct {
+		name      string
+		workspace string
+		want      []string
+	}{
+		{"no workspace override", "", []string{"doctor", "--yes"}},
+		{"workspace override propagated", "/tmp/ws", []string{"doctor", "--workspace", "/tmp/ws", "--yes"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := doctorSyncArgs(tt.workspace)
+			if strings.Join(got, " ") != strings.Join(tt.want, " ") {
+				t.Errorf("doctorSyncArgs(%q) = %v, want %v", tt.workspace, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildAssetName(t *testing.T) {
+	name := buildAssetName("2026.3.1")
+
+	wantPrefix := "pylon_2026.3.1_" + runtime.GOOS + "_" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		want := wantPrefix + ".zip"
+		if name != want {
+			t.Errorf("buildAssetName(\"2026.3.1\") = %q, want %q", name, want)
+		}
+	} else {
+		want := wantPrefix + ".tar.gz"
+		if name != want {
+			t.Errorf("buildAssetName(\"2026.3.1\") = %q, want %q", name, want)
+		}
+	}
+}
+
+func TestReplaceBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("replaceBinary is not supported on Windows")
+	}
+
+	t.Run("successful replacement", func(t *testing.T) {
+		dir := t.TempDir()
+
+		// Create a "current" binary
+		dst := filepath.Join(dir, "pylon")
+		if err := os.WriteFile(dst, []byte("old-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		// Create a "new" binary
+		src := filepath.Join(dir, "pylon-new")
+		if err := os.WriteFile(src, []byte("new-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := replaceBinary(dst, src); err != nil {
+			t.Fatalf("replaceBinary() error = %v", err)
+		}
+
+		// Verify new content
+		data, err := os.ReadFile(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "new-binary" {
+			t.Errorf("replaced binary content = %q, want %q", string(data), "new-binary")
+		}
+
+		// Verify no .bak file remains
+		if _, err := os.Stat(dst + ".bak"); !os.IsNotExist(err) {
+			t.Error("backup file should not exist after successful replacement")
+		}
+
+		// Verify no temp files remain
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if e.Name() != "pylon" && e.Name() != "pylon-new" {
+				t.Errorf("unexpected file remaining: %s", e.Name())
+			}
+		}
+	})
+
+	t.Run("preserves permissions", func(t *testing.T) {
+		dir := t.TempDir()
+
+		dst := filepath.Join(dir, "pylon")
+		if err := os.WriteFile(dst, []byte("old"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		src := filepath.Join(dir, "pylon-new")
+		if err := os.WriteFile(src, []byte("new"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := replaceBinary(dst, src); err != nil {
+			t.Fatalf("replaceBinary() error = %v", err)
+		}
+
+		info, err := os.Stat(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Errorf("replaced binary permissions = %o, want 0755", info.Mode().Perm())
+		}
+	})
+
+	t.Run("fails if src does not exist", func(t *testing.T) {
+		dir := t.TempDir()
+
+		dst := filepath.Join(dir, "pylon")
+		if err := os.WriteFile(dst, []byte("old"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		err := replaceBinary(dst, filepath.Join(dir, "nonexistent"))
+		if err == nil {
+			t.Error("replaceBinary() should fail when src does not exist")
+		}
+
+		// Original binary should still exist
+		data, readErr := os.ReadFile(dst)
+		if readErr != nil {
+			t.Fatalf("original binary should still exist: %v", readErr)
+		}
+		if string(data) != "old" {
+			t.Error("original binary content should be preserved on failure")
+		}
+	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// ghOK mimics gh: a GITHUB_TOKEN in its env wins even when blank, and only the
+// pinned host returns the stored token.
+const ghOK = `if [ -n "${GITHUB_TOKEN+x}" ]; then echo "$GITHUB_TOKEN"; exit 0; fi
+[ "$*" = "auth token --hostname github.com" ] || exit 1
+echo gh-token
+`
+
+// useFakeGH replaces PATH with a dir holding only a gh script (none when body is "").
+func useFakeGH(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	if body != "" {
+		if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+}
+
+// stubGitHubAPI answers every request with status/header and records the Authorization header.
+func stubGitHubAPI(t *testing.T, status int, header http.Header) *string {
+	t.Helper()
+	orig := httpClient
+	t.Cleanup(func() { httpClient = orig })
+	auth := new(string)
+	httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		*auth = r.Header.Get("Authorization")
+		h := http.Header{}
+		for k, v := range header {
+			h[k] = v
+		}
+		return &http.Response{
+			StatusCode: status,
+			Status:     http.StatusText(status),
+			Header:     h,
+			Body:       io.NopCloser(strings.NewReader(`{"tag_name":"2026.1.1"}`)),
+		}, nil
+	})}
+	return auth
+}
+
+func TestFetchReleaseAuthHeader(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake gh is a shell script")
+	}
+	origTimeout := ghTokenTimeout
+	ghTokenTimeout = time.Second
+	t.Cleanup(func() { ghTokenTimeout = origTimeout })
+
+	tests := []struct {
+		name, env, gh, want string
+	}{
+		{"GITHUB_TOKEN 우선", "env-token", ghOK, "Bearer env-token"},
+		{"gh auth token 대체", "", ghOK, "Bearer gh-token"},
+		{"공백 GITHUB_TOKEN은 gh로 대체", "  ", ghOK, "Bearer gh-token"},
+		{"gh 없음", "", "", ""},
+		{"gh 미로그인", "", "echo 'no oauth token found' >&2\nexit 1\n", ""},
+		{"gh 응답 지연", "", "/bin/sleep 30\necho late-token\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITHUB_TOKEN", tt.env)
+			useFakeGH(t, tt.gh)
+			auth := stubGitHubAPI(t, http.StatusOK, nil)
+			start := time.Now()
+			if _, err := fetchRelease("latest"); err != nil {
+				t.Fatal(err)
+			}
+			if *auth != tt.want {
+				t.Errorf("Authorization = %q, want %q", *auth, tt.want)
+			}
+			if d := time.Since(start); d > 10*time.Second {
+				t.Errorf("fetchRelease took %v; gh timeout not applied", d)
+			}
+		})
+	}
+}
+
+func TestFetchReleaseErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake gh is a shell script")
+	}
+	limited := http.Header{"X-Ratelimit-Remaining": {"0"}}
+	tests := []struct {
+		name, env, gh string
+		status        int
+		header        http.Header
+		want, notWant []string
+	}{
+		{"401 GITHUB_TOKEN", "secret-env", "", http.StatusUnauthorized, nil,
+			[]string{"(GITHUB_TOKEN)", "unset"}, []string{"secret-env"}},
+		{"401 gh", "", ghOK, http.StatusUnauthorized, nil,
+			[]string{"(gh auth token)", "gh auth login"}, []string{"gh-token"}},
+		{"403 rate limit 토큰 없음", "", "", http.StatusForbidden, limited,
+			[]string{"rate limit", "한도가 늘어납니다"}, nil},
+		{"429 rate limit 토큰 있음", "env-token", "", http.StatusTooManyRequests, limited,
+			[]string{"rate limit"}, []string{"한도가 늘어납니다"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITHUB_TOKEN", tt.env)
+			useFakeGH(t, tt.gh)
+			stubGitHubAPI(t, tt.status, tt.header)
+			_, err := fetchRelease("latest")
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, s := range tt.want {
+				if !strings.Contains(err.Error(), s) {
+					t.Errorf("error %q missing %q", err, s)
+				}
+			}
+			for _, s := range tt.notWant {
+				if strings.Contains(err.Error(), s) {
+					t.Errorf("error %q must not contain %q", err, s)
+				}
+			}
+		})
+	}
+}

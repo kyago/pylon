@@ -1,0 +1,167 @@
+package cli
+
+import (
+	"embed"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/kyago/pylon/internal/config"
+	"github.com/kyago/pylon/internal/layout"
+)
+
+//go:embed agents/*.md
+var embeddedAgents embed.FS
+
+//go:embed reference/*.md
+var embeddedReference embed.FS
+
+func newInitCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "init",
+		Short: "Initialize a new pylon workspace",
+		Long: `Initialize the current directory as a pylon workspace.
+
+Creates .pylon/ (config, domain knowledge, built-in agents and commands,
+memory), the Claude Code symlinks and the root AGENTS.md/CLAUDE.md.`,
+		RunE: runInit,
+	}
+}
+
+// initDoctorChecks is the required-tool gate for `pylon init`, indirected so tests
+// can exercise initialization on machines without git/gh/claude installed — CI
+// runners have no claude binary, which previously failed the init tests.
+var initDoctorChecks = RunDoctorChecks
+
+func runInit(cmd *cobra.Command, args []string) error {
+	// Step 1: Run doctor checks
+	passed, err := initDoctorChecks()
+	if err != nil {
+		return fmt.Errorf("doctor check failed: %w", err)
+	}
+	if !passed {
+		return fmt.Errorf("required tools are missing — install them and retry 'pylon init'")
+	}
+	fmt.Println("All checks passed.")
+	fmt.Println()
+
+	// Determine workspace directory
+	workDir := flagWorkspace
+	if workDir == "" {
+		workDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get working directory: %w", err)
+		}
+	}
+
+	// Step 2: Check if .pylon/ already exists
+	pylonDir := layout.PylonDir(workDir)
+	if _, err := os.Stat(pylonDir); err == nil {
+		return fmt.Errorf(".pylon/ already exists in %s. Use 'pylon uninstall' to remove it first", workDir)
+	}
+
+	// Step 3: Interactive input
+	fmt.Println("Pylon Workspace Initialization")
+	fmt.Println(strings.Repeat("\u2500", 40))
+
+	// Step 4: Create directory structure
+	dirs := []string{
+		filepath.Join(pylonDir, "domain"),
+		filepath.Join(pylonDir, "agents"),
+		filepath.Join(pylonDir, "commands"),
+	}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
+	// Create config.yml (Spec Section 16: minimal config after init)
+	configContent := "version: \"0.2\"\n"
+
+	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte(configContent), 0644); err != nil {
+		return fmt.Errorf("failed to create config.yml: %w", err)
+	}
+
+	// Create domain knowledge templates (domain-neutral for multi-domain support)
+	domainFiles := map[string]string{
+		"practices.md": "# 작업 관행\n\n> 이 파일은 AI 에이전트가 관리합니다. 수정이 필요하면 루트 에이전트에게 요청하세요.\n\n## 핵심 원칙\n\n## 품질 기준\n\n## 커뮤니케이션 규칙\n",
+		"overview.md":  "# 프로젝트 개요\n\n> 이 파일은 AI 에이전트가 관리합니다. 수정이 필요하면 루트 에이전트에게 요청하세요.\n\n## 목표\n\n## 구조\n\n## 주요 결정 사항\n",
+		"glossary.md":  "# 용어 사전\n\n> 이 파일은 AI 에이전트가 관리합니다. 수정이 필요하면 루트 에이전트에게 요청하세요.\n\n| 용어 | 정의 |\n|------|------|\n",
+	}
+
+	for name, content := range domainFiles {
+		path := filepath.Join(pylonDir, "domain", name)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to create %s: %w", name, err)
+		}
+	}
+
+	// Built-in agents, commands and the usage manual (.pylon/builtin/)
+	if _, err := syncBuiltinResources(workDir); err != nil {
+		return err
+	}
+
+	// Create symlinks in .claude/agents/ for Claude CLI native discovery
+	if err := syncClaudeAgentLinks(workDir); err != nil {
+		return err
+	}
+
+	// Step 5: Keep generated files out of git when the root is in a repository.
+	// .pylon/memory/ is not in the list, so such a root can track it.
+	if err := ensureGitignore(workDir); err != nil {
+		return fmt.Errorf("failed to update .gitignore: %w", err)
+	}
+
+	if err := os.MkdirAll(layout.MemoryDir(workDir), 0755); err != nil {
+		return fmt.Errorf("memory 디렉토리 생성 실패: %w", err)
+	}
+
+	// Step 6: Discover projects and ensure .pylon/ is git-excluded per project
+	projects, err := config.DiscoverProjects(workDir)
+	if err != nil {
+		fmt.Printf("⚠ 프로젝트 탐색 실패: %v\n", err)
+	}
+	for _, p := range projects {
+		// Ensure .pylon/ is excluded from project git tracking (skip non-git dirs)
+		if err := excludePylonFromRepo(p.Path); err != nil {
+			if !strings.Contains(err.Error(), "not a git repository") {
+				fmt.Printf("⚠ %s: .pylon/ exclude 설정 실패: %v\n", p.Name, err)
+			}
+		}
+	}
+
+	// Root agent files so the workspace is ready: CLAUDE.md import marker +
+	// AGENTS.md whose pylon block carries the embedded manual and workspace facts.
+	_, backedUp, err := ensureRootAgentFiles(workDir, projects)
+	if err != nil {
+		return err
+	}
+	for _, name := range backedUp {
+		fmt.Printf("ℹ 기존 내용을 %s에 백업했습니다 — pylon이 이 파일을 관리합니다.\n", name)
+	}
+
+	fmt.Println()
+	fmt.Printf("Pylon workspace initialized at %s\n", workDir)
+	fmt.Println()
+	fmt.Println("Created:")
+	fmt.Println("  .pylon/config.yml          - workspace configuration")
+	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
+	fmt.Println("  .pylon/builtin/            - built-in agents, commands, manual (regenerated)")
+	fmt.Println("  .pylon/agents/             - your own agents")
+	fmt.Println("  .pylon/commands/           - your own slash commands")
+	fmt.Println("  .pylon/memory/             - project memory")
+	fmt.Println("  .claude/                   - Claude Code agents (symlinks) and slash commands (regenerated)")
+	fmt.Println("  CLAUDE.md                  - @AGENTS.md import marker")
+	fmt.Println("  AGENTS.md                  - operating guide (pylon block regenerated; write your own rules outside it)")
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Add projects: pylon add-project <git-url>")
+	fmt.Println("  2. Start working: open the workspace in Claude Code, Codex, or Paseo")
+
+	return nil
+}

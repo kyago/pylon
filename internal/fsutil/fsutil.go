@@ -1,0 +1,157 @@
+// Package fsutil provides shared filesystem primitives for pylon's
+// file-based stores (memory, history).
+package fsutil
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// errLockContended은 잠금이 다른 보유자에게 잡혀 있어 재시도해야 함을 뜻한다.
+// OS별 tryLockFile 구현이 경합 에러를 이 값으로 감싸 반환한다.
+var errLockContended = errors.New("file lock contended")
+
+// AcquireLock creates a mkdir-based advisory lock and returns an unlock
+// function. Waits up to timeout, polling every 25ms.
+func AcquireLock(path string, timeout time.Duration) (func(), error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if err := os.Mkdir(path, 0700); err == nil {
+			return func() { _ = os.Remove(path) }, nil
+		} else if !os.IsExist(err) {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("잠금 시간 초과: %s (실행 중인 pylon 프로세스가 없다면 이 디렉토리를 제거한 뒤 다시 시도하세요)", path)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// AcquireFileLock obtains a process-scoped advisory file lock. The kernel
+// releases the lock automatically if the process exits unexpectedly.
+// The locking primitive is OS-specific: see filelock_unix.go / filelock_windows.go.
+func AcquireFileLock(path string, timeout time.Duration) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		unlock, err := tryLockFile(file)
+		if err == nil {
+			return func() {
+				unlock()
+				_ = file.Close()
+			}, nil
+		}
+		if !errors.Is(err, errLockContended) {
+			_ = file.Close()
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			_ = file.Close()
+			return nil, fmt.Errorf("파일 잠금 시간 초과: %s", path)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// WriteFileAtomic writes data via a temp file + rename in the target directory.
+func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".tmp-")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tempName, mode); err != nil {
+		return err
+	}
+	return os.Rename(tempName, path)
+}
+
+// WriteJSONAtomic marshals value with indentation and writes it atomically.
+func WriteJSONAtomic(path string, value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return WriteFileAtomic(path, data, 0644)
+}
+
+// CopyDir recursively copies src into dst. dst must not already exist.
+func CopyDir(src, dst string) error {
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("복사 대상이 이미 존재합니다: %s", dst)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return filepath.WalkDir(src, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			out.Close()
+			return err
+		}
+		return out.Close()
+	})
+}
+
+// IsWithin reports whether target is root itself or lies under it, comparing absolute paths.
+func IsWithin(root, target string) (bool, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return false, err
+	}
+	relative, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil {
+		return false, err
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))), nil
+}
