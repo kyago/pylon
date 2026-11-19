@@ -96,7 +96,7 @@ func TestExcludePylonFromRepo_NotGitRepo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-git directory, got nil")
 	}
-	if !strings.Contains(err.Error(), "not a git repository") {
+	if !strings.Contains(err.Error(), "git 저장소가 아닙니다") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -151,7 +151,7 @@ func TestRunAddProject_ForceAndSkipCloneMutuallyExclusive(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for --force + --skip-clone, got nil")
 	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
+	if !strings.Contains(err.Error(), "함께 쓸 수 없습니다") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -177,7 +177,7 @@ func TestRunAddProject_SkipCloneNoDir(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for --skip-clone with missing dir, got nil")
 	}
-	if !strings.Contains(err.Error(), "does not exist") {
+	if !strings.Contains(err.Error(), "없어 --skip-clone") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -206,7 +206,7 @@ func TestRunAddProject_DirExistsNoFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for existing dir without flags, got nil")
 	}
-	if !strings.Contains(err.Error(), "already exists") {
+	if !strings.Contains(err.Error(), "이미 있습니다") {
 		t.Errorf("unexpected error: %v", err)
 	}
 	// Check that the error message includes guidance
@@ -298,12 +298,12 @@ func TestValidateProjectName(t *testing.T) {
 		name    string
 		wantErr string
 	}{
-		{"", "cannot be empty"},
-		{".", "invalid project name"},
-		{"..", "invalid project name"},
-		{"a/b", "path separators"},
-		{"a\\b", "path separators"},
-		{"/abs", "path separators"},
+		{"", "비어 있습니다"},
+		{".", "잘못된 프로젝트 이름"},
+		{"..", "잘못된 프로젝트 이름"},
+		{"a/b", "경로 구분자"},
+		{"a\\b", "경로 구분자"},
+		{"/abs", "경로 구분자"},
 	}
 	for _, tt := range invalid {
 		t.Run(tt.name, func(t *testing.T) {
@@ -342,7 +342,7 @@ func TestRunAddProject_DirExistsAsFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for file at project path, got nil")
 	}
-	if !strings.Contains(err.Error(), "not a directory") {
+	if !strings.Contains(err.Error(), "디렉터리가 아닙니다") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -367,7 +367,7 @@ func TestRunAddProject_PathTraversal(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for path traversal, got nil")
 	}
-	if !strings.Contains(err.Error(), "path separators") {
+	if !strings.Contains(err.Error(), "경로 구분자") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -506,7 +506,7 @@ func testAddProjectRefusesWorktree(t *testing.T, flag string) {
 	defer func() { flagWorkspace = oldWorkspace }()
 
 	err := addCmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "worktree") {
+	if err == nil || !strings.Contains(err.Error(), "워크트리") {
 		t.Fatalf("error = %v, want worktree refusal", err)
 	}
 	data, readErr := os.ReadFile(verifyPath)

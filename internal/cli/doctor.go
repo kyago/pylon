@@ -46,23 +46,23 @@ var baseChecks = []Check{
 func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check required tools and refresh the workspace files",
-		Long: `Verify that required tools are installed and refresh the generated workspace files.
+		Short: "필수 도구 확인과 워크스페이스 생성 파일 갱신",
+		Long: `필수 도구가 설치되어 있는지 확인하고 워크스페이스의 생성 파일을 갱신합니다.
 
-Also restores the pylon-owned .pylon/builtin/ (agents, commands, manual) to
-the versions shipped with this binary. Your own resources in .pylon/agents/,
-.pylon/commands/ are left alone; a built-in with the same name wins.
+pylon 소유인 .pylon/builtin/(에이전트, 커맨드, 매뉴얼)도 이 바이너리에 담긴
+버전으로 되돌립니다. .pylon/agents/, .pylon/commands/의 사용자 리소스는 건드리지
+않으며, 이름이 같으면 내장 리소스가 우선합니다.
 
-Use --fix-excludes to automatically add .pylon/ to project .git/info/exclude
-for any projects that are missing the local-scope ignore entry.
+--fix-excludes는 .pylon/ 제외 항목이 없는 프로젝트의 .git/info/exclude에
+.pylon/을 추가합니다.
 
-Files earlier releases wrote and nothing reads any more (.pylon/runtime/,
-.pylon/history/, .pylon/skills/, *.pylon-bak, project .pylon/verify.yml) are
-listed; --prune-legacy deletes them.`,
+이전 릴리스가 만들었고 이제 읽지 않는 파일(.pylon/runtime/, .pylon/history/,
+.pylon/skills/, *.pylon-bak, 프로젝트의 .pylon/verify.yml)은 목록으로 보여 주며,
+--prune-legacy가 삭제합니다.`,
 		RunE: runDoctor,
 	}
 
-	cmd.Flags().Bool("fix-excludes", false, "auto-fix missing .pylon/ exclude entries in project repos")
+	cmd.Flags().Bool("fix-excludes", false, "프로젝트 저장소에 빠진 .pylon/ exclude 항목을 자동으로 추가")
 	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화)를 건너뛰고 비인터랙티브로 실행")
 	cmd.Flags().Bool("prune-legacy", false, "이전 버전이 남긴 파일(.pylon/runtime·history·skills, *.pylon-bak, 프로젝트 verify.yml) 삭제")
 
@@ -76,12 +76,12 @@ func runChecks(checks []Check) (allPassed bool, failures []Check) {
 		ver, err := check.Verify()
 		reqLabel := ""
 		if check.Required {
-			reqLabel = " [required]"
+			reqLabel = " [필수]"
 		}
 		if err != nil {
 			allPassed = false
 			failures = append(failures, check)
-			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "missing", reqLabel)
+			fmt.Printf("\u2717 %-10s %-10s%s\n", check.Name, "없음", reqLabel)
 		} else {
 			fmt.Printf("\u2713 %-10s %-10s%s\n", check.Name, ver, reqLabel)
 		}
@@ -129,7 +129,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	if allPassed {
-		fmt.Println("All checks passed.")
+		fmt.Println("모든 검사를 통과했습니다.")
 		return nil
 	}
 
@@ -137,7 +137,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	if len(failures) > 0 {
 		printInstallHints(failures)
 	}
-	return fmt.Errorf("doctor checks failed")
+	return fmt.Errorf("doctor 검사 실패")
 }
 
 // installHint returns the install guidance for a failed check.
@@ -154,7 +154,7 @@ func installHint(c Check, hasBrew bool) string {
 func printInstallHints(failures []Check) {
 	_, err := exec.LookPath("brew")
 	hasBrew := err == nil
-	fmt.Println("Some checks failed. Install missing tools:")
+	fmt.Println("일부 검사가 실패했습니다. 없는 도구를 설치하세요:")
 	for _, f := range failures {
 		fmt.Printf("  %s: %s\n", f.Name, installHint(f, hasBrew))
 	}
@@ -296,7 +296,7 @@ func currentDoctorChecks() []Check {
 func verifyGit() (string, error) {
 	out, err := exec.Command("git", "--version").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git not found: %w", err)
+		return "", fmt.Errorf("git을 찾을 수 없습니다: %w", err)
 	}
 	// "git version 2.44.0"
 	ver := strings.TrimSpace(string(out))
@@ -307,12 +307,12 @@ func verifyGit() (string, error) {
 func verifyGH() (string, error) {
 	out, err := exec.Command("gh", "--version").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("gh not found: %w", err)
+		return "", fmt.Errorf("gh를 찾을 수 없습니다: %w", err)
 	}
 	// "gh version 2.65.0 (2024-...)"
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) == 0 {
-		return "", fmt.Errorf("gh version output empty")
+		return "", fmt.Errorf("gh 버전 출력이 비어 있습니다")
 	}
 	parts := strings.Fields(lines[0])
 	if len(parts) >= 3 {

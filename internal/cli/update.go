@@ -54,15 +54,14 @@ type githubAsset struct {
 func newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "update [version]",
-		Short: "Update pylon to the latest or a specific version",
-		Long: `Downloads and installs pylon from GitHub Releases.
+		Short: "pylon을 최신 또는 지정한 버전으로 업데이트",
+		Long: `GitHub Releases에서 pylon을 내려받아 설치합니다.
 
-Without arguments, installs the latest version.
-With a version argument (e.g. 2026.3.1), installs that specific version.
+인자가 없으면 최신 버전을, 버전 인자(예: 2026.3.1)를 주면 그 버전을 설치합니다.
 
-Examples:
-  pylon update          # install latest
-  pylon update 2026.3.1 # install specific version`,
+사용 예:
+  pylon update          # 최신 버전 설치
+  pylon update 2026.3.1 # 특정 버전 설치`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target, err := resolveUpdateTarget(args)

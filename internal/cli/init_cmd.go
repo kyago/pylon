@@ -2,6 +2,7 @@ package cli
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,11 +23,11 @@ var embeddedReference embed.FS
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize a new pylon workspace",
-		Long: `Initialize the current directory as a pylon workspace.
+		Short: "현재 디렉터리를 pylon 워크스페이스로 초기화",
+		Long: `현재 디렉터리를 pylon 워크스페이스로 초기화합니다.
 
-Creates .pylon/ (config, domain knowledge, built-in agents and commands,
-memory), the Claude Code symlinks and the root AGENTS.md/CLAUDE.md.`,
+.pylon/(설정, 도메인 지식, 내장 에이전트·커맨드, 메모리)과 Claude Code용
+심링크, 루트 AGENTS.md·CLAUDE.md를 만듭니다.`,
 		RunE: runInit,
 	}
 }
@@ -40,12 +41,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Step 1: Run doctor checks
 	passed, err := initDoctorChecks()
 	if err != nil {
-		return fmt.Errorf("doctor check failed: %w", err)
+		return fmt.Errorf("도구 검사 실패: %w", err)
 	}
 	if !passed {
-		return fmt.Errorf("required tools are missing — install them and retry 'pylon init'")
+		return fmt.Errorf("필수 도구가 없습니다. 설치한 뒤 'pylon init'을 다시 실행하세요")
 	}
-	fmt.Println("All checks passed.")
+	fmt.Println("모든 검사를 통과했습니다.")
 	fmt.Println()
 
 	// Determine workspace directory
@@ -53,18 +54,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if workDir == "" {
 		workDir, err = os.Getwd()
 		if err != nil {
-			return fmt.Errorf("failed to get working directory: %w", err)
+			return fmt.Errorf("작업 디렉터리 확인 실패: %w", err)
 		}
 	}
 
 	// Step 2: Check if .pylon/ already exists
 	pylonDir := layout.PylonDir(workDir)
 	if _, err := os.Stat(pylonDir); err == nil {
-		return fmt.Errorf(".pylon/ already exists in %s. Use 'pylon uninstall' to remove it first", workDir)
+		return fmt.Errorf("%s에 .pylon/이 이미 있습니다. 먼저 'pylon uninstall'로 제거하세요", workDir)
 	}
 
 	// Step 3: Interactive input
-	fmt.Println("Pylon Workspace Initialization")
+	fmt.Println("Pylon 워크스페이스 초기화")
 	fmt.Println(strings.Repeat("\u2500", 40))
 
 	// Step 4: Create directory structure
@@ -76,7 +77,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return fmt.Errorf("디렉터리 %s 생성 실패: %w", dir, err)
 		}
 	}
 
@@ -84,7 +85,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	configContent := "version: \"0.2\"\n"
 
 	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("failed to create config.yml: %w", err)
+		return fmt.Errorf("config.yml 생성 실패: %w", err)
 	}
 
 	// Create domain knowledge templates (domain-neutral for multi-domain support)
@@ -97,7 +98,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	for name, content := range domainFiles {
 		path := filepath.Join(pylonDir, "domain", name)
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to create %s: %w", name, err)
+			return fmt.Errorf("%s 생성 실패: %w", name, err)
 		}
 	}
 
@@ -114,7 +115,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Step 5: Keep generated files out of git when the root is in a repository.
 	// .pylon/memory/ is not in the list, so such a root can track it.
 	if err := ensureGitignore(workDir); err != nil {
-		return fmt.Errorf("failed to update .gitignore: %w", err)
+		return fmt.Errorf(".gitignore 갱신 실패: %w", err)
 	}
 
 	if err := os.MkdirAll(layout.MemoryDir(workDir), 0755); err != nil {
@@ -129,7 +130,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	for _, p := range projects {
 		// Ensure .pylon/ is excluded from project git tracking (skip non-git dirs)
 		if err := excludePylonFromRepo(p.Path); err != nil {
-			if !strings.Contains(err.Error(), "not a git repository") {
+			if !errors.Is(err, errNotGitRepo) {
 				fmt.Printf("⚠ %s: .pylon/ exclude 설정 실패: %v\n", p.Name, err)
 			}
 		}
@@ -146,22 +147,22 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
-	fmt.Printf("Pylon workspace initialized at %s\n", workDir)
+	fmt.Printf("Pylon 워크스페이스를 초기화했습니다: %s\n", workDir)
 	fmt.Println()
-	fmt.Println("Created:")
-	fmt.Println("  .pylon/config.yml          - workspace configuration")
-	fmt.Println("  .pylon/domain/             - team domain knowledge (wiki)")
-	fmt.Println("  .pylon/builtin/            - built-in agents, commands, manual (regenerated)")
-	fmt.Println("  .pylon/agents/             - your own agents")
-	fmt.Println("  .pylon/commands/           - your own slash commands")
-	fmt.Println("  .pylon/memory/             - project memory")
-	fmt.Println("  .claude/                   - Claude Code agents (symlinks) and slash commands (regenerated)")
-	fmt.Println("  CLAUDE.md                  - @AGENTS.md import marker")
-	fmt.Println("  AGENTS.md                  - operating guide (pylon block regenerated; write your own rules outside it)")
+	fmt.Println("생성한 항목:")
+	fmt.Println("  .pylon/config.yml          - 워크스페이스 표시")
+	fmt.Println("  .pylon/domain/             - 도메인 지식")
+	fmt.Println("  .pylon/builtin/            - 내장 에이전트·커맨드·매뉴얼 (doctor가 다시 씀)")
+	fmt.Println("  .pylon/agents/             - 사용자 에이전트")
+	fmt.Println("  .pylon/commands/           - 사용자 슬래시 커맨드")
+	fmt.Println("  .pylon/memory/             - 프로젝트 메모리")
+	fmt.Println("  .claude/                   - Claude Code용 에이전트 심링크와 슬래시 커맨드 (doctor가 다시 씀)")
+	fmt.Println("  CLAUDE.md                  - @AGENTS.md import 마커")
+	fmt.Println("  AGENTS.md                  - 운영 가이드 (pylon 블록은 doctor가 다시 씀, 워크스페이스 규칙은 블록 밖에 작성)")
 	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("  1. Add projects: pylon add-project <git-url>")
-	fmt.Println("  2. Start working: open the workspace in Claude Code, Codex, or Paseo")
+	fmt.Println("다음 단계:")
+	fmt.Println("  1. 프로젝트 추가: pylon add-project <git-url>")
+	fmt.Println("  2. 작업 시작: 이 디렉터리에서 Claude Code, Codex, Paseo 세션을 엽니다")
 
 	return nil
 }

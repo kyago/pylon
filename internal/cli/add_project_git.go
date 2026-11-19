@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,16 +11,16 @@ import (
 
 func validateProjectName(name string) error {
 	if name == "" {
-		return fmt.Errorf("project name cannot be empty")
+		return fmt.Errorf("프로젝트 이름이 비어 있습니다")
 	}
 	if name == "." || name == ".." {
-		return fmt.Errorf("invalid project name: %q", name)
+		return fmt.Errorf("잘못된 프로젝트 이름: %q", name)
 	}
 	if strings.ContainsAny(name, `/\`) || filepath.IsAbs(name) {
-		return fmt.Errorf("project name must not contain path separators: %q", name)
+		return fmt.Errorf("프로젝트 이름에 경로 구분자를 쓸 수 없습니다: %q", name)
 	}
 	if filepath.Clean(name) != name {
-		return fmt.Errorf("invalid project name: %q", name)
+		return fmt.Errorf("잘못된 프로젝트 이름: %q", name)
 	}
 	return nil
 }
@@ -38,6 +39,10 @@ func inferProjectName(repoURL string) string {
 	return name
 }
 
+// errNotGitRepo marks a directory git does not recognize as a repository, so callers
+// can skip it without matching on message text.
+var errNotGitRepo = errors.New("git 저장소가 아닙니다")
+
 // resolveGitExcludePath returns the absolute path to a project's .git/info/exclude file.
 // It uses "git rev-parse --git-dir" to correctly resolve non-standard git layouts
 // (e.g. worktrees, or legacy submodule clones whose .git is a gitlink file).
@@ -46,7 +51,7 @@ func resolveGitExcludePath(projectDir string) (string, error) {
 	gitDirCmd.Dir = projectDir
 	out, err := gitDirCmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("not a git repository: %w", err)
+		return "", fmt.Errorf("%w: %v", errNotGitRepo, err)
 	}
 
 	gitDir := strings.TrimSpace(string(out))
@@ -74,7 +79,7 @@ func excludeEntryFromRepo(projectDir, entry string) error {
 	// Read existing exclude file if it exists
 	existing, err := os.ReadFile(excludePath)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read exclude file: %w", err)
+		return fmt.Errorf("exclude 파일 읽기 실패: %w", err)
 	}
 	for _, line := range strings.Split(string(existing), "\n") {
 		if strings.TrimSpace(line) == entry {
@@ -85,12 +90,12 @@ func excludeEntryFromRepo(projectDir, entry string) error {
 	// Ensure info/ directory exists
 	infoDir := filepath.Dir(excludePath)
 	if err := os.MkdirAll(infoDir, 0755); err != nil {
-		return fmt.Errorf("failed to create git info directory: %w", err)
+		return fmt.Errorf("git info 디렉터리 생성 실패: %w", err)
 	}
 
 	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open exclude file: %w", err)
+		return fmt.Errorf("exclude 파일 열기 실패: %w", err)
 	}
 	defer f.Close()
 

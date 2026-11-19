@@ -17,12 +17,11 @@ func newDeleteProjectCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "delete-project <name>",
-		Short: "Remove a project from the workspace",
-		Long: `Remove a project added by 'add-project'.
+		Short: "프로젝트를 워크스페이스에서 제거",
+		Long: `'add-project'로 추가한 프로젝트를 제거합니다.
 
-By default only the project memory (.pylon/memory/<name>/) and the project's
-.pylon/ marker are removed. The cloned directory on disk is preserved unless
---purge is given.
+기본은 프로젝트 메모리(.pylon/memory/<name>/)와 프로젝트의 .pylon/ 표시만
+지웁니다. clone한 디렉터리는 --purge를 줄 때만 지웁니다.
 
 사용 예:
   pylon delete-project myapp
@@ -34,8 +33,8 @@ By default only the project memory (.pylon/memory/<name>/) and the project's
 		},
 	}
 
-	cmd.Flags().BoolVar(&purge, "purge", false, "also delete the cloned project directory on disk")
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation prompt")
+	cmd.Flags().BoolVar(&purge, "purge", false, "clone한 프로젝트 디렉터리도 삭제")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "확인 프롬프트 생략")
 
 	return cmd
 }
@@ -63,7 +62,7 @@ func runDeleteProject(name string, purge, force bool) error {
 		}
 	}
 	if projPath == "" {
-		return fmt.Errorf("project %q is not registered", name)
+		return fmt.Errorf("프로젝트 %q은(는) 등록되어 있지 않습니다", name)
 	}
 
 	removeTarget, dirSafe := projectRemovalTarget(root, projPath, purge)
@@ -75,7 +74,7 @@ func runDeleteProject(name string, purge, force bool) error {
 
 	memDeleted, err := memory.NewStore(root).DeleteProject(name)
 	if err != nil {
-		return fmt.Errorf("failed to delete project memory: %w", err)
+		return fmt.Errorf("프로젝트 메모리 삭제 실패: %w", err)
 	}
 
 	removed := false
@@ -121,14 +120,14 @@ func projectRemovalTarget(root, projectPath string, purge bool) (string, bool) {
 }
 
 func confirmProjectDeletion(name, projectPath, removeTarget string, purge bool) bool {
-	fmt.Printf("Delete project %q:\n", name)
-	fmt.Println("  - memory records (.pylon/memory/" + name + "/)")
+	fmt.Printf("프로젝트 %q 삭제:\n", name)
+	fmt.Println("  - 메모리 (.pylon/memory/" + name + "/)")
 	if purge && removeTarget != "" {
-		fmt.Printf("  - directory: %s\n", removeTarget)
+		fmt.Printf("  - 디렉터리: %s\n", removeTarget)
 	} else if purge {
-		fmt.Printf("  ⚠ --purge requested but directory %q is outside the workspace or missing; it will be kept\n", projectPath)
+		fmt.Printf("  ⚠ --purge를 지정했지만 디렉터리 %q이(가) 워크스페이스 밖이거나 없어 그대로 둡니다\n", projectPath)
 	} else if removeTarget != "" {
-		fmt.Printf("  - .pylon/ marker: %s\n", removeTarget)
+		fmt.Printf("  - .pylon/ 표시: %s\n", removeTarget)
 	}
 	fmt.Print("계속하시겠습니까? [y/N]: ")
 	var answer string

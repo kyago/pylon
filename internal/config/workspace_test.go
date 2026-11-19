@@ -121,8 +121,8 @@ func TestFindWorkspaceRoot_ConfigIsDirectory(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when config.yml is a directory, got nil")
 	}
-	if !strings.Contains(err.Error(), "not a regular file") {
-		t.Errorf("error should mention 'not a regular file': %v", err)
+	if !strings.Contains(err.Error(), "일반 파일이 아닙니다") {
+		t.Errorf("error should mention '일반 파일이 아닙니다': %v", err)
 	}
 }
 

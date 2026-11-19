@@ -665,7 +665,7 @@ func TestResolveGitExcludePath_NotGitRepo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-git directory, got nil")
 	}
-	if !strings.Contains(err.Error(), "not a git repository") {
+	if !strings.Contains(err.Error(), "git 저장소가 아닙니다") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
