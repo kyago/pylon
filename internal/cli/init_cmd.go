@@ -14,9 +14,6 @@ import (
 	"github.com/kyago/pylon/internal/layout"
 )
 
-//go:embed agents/*.md
-var embeddedAgents embed.FS
-
 //go:embed reference/*.md
 var embeddedReference embed.FS
 
@@ -26,8 +23,8 @@ func newInitCmd() *cobra.Command {
 		Short: "현재 디렉터리를 pylon 워크스페이스로 초기화",
 		Long: `현재 디렉터리를 pylon 워크스페이스로 초기화합니다.
 
-.pylon/(설정, 도메인 지식, 내장 에이전트·커맨드, 메모리)과 Claude Code용
-심링크, 루트 AGENTS.md·CLAUDE.md를 만듭니다.`,
+.pylon/(설정, 도메인 지식, 내장 커맨드, 메모리)과 Claude Code용 생성 파일,
+루트 AGENTS.md·CLAUDE.md를 만듭니다.`,
 		RunE: runInit,
 	}
 }
@@ -102,7 +99,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Built-in agents, commands and the usage manual (.pylon/builtin/)
+	// Built-in commands and the usage manual (.pylon/builtin/)
 	if _, err := syncBuiltinResources(workDir); err != nil {
 		return err
 	}
@@ -152,11 +149,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("생성한 항목:")
 	fmt.Println("  .pylon/config.yml          - 워크스페이스 표시")
 	fmt.Println("  .pylon/domain/             - 도메인 지식")
-	fmt.Println("  .pylon/builtin/            - 내장 에이전트·커맨드·매뉴얼 (doctor가 다시 씀)")
+	fmt.Println("  .pylon/builtin/            - 내장 커맨드·매뉴얼 (doctor가 다시 씀)")
 	fmt.Println("  .pylon/agents/             - 사용자 에이전트")
 	fmt.Println("  .pylon/commands/           - 사용자 슬래시 커맨드")
 	fmt.Println("  .pylon/memory/             - 프로젝트 메모리")
-	fmt.Println("  .claude/                   - Claude Code용 에이전트 심링크와 슬래시 커맨드 (doctor가 다시 씀)")
+	fmt.Println("  .claude/                   - Claude Code용 슬래시 커맨드와 사용자 에이전트 심링크 (doctor가 다시 씀)")
 	fmt.Println("  CLAUDE.md                  - @AGENTS.md import 마커")
 	fmt.Println("  AGENTS.md                  - 운영 가이드 (pylon 블록은 doctor가 다시 씀, 워크스페이스 규칙은 블록 밖에 작성)")
 	fmt.Println()

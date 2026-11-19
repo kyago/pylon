@@ -29,7 +29,7 @@ var rootCmd = &cobra.Command{
 	Short: "여러 저장소를 묶은 워크스페이스를 Claude Code·Codex용으로 구성하는 도구",
 	Long: `Pylon - 여러 저장소를 묶은 워크스페이스를 Claude Code·Codex용으로 구성하는 도구.
 
-워크스페이스 루트에 AGENTS.md, 프로젝트 목록, 에이전트, 간단한 프로젝트 메모리를
+워크스페이스 루트에 AGENTS.md, 프로젝트 목록, 슬래시 커맨드, 간단한 프로젝트 메모리를
 준비합니다. 세션은 Claude Code, Codex, Paseo에서 직접 시작합니다.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,

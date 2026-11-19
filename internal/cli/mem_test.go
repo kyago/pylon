@@ -110,8 +110,16 @@ func staleClaudeWorkspace(t *testing.T) string {
 	if err := os.WriteFile(manual, []byte("old manual"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// 에이전트를 내장하던 릴리스가 남긴 파일과 그 .claude/agents 링크.
 	retired := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "retired.md")
+	if err := os.MkdirAll(filepath.Dir(retired), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(retired, []byte("---\nname: retired\nrole: Old\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(layout.ClaudeAgentsDir(root), "retired.md")
+	if err := os.Symlink(filepath.Join("..", "..", ".pylon", "builtin", "agents", "retired.md"), link); err != nil {
 		t.Fatal(err)
 	}
 	agents, err := os.ReadFile(layout.RootAgentsPath(root))

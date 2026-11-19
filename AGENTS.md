@@ -6,8 +6,8 @@ when working on code in this repository.
 ## What this repo is
 
 This repository is the **source of the `pylon` binary**, not a pylon workspace. `pylon` is a small Go CLI that sets
-up a workspace root over several repositories: the root `AGENTS.md`, the project list, a few agents and slash
-commands, and a simple markdown memory. It does not start sessions or run anything: the user opens Claude Code, Codex
+up a workspace root over several repositories: the root `AGENTS.md`, the project list, two slash commands, and a
+simple markdown memory. It does not start sessions or run anything: the user opens Claude Code, Codex
 or Paseo in the workspace, and the session reads `AGENTS.md`. Nothing is injected; the manual tells the session where
 to look when it needs something. Go never calls an LLM.
 
@@ -54,13 +54,14 @@ list themselves.
 
 ### Embedded resources are the source of truth
 
-`//go:embed` from `internal/cli/`: `agents/*.md` (dev, code-reviewer, critic), `commands/*.md` (`/pl:cleanup`,
-`/pl:add-project`), `reference/*.md` (the manual). Edit these, not any `.pylon/builtin/` copy.
+`//go:embed` from `internal/cli/`: `commands/*.md` (`/pl:cleanup`, `/pl:add-project`) and `reference/*.md` (the
+manual). Edit these, not any `.pylon/builtin/` copy. Pylon ships no agents: the manual points sessions at the host
+tool's own agents and review features, and `.pylon/agents/` holds the user's, linked into `.claude/agents/`.
 
 **Ownership contract** (`syncBuiltinResources` in `doctor.go`, shared by init, doctor and `pylon mem inject`):
 `.pylon/builtin/` (git-ignored when the workspace root is in a git repository) is pylon-owned. Every sync compares
-each file with the embeds, rewrites missing or differing ones and deletes files the embeds no longer have — never a
-wholesale wipe, so concurrent runs converge.
+each file with the embeds, rewrites missing or differing ones and deletes files the embeds no longer have, along with
+directories no embedded file lives in — never a wholesale wipe, so concurrent runs converge.
 Adding, changing or deleting a built-in therefore reaches a workspace on its next `pylon doctor`, with
 `.claude/commands/` and `.claude/agents/` pruned accordingly. `.pylon/{agents,commands}/` hold user resources; readers
 take the built-in first, so a same-named user file is ignored and never modified. Domain knowledge and memory are user

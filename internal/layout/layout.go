@@ -21,8 +21,8 @@ func ProjectMemoryDir(root, project string) string {
 }
 
 // BuiltinDir returns the pylon-owned resource directory (.pylon/builtin). It holds
-// the embedded agents, skills, commands, scripts and reference manual, and is wiped
-// and rewritten whenever the embedded set changes — nothing user-authored lives here.
+// the embedded commands and reference manual, and is synced with them file by file
+// — nothing user-authored lives here.
 func BuiltinDir(root string) string {
 	return filepath.Join(PylonDir(root), "builtin")
 }
@@ -64,12 +64,6 @@ func ClaudeCommandsDir(root string) string {
 // .claude/agents/ to point at the user-owned .pylon/agents/<name>.
 func AgentLinkTarget(name string) string {
 	return filepath.Join("..", "..", ".pylon", "agents", name)
-}
-
-// BuiltinAgentLinkTarget returns the relative symlink target used inside
-// .claude/agents/ to point at the pylon-owned .pylon/builtin/agents/<name>.
-func BuiltinAgentLinkTarget(name string) string {
-	return filepath.Join("..", "..", ".pylon", "builtin", "agents", name)
 }
 
 // RootClaudePath returns the workspace-root CLAUDE.md (a thin @AGENTS.md import marker).

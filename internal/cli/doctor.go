@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -49,7 +50,7 @@ func newDoctorCmd() *cobra.Command {
 		Short: "필수 도구 확인과 워크스페이스 생성 파일 갱신",
 		Long: `필수 도구가 설치되어 있는지 확인하고 워크스페이스의 생성 파일을 갱신합니다.
 
-pylon 소유인 .pylon/builtin/(에이전트, 커맨드, 매뉴얼)도 이 바이너리에 담긴
+pylon 소유인 .pylon/builtin/(커맨드, 매뉴얼)도 이 바이너리에 담긴
 버전으로 되돌립니다. .pylon/agents/, .pylon/commands/의 사용자 리소스는 건드리지
 않으며, 이름이 같으면 내장 리소스가 우선합니다.
 
@@ -415,7 +416,6 @@ func embeddedBuiltinFiles() ([]builtinFile, error) {
 		fs  embed.FS
 		dir string
 	}{
-		{embeddedAgents, "agents"},
 		{embeddedCommands, "commands"},
 		{embeddedReference, "reference"},
 	}
@@ -482,6 +482,15 @@ func syncBuiltinResources(root string) (bool, error) {
 			changed = true
 		}
 	}
+	// 내장 파일이 더는 없는 디렉터리(예: 에이전트를 내장하던 때의 agents/)만 지운다.
+	// 파일이 들어갈 디렉터리는 비어 있어도 두어야 동시 실행의 쓰기가 실패하지 않는다.
+	wantDirs := map[string]bool{".": true}
+	for rel := range want {
+		for d := path.Dir(rel); d != "."; d = path.Dir(d) {
+			wantDirs[d] = true
+		}
+	}
+	var staleDirs []string
 	err = filepath.WalkDir(builtinDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -489,12 +498,18 @@ func syncBuiltinResources(root string) (bool, error) {
 			}
 			return err
 		}
+		rel, err := filepath.Rel(builtinDir, p)
+		if err != nil {
+			return err
+		}
 		if d.IsDir() {
+			if !wantDirs[filepath.ToSlash(rel)] {
+				staleDirs = append(staleDirs, p)
+			}
 			return nil
 		}
-		rel, err := filepath.Rel(builtinDir, p)
-		if err != nil || want[filepath.ToSlash(rel)] {
-			return err
+		if want[filepath.ToSlash(rel)] {
+			return nil
 		}
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			return err
@@ -504,6 +519,11 @@ func syncBuiltinResources(root string) (bool, error) {
 	})
 	if err != nil {
 		return changed, fmt.Errorf(".pylon/builtin 정리 실패: %w", err)
+	}
+	for i := len(staleDirs) - 1; i >= 0; i-- { // 하위부터. 비어 있을 때만 지워진다
+		if os.Remove(staleDirs[i]) == nil {
+			changed = true
+		}
 	}
 	return changed, nil
 }
