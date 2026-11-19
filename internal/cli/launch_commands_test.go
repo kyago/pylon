@@ -3,33 +3,10 @@ package cli
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/kyago/pylon/internal/layout"
 )
-
-// 내장 에이전트 파일의 name: 은 파일명과 같아야 한다 — Claude Code가 .claude/agents/ 로
-// 자동 등록할 때 매뉴얼·사용자가 부르는 이름과 어긋나지 않도록.
-func TestBuiltinAgentNamesMatchFilenames(t *testing.T) {
-	entries, err := embeddedAgents.ReadDir("agents")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) == 0 {
-		t.Fatal("no embedded agents")
-	}
-	for _, e := range entries {
-		name := strings.TrimSuffix(e.Name(), ".md")
-		data, err := embeddedAgents.ReadFile("agents/" + e.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(data), "\nname: "+name+"\n") {
-			t.Errorf("agents/%s: frontmatter name differs from filename", e.Name())
-		}
-	}
-}
 
 // 내장 이름의 사용자 커맨드는 내장 커맨드를 가리지 못하고, 사용자 파일은 그대로 남는다.
 func TestGenerateClaudeDir_UserCommandNeverShadowsBuiltin(t *testing.T) {

@@ -18,17 +18,10 @@ import (
 func newMemCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mem",
-		Short: "Manage project memory (knowledge store)",
+		Short: "프로젝트 메모리 관리",
 		Long: `프로젝트 메모리(지식 저장소)를 관리합니다.
 
-루트 에이전트가 프로젝트 지식을 저장/검색할 때 사용합니다.
-
-사용 가능한 하위 명령:
-  search  토큰 매칭 검색
-  store   메모리 저장
-  list    메모리 목록
-  delete  메모리 삭제 (키/카테고리 단위)
-  prune   오염 메모리 정리 (카테고리 일괄 삭제)`,
+루트 에이전트가 프로젝트 지식을 저장/검색할 때 사용합니다.`,
 	}
 
 	cmd.AddCommand(newMemSearchCmd())
@@ -48,18 +41,18 @@ func newMemSearchCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "search",
-		Short: "Search project memory by token matching",
+		Short: "프로젝트 메모리를 토큰 매칭으로 검색",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if project == "" || query == "" {
-				return fmt.Errorf("--project and --query are required")
+				return fmt.Errorf("--project와 --query는 필수입니다")
 			}
 			return runMemSearch(project, query, limit)
 		},
 	}
 
-	cmd.Flags().StringVar(&project, "project", "", "project name")
-	cmd.Flags().StringVar(&query, "query", "", "search query")
-	cmd.Flags().IntVar(&limit, "limit", 10, "max results")
+	cmd.Flags().StringVar(&project, "project", "", "프로젝트 이름")
+	cmd.Flags().StringVar(&query, "query", "", "검색어")
+	cmd.Flags().IntVar(&limit, "limit", 10, "최대 결과 수")
 
 	return cmd
 }
@@ -74,21 +67,21 @@ func newMemStoreCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "store",
-		Short: "Store a memory entry",
+		Short: "메모리 항목 저장",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if project == "" || key == "" || content == "" {
-				return fmt.Errorf("--project, --key, and --content are required")
+				return fmt.Errorf("--project, --key, --content는 필수입니다")
 			}
 			return runMemStore(project, key, content, category, author, confidence)
 		},
 	}
 
-	cmd.Flags().StringVar(&project, "project", "", "project name")
-	cmd.Flags().StringVar(&key, "key", "", "memory key")
-	cmd.Flags().StringVar(&content, "content", "", "memory content")
-	cmd.Flags().StringVar(&category, "category", "general", "memory category")
-	cmd.Flags().StringVar(&author, "author", "agent", "author identifier")
-	cmd.Flags().Float64Var(&confidence, "confidence", 0.8, "confidence score (0-1)")
+	cmd.Flags().StringVar(&project, "project", "", "프로젝트 이름")
+	cmd.Flags().StringVar(&key, "key", "", "메모리 키")
+	cmd.Flags().StringVar(&content, "content", "", "메모리 내용")
+	cmd.Flags().StringVar(&category, "category", "general", "메모리 카테고리")
+	cmd.Flags().StringVar(&author, "author", "agent", "작성자")
+	cmd.Flags().Float64Var(&confidence, "confidence", 0.8, "신뢰도 (0-1)")
 
 	return cmd
 }
@@ -99,17 +92,17 @@ func newMemListCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List memory entries for a project",
+		Short: "프로젝트의 메모리 목록",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if project == "" {
-				return fmt.Errorf("--project is required")
+				return fmt.Errorf("--project는 필수입니다")
 			}
 			return runMemList(project, category)
 		},
 	}
 
-	cmd.Flags().StringVar(&project, "project", "", "project name")
-	cmd.Flags().StringVar(&category, "category", "", "filter by category (optional)")
+	cmd.Flags().StringVar(&project, "project", "", "프로젝트 이름")
+	cmd.Flags().StringVar(&category, "category", "", "카테고리로 필터 (선택)")
 
 	return cmd
 }
@@ -120,7 +113,7 @@ func newMemDeleteCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "delete",
-		Short: "Delete memory entries by key or category",
+		Short: "키 또는 카테고리로 메모리 삭제",
 		Long: `메모리 항목을 삭제합니다.
 
 사용 예:
@@ -128,20 +121,20 @@ func newMemDeleteCmd() *cobra.Command {
   pylon mem delete --project myapp --category change --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if project == "" {
-				return fmt.Errorf("--project is required")
+				return fmt.Errorf("--project는 필수입니다")
 			}
 			if key == "" && category == "" {
-				return fmt.Errorf("--key or --category is required")
+				return fmt.Errorf("--key 또는 --category가 필요합니다")
 			}
 			return runMemDelete(project, category, key, dryRun, yes)
 		},
 	}
 
-	cmd.Flags().StringVar(&project, "project", "", "project name")
-	cmd.Flags().StringVar(&key, "key", "", "memory key to delete")
-	cmd.Flags().StringVar(&category, "category", "", "delete all entries in this category")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show affected count without deleting")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
+	cmd.Flags().StringVar(&project, "project", "", "프로젝트 이름")
+	cmd.Flags().StringVar(&key, "key", "", "삭제할 메모리 키")
+	cmd.Flags().StringVar(&category, "category", "", "이 카테고리의 항목을 모두 삭제")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "삭제하지 않고 대상 건수만 표시")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "확인 프롬프트 생략")
 
 	return cmd
 }
@@ -152,7 +145,7 @@ func newMemPruneCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "prune",
-		Short: "Prune polluted memory entries (bulk delete)",
+		Short: "오염된 메모리 정리 (카테고리 일괄 삭제)",
 		Long: `오염된 메모리를 정리합니다.
 
 사용 예:
@@ -161,16 +154,16 @@ func newMemPruneCmd() *cobra.Command {
   pylon mem prune --category change --dry-run      # 영향 건수 미리보기`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if category == "" {
-				return fmt.Errorf("--category is required")
+				return fmt.Errorf("--category는 필수입니다")
 			}
 			return runMemPrune(project, category, dryRun, yes)
 		},
 	}
 
-	cmd.Flags().StringVar(&project, "project", "", "project name (empty = all projects)")
-	cmd.Flags().StringVar(&category, "category", "", "delete all entries in this category")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show affected count without deleting")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
+	cmd.Flags().StringVar(&project, "project", "", "프로젝트 이름 (비우면 전체 프로젝트)")
+	cmd.Flags().StringVar(&category, "category", "", "이 카테고리의 항목을 모두 삭제")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "삭제하지 않고 대상 건수만 표시")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "확인 프롬프트 생략")
 
 	return cmd
 }
@@ -301,7 +294,7 @@ func runMemDelete(project, category, key string, dryRun, yes bool) error {
 
 	count, err := memStore.Delete(project, category, key, true)
 	if err != nil {
-		return fmt.Errorf("failed to count memory: %w", err)
+		return fmt.Errorf("메모리 건수 확인 실패: %w", err)
 	}
 
 	if dryRun || count == 0 {
@@ -316,7 +309,7 @@ func runMemDelete(project, category, key string, dryRun, yes bool) error {
 
 	deleted, err := memStore.Delete(project, category, key, false)
 	if err != nil {
-		return fmt.Errorf("failed to delete memory: %w", err)
+		return fmt.Errorf("메모리 삭제 실패: %w", err)
 	}
 
 	printPruneResult("delete", deleted, false)
@@ -332,7 +325,7 @@ func runMemPrune(project, category string, dryRun, yes bool) error {
 
 	count, err := memStore.Delete(project, category, "", true)
 	if err != nil {
-		return fmt.Errorf("failed to count memory: %w", err)
+		return fmt.Errorf("메모리 건수 확인 실패: %w", err)
 	}
 
 	if dryRun || count == 0 {
@@ -347,7 +340,7 @@ func runMemPrune(project, category string, dryRun, yes bool) error {
 
 	deleted, err := memStore.Delete(project, category, "", false)
 	if err != nil {
-		return fmt.Errorf("failed to prune memory: %w", err)
+		return fmt.Errorf("메모리 정리 실패: %w", err)
 	}
 
 	printPruneResult("prune", deleted, false)
@@ -363,7 +356,7 @@ func runMemSearch(project, query string, limit int) error {
 
 	results, err := memStore.Search(project, query, limit)
 	if err != nil {
-		return fmt.Errorf("search failed: %w", err)
+		return fmt.Errorf("검색 실패: %w", err)
 	}
 
 	if len(results) == 0 {
@@ -433,7 +426,7 @@ func runMemStore(project, key, content, category, author string, confidence floa
 			}
 			return nil
 		}
-		return fmt.Errorf("failed to store memory: %w", err)
+		return fmt.Errorf("메모리 저장 실패: %w", err)
 	}
 
 	if flagJSON {
@@ -468,7 +461,7 @@ func runMemList(project, category string) error {
 		entries, err = memStore.List(project)
 	}
 	if err != nil {
-		return fmt.Errorf("failed to list memory: %w", err)
+		return fmt.Errorf("메모리 목록 조회 실패: %w", err)
 	}
 
 	if len(entries) == 0 {

@@ -14,33 +14,23 @@ type agentSource struct {
 	target string
 }
 
-// workspaceAgents lists the agent definitions keyed by file name: built-ins from
-// .pylon/builtin/agents/, then user-added ones from .pylon/agents/. A built-in name
-// always wins — see syncBuiltinResources.
+// workspaceAgents lists the user's agent definitions in .pylon/agents/ keyed by file
+// name. Pylon ships no agents of its own.
 func workspaceAgents(root string) (map[string]agentSource, error) {
 	agents := make(map[string]agentSource)
-	for _, src := range []struct {
-		dir    string
-		target func(string) string
-	}{
-		{layout.BuiltinResourceDir(root, "agents"), layout.BuiltinAgentLinkTarget},
-		{layout.ResourceDir(root, "agents"), layout.AgentLinkTarget},
-	} {
-		entries, err := os.ReadDir(src.dir)
-		if os.IsNotExist(err) {
+	dir := layout.ResourceDir(root, "agents")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return agents, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
-		if err != nil {
-			return nil, err
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			if _, taken := agents[entry.Name()]; !taken {
-				agents[entry.Name()] = agentSource{filepath.Join(src.dir, entry.Name()), src.target(entry.Name())}
-			}
-		}
+		agents[entry.Name()] = agentSource{filepath.Join(dir, entry.Name()), layout.AgentLinkTarget(entry.Name())}
 	}
 	return agents, nil
 }
@@ -80,8 +70,9 @@ func removeStaleAgentLinks(claudeAgentsDir string, expected map[string]bool) err
 // skillInjectionMarker identifies agent files that releases with skill injection wrote into .claude/agents/.
 const skillInjectionMarker = "## 주입된 스킬"
 
-// syncClaudeAgentLinks ensures .claude/agents/ has symlinks for every workspace agent
-// (built-in and user-added) and prunes managed entries for agents that no longer exist.
+// syncClaudeAgentLinks ensures .claude/agents/ has a symlink for every user agent and
+// prunes managed entries for agents that no longer exist, including the links earlier
+// releases made for built-in agents.
 func syncClaudeAgentLinks(root string) error {
 	claudeAgentsDir := layout.ClaudeAgentsDir(root)
 	if err := os.MkdirAll(claudeAgentsDir, 0o755); err != nil {

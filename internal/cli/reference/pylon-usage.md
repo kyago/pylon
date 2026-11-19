@@ -61,9 +61,15 @@ Claude Code에서는 `/pl:<이름>`으로 실행합니다. 다른 도구에서�
 
 ### 서브 에이전트 선택
 
-에이전트 정의는 `.pylon/builtin/agents/`(내장)와 `.pylon/agents/`(사용자 추가)에 있습니다. 각 파일의 `description`을
-보고 상황에 맞는 것을 고르고, 맞는 것이 없으면 도구 자체의 에이전트(Claude Code의 `Explore` 등)를 쓰거나 직접
-처리합니다. Claude Code는 `.claude/agents/`로 이 정의를 자동 등록하며, 다른 도구에서는 파일을 읽어 프롬프트로 씁니다.
+pylon은 에이전트를 내장하지 않습니다. 구현·탐색·리뷰 모두 아래 순서로 고릅니다.
+
+1. 이 PC에 설치된 것을 먼저 씁니다: 사용자가 추가한 에이전트, 설치된 플러그인의 에이전트와 리뷰 기능, 워크스페이스의
+   `.pylon/agents/`. `description`이 작업에 맞을 때만 고릅니다.
+2. 맞는 것이 없으면 도구의 공식 기본 기능을 씁니다: Claude Code는 `general-purpose`·`Explore`·`Plan` 에이전트와
+   `/code-review`, Codex는 `codex review`.
+
+어느 쪽에도 맞는 것이 없으면 직접 처리합니다. Claude Code는 `.pylon/agents/`를 `.claude/agents/`로 자동 등록하며, 다른
+도구에서는 파일을 읽어 프롬프트로 씁니다.
 
 ## 검증 규약
 

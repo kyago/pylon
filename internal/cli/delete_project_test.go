@@ -88,7 +88,7 @@ func TestRunDeleteProject_NotRegistered(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unregistered project, got nil")
 	}
-	if !strings.Contains(err.Error(), "not registered") {
+	if !strings.Contains(err.Error(), "등록되어 있지 않습니다") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

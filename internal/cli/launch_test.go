@@ -27,9 +27,16 @@ func TestGenerateClaudeDirWritesPointerAndBootstrap(t *testing.T) {
 	}
 }
 
-func TestGenerateClaudeDirKeepsUserRulesAndLinksBuiltinAgents(t *testing.T) {
+func TestGenerateClaudeDirKeepsUserRulesAndLinksUserAgents(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
+		t.Fatal(err)
+	}
+	userAgent := filepath.Join(layout.ResourceDir(root, "agents"), "mine.md")
+	if err := os.MkdirAll(filepath.Dir(userAgent), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userAgent, []byte("---\nname: mine\ndescription: x\n---\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	userRules := "# 우리 팀 규칙 (보존되어야 함)\n"
@@ -43,8 +50,11 @@ func TestGenerateClaudeDirKeepsUserRulesAndLinksBuiltinAgents(t *testing.T) {
 	if string(got) != buildAgentsBlock(nil)+userRules {
 		t.Errorf("user rules must survive behind the generated block: %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(layout.ClaudeAgentsDir(root), "dev.md")); err != nil {
-		t.Errorf("built-in agent link missing or dangling: %v", err)
+	if _, err := os.Stat(filepath.Join(layout.ClaudeAgentsDir(root), "mine.md")); err != nil {
+		t.Errorf("user agent link missing or dangling: %v", err)
+	}
+	if entries, _ := os.ReadDir(layout.ClaudeAgentsDir(root)); len(entries) != 1 {
+		t.Errorf("pylon ships no agents, so only the user's one may be linked: %v", entries)
 	}
 }
 

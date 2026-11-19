@@ -6,7 +6,38 @@
 - **맞지 않는 경우:** 저장소 하나만 쓰거나, 작업 실행까지 자동화하는 도구가 필요한 경우
 - **현재 상태:** 제작자 개인 용도로 개발합니다. 호환성을 보장하지 않습니다.
 
-Pylon이 하는 일은 파일을 준비하는 것까지입니다. 세션은 Claude Code, Codex, Paseo에서 직접 시작합니다. 자동으로 주입되는 지식은 없고, 세션이 `AGENTS.md`의 안내를 보고 필요할 때 찾습니다.
+Pylon이 하는 일은 파일을 준비하는 것까지입니다. 세션은 Claude Code, Codex, [Paseo](https://paseo.sh)에서 직접 시작합니다. 자동으로 주입되는 지식은 없고, 세션이 `AGENTS.md`의 안내를 보고 필요할 때 찾습니다. Paseo는 여러 코딩 에이전트를 동시에 실행하고 관리하는 도구입니다.
+
+## 왜 필요한가
+
+저장소 하나에서 시작한 세션은 그 저장소만 봅니다. 여러 저장소에 걸친 작업에서는 같은 일이 반복됩니다.
+
+- 세션마다 저장소 구성과 관계를 다시 설명합니다.
+- 저장소마다 복사해 둔 지침과 에이전트 설정이 서로 어긋납니다.
+- 지난 세션에서 내린 결정과 겪은 함정이 다음 세션에 남지 않습니다.
+
+Pylon은 저장소들을 담은 상위 디렉터리를 워크스페이스로 만듭니다. 세션을 거기서 시작하면 모든 저장소가 작업 디렉터리 안에 있고, 루트 `AGENTS.md`가 무엇을 어디서 찾을지 알려 줍니다. 프로젝트 두 개를 추가한 뒤의 `AGENTS.md`는 이렇습니다(발췌).
+
+```markdown
+<!-- pylon:begin -->
+# pylon 워크스페이스 운영 매뉴얼
+(중략)
+## 필요할 때 찾기
+
+- 프로젝트: 이 블록 아래의 프로젝트 목록. 각 프로젝트는 워크스페이스 바로 아래의 저장소입니다.
+- 프로젝트 지식: `<project>/.pylon/context.md`, 그 저장소의 `README`, `AGENTS.md`, `docs/`.
+- 도메인 지식: `.pylon/domain/`의 문서. 파일 구성은 워크스페이스마다 다릅니다.
+- 메모리: `pylon mem search --project <name> --query "검색어"`. 목록은 `.pylon/memory/<project>/INDEX.md`.
+(중략)
+## 이 워크스페이스
+
+- **프로젝트 2개**: my-api, my-app
+<!-- pylon:end -->
+```
+
+매뉴얼에는 이 밖에 메모리에 무엇을 남길지, 언제 서브 에이전트에 위임할지, 완료를 주장하기 전에 무엇을 검증할지가 들어 있습니다. 프로젝트를 바꾸는 작업 전에 메모리를 검색하고, 작업을 마치면 `/pl:cleanup`으로 결정과 함정을 기록하도록 안내합니다.
+
+같은 문제를 다루는 글로 [Home Repo 패턴](https://www.aihero.dev/the-home-repo-pattern)이 있습니다. Pylon은 저장소들을 워크스페이스 디렉터리 안에 두고, 프로젝트 목록과 매뉴얼 갱신을 CLI가 맡는다는 점이 다릅니다.
 
 ## 요구 사항
 
@@ -20,18 +51,19 @@ git과 gh가 없으면 `pylon init`이 실패합니다. `pylon doctor`로 설치
 
 ## 설치
 
-Pylon은 [CalVer](https://calver.org/)(`YYYY.M.SEQ`) 버전 체계를 사용하며, 플랫폼별 바이너리를 [GitHub Releases](https://github.com/kyago/pylon/releases)로 배포합니다. `main`에 머지되면 CI가 자동으로 릴리스합니다.
+macOS와 Linux에서는 아래 명령으로 최신 버전을 설치합니다. `gh auth login`이 되어 있어야 합니다.
 
 ```bash
-# 예시: macOS arm64 (x.x.x는 설치할 버전으로 교체)
-curl -L -o pylon.tar.gz \
-  https://github.com/kyago/pylon/releases/download/x.x.x/pylon_x.x.x_darwin_arm64.tar.gz
-tar -xzf pylon.tar.gz
-sudo mv pylon /usr/local/bin/    # 또는 PATH에 포함된 임의 디렉토리로 이동
+gh release download --repo kyago/pylon --output - \
+  --pattern "*_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/').tar.gz" \
+  | tar -xzf - pylon
+sudo mv pylon /usr/local/bin/    # 또는 PATH에 포함된 디렉터리
 pylon version
 ```
 
-Go가 있으면 `go install github.com/kyago/pylon/cmd/pylon@latest`로도 설치할 수 있습니다. 이 경우 `main` 최신 커밋을 빌드하며 `pylon version`은 `dev`를 표시합니다.
+Windows는 [GitHub Releases](https://github.com/kyago/pylon/releases)에서 zip을 직접 받습니다. Go가 있으면 `go install github.com/kyago/pylon/cmd/pylon@latest`로도 설치할 수 있습니다. 이 경우 `main` 최신 커밋을 빌드하며 `pylon version`은 `dev`를 표시합니다.
+
+버전은 [CalVer](https://calver.org/)(`YYYY.M.SEQ`)이고, `main`에 머지되면 CI가 자동으로 릴리스합니다.
 
 ## 업데이트
 
@@ -41,6 +73,8 @@ pylon update x.x.x        # 특정 버전 설치
 ```
 
 바이너리를 교체한 뒤 실행한 위치의 워크스페이스에 `pylon doctor`를 실행합니다. 다른 워크스페이스는 각각 `pylon doctor`를 실행하세요. 릴리스 조회에는 `GITHUB_TOKEN`, 없으면 `gh auth token` 값을 사용합니다. Windows는 자동 교체를 지원하지 않으므로 Releases에서 직접 받으세요.
+
+2026.11.13보다 이전 버전에서 올라오는 경우 [이전 버전에서 넘어올 때](docs/UPGRADING.md)를 먼저 읽으세요.
 
 ## 빠른 시작
 
@@ -85,14 +119,24 @@ pylon mem delete --project <name> --key "슬러그"              # --category, -
 pylon mem prune --category <category>                       # --project 생략 시 전체, --dry-run, --yes 지원
 ```
 
+## 에이전트와 코드 리뷰
+
+Pylon은 에이전트를 내장하지 않습니다. 매뉴얼은 세션이 아래 순서로 고르도록 안내합니다.
+
+1. PC에 설치된 에이전트와 플러그인을 먼저 씁니다. 사용자가 추가한 에이전트, 설치한 플러그인, 워크스페이스의 `.pylon/agents/`가 해당합니다.
+2. 맞는 것이 없으면 도구의 공식 기본 기능을 씁니다. Claude Code는 기본 에이전트와 `/code-review`, Codex는 `codex review`입니다.
+
+리뷰 전용 에이전트를 더하려면 Claude Code 공식 플러그인(`pr-review-toolkit`, `feature-dev`)을 `/plugin`에서 설치합니다.
+
+직접 만든 에이전트는 `.pylon/agents/`에 두면 `pylon doctor`가 `.claude/agents/`에 연결합니다.
+
 ## 워크스페이스 구조
 
 ```
 workspace/
 ├── .pylon/
 │   ├── config.yml             # 워크스페이스 표시
-│   ├── builtin/               # 내장 리소스 (git 무시, doctor가 임베드와 동기화)
-│   │   ├── agents/            # dev, code-reviewer, critic
+│   ├── builtin/               # 내장 리소스 (doctor가 임베드와 동기화)
 │   │   ├── commands/          # pl-cleanup, pl-add-project
 │   │   └── reference/         # 운영 매뉴얼 (pylon-usage.md)
 │   ├── agents/                # 사용자 에이전트 (직접 추가)
@@ -100,8 +144,8 @@ workspace/
 │   ├── domain/                # 도메인 지식 (overview, practices, glossary)
 │   └── memory/                # 프로젝트 메모리
 │
-├── .claude/                   # 생성 파일 (git 무시)
-│   ├── agents/                # 에이전트 심링크
+├── .claude/                   # 생성 파일
+│   ├── agents/                # 사용자 에이전트 심링크
 │   └── commands/pl/           # 슬래시 커맨드
 │
 ├── AGENTS.md                  # pylon 블록은 doctor가 재생성, 블록 밖은 사용자 소유
@@ -114,13 +158,7 @@ workspace/
 
 `AGENTS.md`에서 pylon이 관리하는 부분은 `<!-- pylon:begin -->`과 `<!-- pylon:end -->` 사이의 블록뿐입니다. 워크스페이스 규칙은 블록 밖에 적습니다. 블록 안을 고치면 다음 `pylon doctor` 때 되돌아갑니다. Codex는 이 파일을 바로 읽습니다.
 
-## 이전 버전에서 넘어올 때
-
-- `pylon update`를 실행한 워크스페이스는 바로 정리됩니다. 다른 워크스페이스는 `pylon doctor`를 실행하거나, 옛 훅이 남아 있으면 다음 Claude Code 세션이 시작될 때 자동으로 정리됩니다.
-- 이 정리에서 구버전 Stop 훅이 메모리에 저장한 훅 JSON 항목도 지웁니다. 되돌릴 수 없으니 워크스페이스가 git 저장소가 아니면 필요할 때 `.pylon/memory`를 먼저 복사해 두세요.
-- 없어지는 것: `/pl:pipeline`과 단계 커맨드, 파이프라인 스크립트, `pylon` 단독 실행, `SessionStart` 훅, 11개 에이전트, Codex `$pl-*` 스킬.
-- 남는 것: `.pylon/runtime/`, `.pylon/history/`, `.pylon/skills/`, `*.pylon-bak` 파일, 프로젝트의 `.pylon/verify.yml`. 더 이상 읽지 않습니다. `pylon doctor`가 목록을 보여 주고, `pylon doctor --prune-legacy`가 삭제합니다. `config.yml`의 옛 키는 그대로 두어도 됩니다.
-- 진행 중인 파이프라인 run은 업데이트 전에 마감하세요. 끝나지 않은 run의 브랜치와 워크트리는 자동으로 정리되지 않습니다.
+워크스페이스 루트가 git 저장소 안에 있으면 pylon이 `.claude/`, `.pylon/builtin/`, `CLAUDE.md`, `AGENTS.md`를 `.gitignore`에 추가합니다. 그렇지 않으면 `.gitignore`를 만들지 않습니다.
 
 ## 개발
 

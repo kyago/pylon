@@ -24,33 +24,33 @@ type ProjectInfo struct {
 func FindWorkspaceRoot(startDir string) (string, error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve path: %w", err)
+		return "", fmt.Errorf("경로 확인 실패: %w", err)
 	}
 
 	for {
 		pylonDir := filepath.Join(dir, ".pylon")
 		info, err := os.Stat(pylonDir)
 		if err != nil && !os.IsNotExist(err) {
-			return "", fmt.Errorf("failed to stat %s: %w", pylonDir, err)
+			return "", fmt.Errorf("%s 확인 실패: %w", pylonDir, err)
 		}
 		if err == nil && info.IsDir() {
 			configPath := filepath.Join(pylonDir, "config.yml")
 			configInfo, err := os.Stat(configPath)
 			if err != nil && !os.IsNotExist(err) {
-				return "", fmt.Errorf("failed to stat %s: %w", configPath, err)
+				return "", fmt.Errorf("%s 확인 실패: %w", configPath, err)
 			}
 			if err == nil {
 				if configInfo.Mode().IsRegular() {
 					return dir, nil
 				}
-				return "", fmt.Errorf("invalid workspace config: %s exists but is not a regular file", configPath)
+				return "", fmt.Errorf("잘못된 워크스페이스 설정: %s이(가) 있지만 일반 파일이 아닙니다", configPath)
 			}
 		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			// Reached filesystem root
-			return "", fmt.Errorf("no .pylon/config.yml found (searched from %s to filesystem root)", startDir)
+			return "", fmt.Errorf(".pylon/config.yml을 찾지 못했습니다 (%s에서 파일시스템 루트까지 탐색)", startDir)
 		}
 		dir = parent
 	}
@@ -76,7 +76,7 @@ func scanPylonDirs(root string, worktrees bool) ([]ProjectInfo, error) {
 
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read workspace root: %w", err)
+		return nil, fmt.Errorf("워크스페이스 루트 읽기 실패: %w", err)
 	}
 
 	for _, entry := range entries {

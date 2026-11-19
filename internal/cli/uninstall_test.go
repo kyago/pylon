@@ -321,7 +321,7 @@ func TestExecuteUninstallReportsMalformedAgentsMDWasSkipped(t *testing.T) {
 			t.Fatalf("executeUninstall() error: %v", err)
 		}
 	})
-	if strings.Contains(output, "completely removed") {
+	if strings.Contains(output, "완전히 제거했습니다") {
 		t.Fatalf("partial uninstall must not claim complete removal: %q", output)
 	}
 	if !strings.Contains(output, agentsPath) || !strings.Contains(output, "그대로") {

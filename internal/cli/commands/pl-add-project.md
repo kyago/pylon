@@ -4,8 +4,8 @@ description: "프로젝트를 워크스페이스에 추가 (git clone + .pylon/ 
 
 # Add Project
 
-Git 저장소를 워크스페이스에 독립 clone으로 추가하고, 코드베이스를 분석해
-프로젝트 수준 `.pylon/context.md`를 생성합니다.
+Git 저장소를 워크스페이스에 독립 clone으로 추가하고, 기술 스택을 감지해
+프로젝트 수준 `.pylon/context.md` 초안을 생성합니다.
 
 ## 입력
 - `$ARGUMENTS`: git URL (필수)과 선택 플래그
@@ -29,4 +29,4 @@ Git 저장소를 워크스페이스에 독립 clone으로 추가하고, 코드�
 
 ## 산출물
 - `<project>/` — clone된 프로젝트 디렉토리
-- `<project>/.pylon/context.md` — 코드베이스 분석 컨텍스트
+- `<project>/.pylon/context.md` — 기술 스택이 채워진 영문 초안. 아키텍처와 주요 규칙은 비어 있습니다

@@ -51,8 +51,8 @@ func TestSyncBuiltinResources_WritesEmbedsAndIsIdempotent(t *testing.T) {
 // 사용자 디렉터리의 파일은 내장과 이름이 같아도 건드리지 않는다. 읽는 쪽이 내장을 먼저 고른다.
 func TestSyncBuiltinResources_LeavesUserFilesAlone(t *testing.T) {
 	root := t.TempDir()
-	sameName := filepath.Join(layout.ResourceDir(root, "agents"), "dev.md")
-	mine := filepath.Join(layout.ResourceDir(root, "agents"), "my-agent.md")
+	sameName := filepath.Join(layout.ResourceDir(root, "commands"), "pl-cleanup.md")
+	mine := filepath.Join(layout.ResourceDir(root, "commands"), "my-command.md")
 	if err := os.MkdirAll(filepath.Dir(mine), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -129,12 +129,17 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 		t.Fatal(err)
 	}
 	common := filepath.Join(layout.BuiltinResourceDir(root, "commands"), "pl-cleanup.md")
-	builtinAgent := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dev.md")
-	dropped := filepath.Join(layout.BuiltinResourceDir(root, "agents"), "dropped-in-new-release.md")
+	manual := filepath.Join(layout.BuiltinResourceDir(root, "reference"), "pylon-usage.md")
+	// 에이전트를 내장하던 릴리스가 남긴 파일과 디렉터리.
+	droppedDir := layout.BuiltinResourceDir(root, "agents")
+	dropped := filepath.Join(droppedDir, "dropped-in-new-release.md")
 	if err := os.Remove(common); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(builtinAgent, []byte("edited by a session"), 0o644); err != nil {
+	if err := os.WriteFile(manual, []byte("edited by a session"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(droppedDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dropped, []byte("x"), 0o644); err != nil {
@@ -151,12 +156,15 @@ func TestSyncBuiltinResources_RepairsAndPrunesBuiltin(t *testing.T) {
 	if _, err := os.Stat(common); err != nil {
 		t.Errorf("deleted file not restored: %v", err)
 	}
-	want, _ := embeddedAgents.ReadFile("agents/dev.md")
-	if got, _ := os.ReadFile(builtinAgent); !bytes.Equal(got, want) {
+	want, _ := embeddedReference.ReadFile("reference/pylon-usage.md")
+	if got, _ := os.ReadFile(manual); !bytes.Equal(got, want) {
 		t.Error("edited builtin file not restored")
 	}
 	if _, err := os.Stat(dropped); !os.IsNotExist(err) {
 		t.Error("resource absent from the embeds survived")
+	}
+	if _, err := os.Stat(droppedDir); !os.IsNotExist(err) {
+		t.Error("directory no embedded file lives in survived")
 	}
 	if changed, err := syncBuiltinResources(root); err != nil || changed {
 		t.Errorf("repaired builtin must be stable: changed=%v err=%v", changed, err)
@@ -665,7 +673,7 @@ func TestResolveGitExcludePath_NotGitRepo(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-git directory, got nil")
 	}
-	if !strings.Contains(err.Error(), "not a git repository") {
+	if !strings.Contains(err.Error(), "git 저장소가 아닙니다") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

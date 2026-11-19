@@ -29,7 +29,7 @@ func TestRunInit_BlockedWhenRequiredToolsMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("필수 도구가 없으면 init이 실패해야 한다")
 	}
-	if !strings.Contains(err.Error(), "required tools are missing") {
+	if !strings.Contains(err.Error(), "필수 도구가 없습니다") {
 		t.Fatalf("예상과 다른 에러: %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(tmp, ".pylon")); statErr == nil {
