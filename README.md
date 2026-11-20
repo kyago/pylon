@@ -89,6 +89,12 @@ pylon add-project https://github.com/user/my-api.git
 
 작업을 마치면 Claude Code에서 `/pl:cleanup`을 실행합니다. 결과 확인, 메모리와 도메인 지식 갱신, 머지된 브랜치와 워크트리 정리를 맡습니다. 다른 도구에서는 `.pylon/builtin/commands/pl-cleanup.md`를 읽고 수행하게 합니다.
 
+Codex를 쓸 때는 다음을 지킵니다.
+
+- 세션은 워크스페이스 루트에서 엽니다. 프로젝트 폴더에서 열면 pylon 매뉴얼이 로드되지 않고, 기본 샌드박스가 루트의 `.pylon/memory/` 쓰기를 막아 `pylon mem store`가 실패합니다.
+- 기본 샌드박스는 네트워크를 막습니다. `pl-cleanup`의 `git fetch`, `gh`, 원격 브랜치 삭제는 승인하거나 네트워크를 허용해야 동작합니다.
+- 루트가 git 저장소가 아니면 `codex exec`에 `--skip-git-repo-check`가 필요합니다.
+
 ## 명령어
 
 | 명령어 | 설명 |
@@ -96,13 +102,14 @@ pylon add-project https://github.com/user/my-api.git
 | `pylon init` | 워크스페이스 초기화 |
 | `pylon add-project <git-url>` | 프로젝트를 clone하여 추가 (`--name`, `--force`로 재clone, `--skip-clone`으로 기존 디렉터리에 `.pylon/`만 생성) |
 | `pylon delete-project <name>` | 프로젝트 등록 해제 (`--purge`로 디렉터리까지 삭제, `--force`/`-f`로 확인 생략) |
+| `pylon project-list` | 워크스페이스의 프로젝트 이름과 경로 출력 |
 | `pylon doctor` | 도구 확인, 내장 리소스와 생성 파일 갱신 (`--fix-excludes`, `--yes`로 비인터랙티브, `--prune-legacy`로 이전 버전 잔여 파일 삭제) |
 | `pylon mem` | 프로젝트 메모리 (`store`, `search`, `list`, `delete`, `prune`) |
 | `pylon update [version]` | 바이너리 업데이트 후 `doctor` 실행 |
 | `pylon uninstall` | 워크스페이스 제거 (`--dry-run`, `--force`/`-f`, `--remove-projects`, `--remove-binary`) |
 | `pylon version` | 버전 정보 |
 
-`mem`과 `delete-project`는 `--json`을 붙이면 JSON으로 출력합니다.
+`mem`, `delete-project`, `project-list`는 `--json`을 붙이면 JSON으로 출력합니다.
 
 슬래시 커맨드는 `/pl:cleanup`과 `/pl:add-project` 두 개입니다.
 

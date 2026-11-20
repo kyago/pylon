@@ -104,6 +104,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// .claude/commands/ so /pl:* works right after init, without a doctor run
+	if err := applyClaudeCommands(layout.ClaudeCommandsDir(workDir), buildDesiredClaudeCommands(workDir)); err != nil {
+		return err
+	}
+
 	// Create symlinks in .claude/agents/ for Claude CLI native discovery
 	if err := syncClaudeAgentLinks(workDir); err != nil {
 		return err
