@@ -102,13 +102,14 @@ Codex를 쓸 때는 다음을 지킵니다.
 | `pylon init` | 워크스페이스 초기화 |
 | `pylon add-project <git-url>` | 프로젝트를 clone하여 추가 (`--name`, `--force`로 재clone, `--skip-clone`으로 기존 디렉터리에 `.pylon/`만 생성) |
 | `pylon delete-project <name>` | 프로젝트 등록 해제 (`--purge`로 디렉터리까지 삭제, `--force`/`-f`로 확인 생략) |
+| `pylon project-list` | 워크스페이스의 프로젝트 이름과 경로 출력 |
 | `pylon doctor` | 도구 확인, 내장 리소스와 생성 파일 갱신 (`--fix-excludes`, `--yes`로 비인터랙티브, `--prune-legacy`로 이전 버전 잔여 파일 삭제) |
 | `pylon mem` | 프로젝트 메모리 (`store`, `search`, `list`, `delete`, `prune`) |
 | `pylon update [version]` | 바이너리 업데이트 후 `doctor` 실행 |
 | `pylon uninstall` | 워크스페이스 제거 (`--dry-run`, `--force`/`-f`, `--remove-projects`, `--remove-binary`) |
 | `pylon version` | 버전 정보 |
 
-`mem`과 `delete-project`는 `--json`을 붙이면 JSON으로 출력합니다.
+`mem`, `delete-project`, `project-list`는 `--json`을 붙이면 JSON으로 출력합니다.
 
 슬래시 커맨드는 `/pl:cleanup`과 `/pl:add-project` 두 개입니다.
 
