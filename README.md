@@ -89,6 +89,12 @@ pylon add-project https://github.com/user/my-api.git
 
 작업을 마치면 Claude Code에서 `/pl:cleanup`을 실행합니다. 결과 확인, 메모리와 도메인 지식 갱신, 머지된 브랜치와 워크트리 정리를 맡습니다. 다른 도구에서는 `.pylon/builtin/commands/pl-cleanup.md`를 읽고 수행하게 합니다.
 
+Codex를 쓸 때는 다음을 지킵니다.
+
+- 세션은 워크스페이스 루트에서 엽니다. 프로젝트 폴더에서 열면 pylon 매뉴얼이 로드되지 않고, 기본 샌드박스가 루트의 `.pylon/memory/` 쓰기를 막아 `pylon mem store`가 실패합니다.
+- 기본 샌드박스는 네트워크를 막습니다. `pl-cleanup`의 `git fetch`, `gh`, 원격 브랜치 삭제는 승인하거나 네트워크를 허용해야 동작합니다.
+- 루트가 git 저장소가 아니면 `codex exec`에 `--skip-git-repo-check`가 필요합니다.
+
 ## 명령어
 
 | 명령어 | 설명 |

@@ -52,6 +52,9 @@ func TestRunInit_DoesNotGitInitWorkspace(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".git")); err == nil {
 		t.Errorf("expected workspace to NOT be a git repo, but .git/ exists")
 	}
+	if _, err := os.Stat(filepath.Join(tmp, ".claude", "commands", "pl", "cleanup.md")); err != nil {
+		t.Errorf("init 직후 /pl:cleanup 커맨드가 있어야 한다: %v", err)
+	}
 	configData, err := os.ReadFile(filepath.Join(tmp, ".pylon", "config.yml"))
 	if err != nil {
 		t.Fatal(err)
