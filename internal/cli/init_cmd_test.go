@@ -60,6 +60,9 @@ func TestRunInit_DoesNotGitInitWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	configText := string(configData)
+	if !strings.Contains(configText, "\nauto_review: false\n") {
+		t.Errorf("config.yml should default auto_review to false, got:\n%s", configText)
+	}
 	if !strings.Contains(configText, `version: "0.2"`) {
 		t.Fatalf("init did not create config:\n%s", configText)
 	}

@@ -629,8 +629,29 @@ func TestAutoReviewSectionFollowsConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.Contains(string(data), "## PR 자체 리뷰"); got != on {
+		at := strings.Index(string(data), "## PR 자체 리뷰")
+		if got := at >= 0; got != on {
 			t.Errorf("auto_review=%v: section present = %v", on, got)
 		}
+		if on && at > strings.Index(string(data), agentsFactsHeading) {
+			t.Error("section must come before the facts heading")
+		}
+	}
+
+	// 읽지 못하는 config.yml은 중단 없이 꺼진 것으로 처리한다
+	if err := os.WriteFile(cfg, []byte("auto_review: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ensureRootAgentFiles(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("auto_review: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ensureRootAgentFiles(root, nil); err != nil {
+		t.Fatalf("bad config must not abort: %v", err)
+	}
+	if data, _ := os.ReadFile(layout.RootAgentsPath(root)); strings.Contains(string(data), "## PR 자체 리뷰") {
+		t.Error("bad config must drop the section")
 	}
 }
