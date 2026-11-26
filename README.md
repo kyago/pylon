@@ -135,6 +135,13 @@ Pylon은 에이전트를 내장하지 않습니다. 매뉴얼은 세션이 아�
 
 리뷰 전용 에이전트를 더하려면 Claude Code 공식 플러그인(`pr-review-toolkit`, `feature-dev`)을 `/plugin`에서 설치합니다.
 
+### PR 자체 리뷰
+
+`.pylon/config.yml`에 `auto_review: true`를 넣고 `pylon doctor`를 실행하면, 세션이 PR을 만든 뒤 사용자가 요청하지 않아도 서브 에이전트 리뷰를 돌리라는 지침이 `AGENTS.md`의 pylon 블록에 들어갑니다. 기본값은 `false`입니다.
+
+- 리뷰어 수는 변경 크기에 맞춰 세션이 정하고, 실제 결함은 고쳐서 같은 PR에 푸시한 뒤 보고합니다. 머지는 하지 않습니다.
+- 훅이 아니라 지침이므로 세션이 건너뛸 수 있습니다.
+
 직접 만든 에이전트는 `.pylon/agents/`에 두면 `pylon doctor`가 `.claude/agents/`에 연결합니다.
 
 직접 만든 스킬은 `.pylon/skills/<이름>/SKILL.md`로 두면 `pylon doctor`가 `.claude/skills/<이름>`에 연결합니다. 같은 이름의 항목이 이미 있거나 `.claude/skills` 자체가 심링크면 연결하지 않습니다.
@@ -144,7 +151,7 @@ Pylon은 에이전트를 내장하지 않습니다. 매뉴얼은 세션이 아�
 ```
 workspace/
 ├── .pylon/
-│   ├── config.yml             # 워크스페이스 표시
+│   ├── config.yml             # 워크스페이스 표시와 설정 (auto_review)
 │   ├── builtin/               # 내장 리소스 (doctor가 임베드와 동기화)
 │   │   ├── commands/          # pl-cleanup, pl-add-project
 │   │   └── reference/         # 운영 매뉴얼 (pylon-usage.md)
