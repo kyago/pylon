@@ -137,7 +137,7 @@ Pylon은 에이전트를 내장하지 않습니다. 매뉴얼은 세션이 아�
 
 직접 만든 에이전트는 `.pylon/agents/`에 두면 `pylon doctor`가 `.claude/agents/`에 연결합니다.
 
-직접 만든 스킬은 `.pylon/skills/<이름>/SKILL.md`로 두면 `pylon doctor`가 `.claude/skills/<이름>`에 연결합니다.
+직접 만든 스킬은 `.pylon/skills/<이름>/SKILL.md`로 두면 `pylon doctor`가 `.claude/skills/<이름>`에 연결합니다. 같은 이름의 항목이 이미 있거나 `.claude/skills` 자체가 심링크면 연결하지 않습니다.
 
 ## 워크스페이스 구조
 

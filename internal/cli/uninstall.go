@@ -24,7 +24,7 @@ func newUninstallCmd() *cobra.Command {
 제거 대상:
   1. 생성 파일 (.claude/, CLAUDE.md, AGENTS.md)
   2. 프로젝트의 .pylon/ 디렉터리
-  3. 워크스페이스 .pylon/ 디렉터리 (설정, 도메인 지식, 에이전트, 메모리)
+  3. 워크스페이스 .pylon/ 디렉터리 (설정, 도메인 지식, 에이전트, 스킬, 메모리)
   4. .gitignore의 pylon 항목
 
 프로젝트 소스 코드는 기본적으로 남깁니다.

@@ -98,6 +98,13 @@ func TestSyncClaudeSkillLinks(t *testing.T) {
 	if err := os.Symlink(layout.SkillLinkTarget("gone"), filepath.Join(claudeSkills, "gone")); err != nil {
 		t.Fatal(err)
 	}
+	// 사용자 링크: pylon 스킬과 이름이 같아도, 없어도 남긴다
+	write(filepath.Join(skills, "clash", "SKILL.md"))
+	for _, name := range []string{"clash", "foreign"} {
+		if err := os.Symlink(t.TempDir(), filepath.Join(claudeSkills, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	if err := syncClaudeSkillLinks(root); err != nil {
 		t.Fatal(err)
@@ -113,5 +120,26 @@ func TestSyncClaudeSkillLinks(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(claudeSkills, "gone")); err == nil {
 		t.Error("stale link kept")
+	}
+	for _, name := range []string{"clash", "foreign"} {
+		if target, err := os.Readlink(filepath.Join(claudeSkills, name)); err != nil || target == layout.SkillLinkTarget(name) {
+			t.Errorf("user link %s changed: %q, %v", name, target, err)
+		}
+	}
+
+	// .claude/skills 자체가 링크면 그 안에 쓰지 않는다
+	root2, outside := t.TempDir(), t.TempDir()
+	write(filepath.Join(layout.ResourceDir(root2, "skills"), "mine", "SKILL.md"))
+	if err := os.MkdirAll(layout.ClaudeDir(root2), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, layout.ClaudeSkillsDir(root2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncClaudeSkillLinks(root2); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("wrote into linked skills dir: %v", entries)
 	}
 }

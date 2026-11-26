@@ -97,6 +97,10 @@ func syncClaudeAgentLinks(root string) error {
 // that are not such links belong to the user and stay.
 func syncClaudeSkillLinks(root string) error {
 	claudeSkillsDir := layout.ClaudeSkillsDir(root)
+	// 사용자가 .claude/skills 자체를 다른 곳으로 링크했으면 그 디렉터리는 건드리지 않는다.
+	if info, err := os.Lstat(claudeSkillsDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
 	skillsDir := layout.ResourceDir(root, "skills")
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil && !os.IsNotExist(err) {
@@ -111,7 +115,11 @@ func syncClaudeSkillLinks(root string) error {
 			return err
 		}
 		expected[entry.Name()] = true
-		if err := ensureSymlink(filepath.Join(claudeSkillsDir, entry.Name()), layout.SkillLinkTarget(entry.Name())); err != nil {
+		linkPath, target := filepath.Join(claudeSkillsDir, entry.Name()), layout.SkillLinkTarget(entry.Name())
+		if cur, err := os.Readlink(linkPath); err == nil && cur != target {
+			continue // 같은 이름의 사용자 링크는 바꾸지 않는다
+		}
+		if err := ensureSymlink(linkPath, target); err != nil {
 			return err
 		}
 	}
