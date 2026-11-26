@@ -11,12 +11,12 @@ import (
 )
 
 // legacyLeftovers returns the paths earlier releases wrote and no current code reads:
-// .pylon/{runtime,history,skills}, root *.pylon-bak backups and per-project verify.yml.
+// .pylon/{runtime,history}, root *.pylon-bak backups and per-project verify.yml.
 // Workspace worktrees are not in projects, so their files are never listed.
 func legacyLeftovers(root string, projects []config.ProjectInfo) []string {
 	var found []string
 	exists := func(p string) bool { _, err := os.Lstat(p); return err == nil }
-	for _, d := range []string{"runtime", "history", "skills"} {
+	for _, d := range []string{"runtime", "history"} {
 		if p := filepath.Join(layout.PylonDir(root), d); exists(p) {
 			found = append(found, p)
 		}

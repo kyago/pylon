@@ -78,3 +78,40 @@ func TestAddClaudeDirToGitignore_WholeLineMatch(t *testing.T) {
 		t.Fatalf("이미 있는 항목은 중복 추가하지 않아야 한다:\n%s", data)
 	}
 }
+
+func TestSyncClaudeSkillLinks(t *testing.T) {
+	root := t.TempDir()
+	skills := layout.ResourceDir(root, "skills")
+	claudeSkills := layout.ClaudeSkillsDir(root)
+	write := func(p string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(skills, "mine", "SKILL.md"))
+	write(filepath.Join(skills, "old-flat.md"))            // 옛 형식: 연결하지 않는다
+	write(filepath.Join(claudeSkills, "user", "SKILL.md")) // 사용자 것: 남긴다
+	if err := os.Symlink(layout.SkillLinkTarget("gone"), filepath.Join(claudeSkills, "gone")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := syncClaudeSkillLinks(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(claudeSkills, "mine", "SKILL.md")); err != nil {
+		t.Errorf("skill not linked: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(claudeSkills, "old-flat.md")); err == nil {
+		t.Error("flat .md must not be linked")
+	}
+	if _, err := os.Stat(filepath.Join(claudeSkills, "user", "SKILL.md")); err != nil {
+		t.Error("user skill removed")
+	}
+	if _, err := os.Lstat(filepath.Join(claudeSkills, "gone")); err == nil {
+		t.Error("stale link kept")
+	}
+}

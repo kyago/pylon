@@ -48,6 +48,9 @@ func generateClaudeDir(root string, projects []config.ProjectInfo) error {
 	if err := syncClaudeAgentLinks(root); err != nil {
 		return fmt.Errorf(".claude/agents/ 생성 실패: %w", err)
 	}
+	if err := syncClaudeSkillLinks(root); err != nil {
+		return fmt.Errorf(".claude/skills/ 생성 실패: %w", err)
+	}
 
 	// Earlier releases injected memory from a SessionStart hook; knowledge is now looked up on demand.
 	if _, err := removePylonHooks(claudeDir); err != nil {

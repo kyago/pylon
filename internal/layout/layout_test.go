@@ -19,6 +19,8 @@ func TestLayoutPaths(t *testing.T) {
 		{"ClaudeDir", ClaudeDir(root), filepath.Join(root, ".claude")},
 		{"ClaudeAgentsDir", ClaudeAgentsDir(root), filepath.Join(root, ".claude", "agents")},
 		{"ClaudeCommandsDir", ClaudeCommandsDir(root), filepath.Join(root, ".claude", "commands")},
+		{"ClaudeSkillsDir", ClaudeSkillsDir(root), filepath.Join(root, ".claude", "skills")},
+		{"SkillLinkTarget", SkillLinkTarget("s"), filepath.Join("..", "..", ".pylon", "skills", "s")},
 		{"AgentLinkTarget", AgentLinkTarget("a.md"), filepath.Join("..", "..", ".pylon", "agents", "a.md")},
 	}
 	for _, c := range cases {

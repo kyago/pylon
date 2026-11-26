@@ -69,6 +69,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	dirs := []string{
 		filepath.Join(pylonDir, "domain"),
 		filepath.Join(pylonDir, "agents"),
+		filepath.Join(pylonDir, "skills"),
 		filepath.Join(pylonDir, "commands"),
 	}
 
@@ -111,6 +112,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Create symlinks in .claude/agents/ for Claude CLI native discovery
 	if err := syncClaudeAgentLinks(workDir); err != nil {
+		return err
+	}
+	if err := syncClaudeSkillLinks(workDir); err != nil {
 		return err
 	}
 
@@ -156,9 +160,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("  .pylon/domain/             - 도메인 지식")
 	fmt.Println("  .pylon/builtin/            - 내장 커맨드·매뉴얼 (doctor가 다시 씀)")
 	fmt.Println("  .pylon/agents/             - 사용자 에이전트")
+	fmt.Println("  .pylon/skills/             - 사용자 스킬")
 	fmt.Println("  .pylon/commands/           - 사용자 슬래시 커맨드")
 	fmt.Println("  .pylon/memory/             - 프로젝트 메모리")
-	fmt.Println("  .claude/                   - Claude Code용 슬래시 커맨드와 사용자 에이전트 심링크 (doctor가 다시 씀)")
+	fmt.Println("  .claude/                   - Claude Code용 슬래시 커맨드와 사용자 에이전트·스킬 심링크 (doctor가 다시 씀)")
 	fmt.Println("  CLAUDE.md                  - @AGENTS.md import 마커")
 	fmt.Println("  AGENTS.md                  - 운영 가이드 (pylon 블록은 doctor가 다시 씀, 워크스페이스 규칙은 블록 밖에 작성)")
 	fmt.Println()

@@ -92,6 +92,46 @@ func syncClaudeAgentLinks(root string) error {
 	return removeStaleAgentLinks(claudeAgentsDir, expected)
 }
 
+// syncClaudeSkillLinks links every user skill (.pylon/skills/<name>/SKILL.md) into
+// .claude/skills/ and removes links into .pylon/skills/ whose skill is gone. Entries
+// that are not such links belong to the user and stay.
+func syncClaudeSkillLinks(root string) error {
+	claudeSkillsDir := layout.ClaudeSkillsDir(root)
+	skillsDir := layout.ResourceDir(root, "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	expected := make(map[string]bool)
+	for _, entry := range entries {
+		if _, err := os.Stat(filepath.Join(skillsDir, entry.Name(), "SKILL.md")); err != nil {
+			continue
+		}
+		if err := os.MkdirAll(claudeSkillsDir, 0o755); err != nil {
+			return err
+		}
+		expected[entry.Name()] = true
+		if err := ensureSymlink(filepath.Join(claudeSkillsDir, entry.Name()), layout.SkillLinkTarget(entry.Name())); err != nil {
+			return err
+		}
+	}
+	links, err := os.ReadDir(claudeSkillsDir)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, link := range links {
+		path := filepath.Join(claudeSkillsDir, link.Name())
+		target, err := os.Readlink(path)
+		if err != nil || expected[link.Name()] || target != layout.SkillLinkTarget(link.Name()) {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ensureSymlink creates a managed symlink while preserving regular user files.
 func ensureSymlink(linkPath, target string) error {
 	info, err := os.Lstat(linkPath)
