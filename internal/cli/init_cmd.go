@@ -80,7 +80,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create config.yml (Spec Section 16: minimal config after init)
-	configContent := "version: \"0.2\"\n"
+	configContent := "version: \"0.2\"\n" +
+		"# true면 PR을 만든 뒤 서브 에이전트 리뷰를 돌리라는 지침을 AGENTS.md에 넣습니다. 바꾼 뒤 pylon doctor를 실행하세요.\n" +
+		"auto_review: false\n"
 
 	if err := os.WriteFile(filepath.Join(pylonDir, "config.yml"), []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("config.yml 생성 실패: %w", err)
@@ -156,7 +158,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Pylon 워크스페이스를 초기화했습니다: %s\n", workDir)
 	fmt.Println()
 	fmt.Println("생성한 항목:")
-	fmt.Println("  .pylon/config.yml          - 워크스페이스 표시")
+	fmt.Println("  .pylon/config.yml          - 워크스페이스 표시와 설정(auto_review)")
 	fmt.Println("  .pylon/domain/             - 도메인 지식")
 	fmt.Println("  .pylon/builtin/            - 내장 커맨드·매뉴얼 (doctor가 다시 씀)")
 	fmt.Println("  .pylon/agents/             - 사용자 에이전트")

@@ -40,14 +40,17 @@ func isPylonClaudeMD(data []byte) bool {
 
 // buildAgentsBlock returns the pylon-managed block (markers included): the embedded
 // usage manual verbatim, followed by the workspace facts Go knows. It is a pure
-// function of the binary and the project list, so every doctor rewrites it whenever
-// either changes and no version tracking is needed. The workspace root is left out on
+// function of the binary, the project list and the auto_review setting, so every
+// doctor rewrites it whenever one changes and no version tracking is needed. The workspace root is left out on
 // purpose: the same directory reached through different paths must not churn the file.
-func buildAgentsBlock(projects []config.ProjectInfo) string {
+func buildAgentsBlock(projects []config.ProjectInfo, autoReview bool) string {
 	manual, _ := embeddedReference.ReadFile("reference/pylon-usage.md")
 	var b strings.Builder
 	b.WriteString(agentsBlockBegin + "\n")
 	b.WriteString(strings.TrimSpace(string(manual)) + "\n\n")
+	if autoReview {
+		b.WriteString(autoReviewSection + "\n")
+	}
 	b.WriteString(agentsFactsHeading + "\n\n")
 	if len(projects) > 0 {
 		names := make([]string, len(projects))
@@ -61,6 +64,27 @@ func buildAgentsBlock(projects []config.ProjectInfo) string {
 	b.WriteString(agentsBlockEnd + "\n")
 	return b.String()
 }
+
+// autoReviewSection is appended to the manual when .pylon/config.yml has
+// auto_review: true. It is an instruction to the session, not something Go enforces.
+const autoReviewSection = `## PR 자체 리뷰
+
+이 워크스페이스는 ` + "`.pylon/config.yml`" + `의 ` + "`auto_review`" + `가 켜져 있습니다. 작업 결과로 PR을 만들었으면, 사용자가 따로
+요청하지 않아도 완료를 보고하기 전에 아래 순서로 자체 리뷰를 돌립니다. 사용자는 매번 리뷰를 따로 지시하지 않으려고 이
+설정을 켰습니다. 서브 에이전트로 스폰된 세션은 이 리뷰를 돌리지 않고, 스폰한 쪽이 돌립니다.
+
+1. 리뷰어를 서브 에이전트로 스폰합니다. 고르는 순서는 "서브 에이전트 선택"을 따릅니다. 작은 변경은 1명이면 되고, 크거나
+   여러 영역에 걸친 변경은 관점(정확성, 데이터 손실·보안, 테스트 등)을 나눠 여러 명을 병렬로 둡니다.
+2. 리뷰어는 이 대화를 모릅니다. 변경의 목적과 의도한 설계 결정, 저장소(워크트리) 경로, PR 번호와 base 브랜치, 저장소
+   규칙 문서의 위치, 원하는 지적(실제 결함)과 원하지 않는 지적(취향, 기능 추가 제안)을 전달합니다. 변경이 옳다는 판단은
+   넘기지 않습니다. 리뷰어는 파일을 고치거나 PR에 코멘트를 남기지 않고, 지적을 답변으로만 돌려주게 합니다.
+3. 지적은 코드를 읽거나 실행해 사실인지 확인합니다. 실제 결함만 고치고, 저장소 검증을 다시 돌려 통과한 뒤 같은 PR에
+   푸시합니다. PR의 방향을 바꿔야 하는 지적은 고치지 않고 보고합니다.
+4. 고친 것, 고치지 않은 것과 이유, 리뷰어가 확인하지 못한 것을 사용자에게 보고합니다.
+
+리뷰는 PR마다 한 번입니다. 고친 뒤 리뷰어를 다시 돌리지 않습니다. 머지는 사용자가 지시할 때만 합니다. 사용자가 리뷰를
+생략하거나 다시 돌리라고 하면 그 지시를 따릅니다.
+`
 
 // isPylonGeneratedBlock reports whether a block is one buildAgentsBlock emitted
 // (possibly edited in place, which is reverted) and may be replaced without a backup.
@@ -253,7 +277,12 @@ func ensureRootAgentFiles(root string, projects []config.ProjectInfo) (bool, []s
 		}
 	}
 
-	block := buildAgentsBlock(projects)
+	settings, err := config.LoadSettings(root)
+	if err != nil {
+		// stdout은 훅 출력이 될 수 있어 stderr로만 알린다.
+		fmt.Fprintf(os.Stderr, "경고: config.yml을 읽지 못해 auto_review를 꺼진 것으로 처리합니다: %v\n", err)
+	}
+	block := buildAgentsBlock(projects, settings.AutoReview)
 	var out string
 	switch {
 	case readErr != nil:

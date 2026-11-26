@@ -706,7 +706,7 @@ func TestReconcileRootAgentFilesLeavesCurrent(t *testing.T) {
 	if err := os.MkdirAll(layout.PylonDir(root), 0755); err != nil {
 		t.Fatal(err)
 	}
-	current := buildAgentsBlock(nil) + "\n# 사용자 규칙\n"
+	current := buildAgentsBlock(nil, false) + "\n# 사용자 규칙\n"
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(current), 0644); err != nil {
 		t.Fatal(err)
 	}

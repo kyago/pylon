@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestBuildClaudeMDPointerIsImportMarker(t *testing.T) {
 }
 
 func TestBuildAgentsBlockEmbedsManualAndFacts(t *testing.T) {
-	out := buildAgentsBlock([]config.ProjectInfo{{Name: "api"}})
+	out := buildAgentsBlock([]config.ProjectInfo{{Name: "api"}}, false)
 	if !strings.HasPrefix(out, agentsBlockBegin+"\n") || !strings.HasSuffix(out, agentsBlockEnd+"\n") {
 		t.Errorf("block must be wrapped in markers: %s", out)
 	}
@@ -42,7 +43,7 @@ func TestBuildAgentsBlockEmbedsManualAndFacts(t *testing.T) {
 	if s, e, state := findAgentsBlock([]byte(out)); state != agentsBlockComplete || s != 0 || e != len(out) {
 		t.Errorf("block must parse as one complete block: state=%v [%d,%d) of %d", state, s, e, len(out))
 	}
-	if buildAgentsBlock([]config.ProjectInfo{{Name: "api"}}) != out {
+	if buildAgentsBlock([]config.ProjectInfo{{Name: "api"}}, false) != out {
 		t.Error("block must be deterministic")
 	}
 }
@@ -181,7 +182,7 @@ func TestEnsureRootAgentFilesReplacesOutdatedBlockPreservingUserContent(t *testi
 	root := t.TempDir()
 	userTop := "# 우리 팀 규칙\n블록 밖 내용\n\n"
 	userBottom := "\n# 블록 아래 추가 규칙\n"
-	outdated := buildAgentsBlock([]config.ProjectInfo{{Name: "removed-project"}})
+	outdated := buildAgentsBlock([]config.ProjectInfo{{Name: "removed-project"}}, false)
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(userTop+outdated+userBottom), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func TestEnsureRootAgentFilesReplacesOutdatedBlockPreservingUserContent(t *testi
 		t.Errorf("pylon-generated block replacement must not back anything up, got %v", backedUp)
 	}
 	got, _ := os.ReadFile(layout.RootAgentsPath(root))
-	if string(got) != userTop+buildAgentsBlock(nil)+userBottom {
+	if string(got) != userTop+buildAgentsBlock(nil, false)+userBottom {
 		t.Errorf("block not replaced in place: %q", got)
 	}
 	info, err := os.Stat(layout.RootAgentsPath(root))
@@ -254,7 +255,7 @@ func TestEnsureRootAgentFilesRejectsMalformedBlockWithoutChangingUserContent(t *
 func TestEnsureRootAgentFilesToleratesWhitespaceAroundMarkers(t *testing.T) {
 	root := t.TempDir()
 	userTop := "# 우리 팀 규칙\n\n"
-	block := buildAgentsBlock(nil)
+	block := buildAgentsBlock(nil, false)
 	inner := strings.TrimSuffix(strings.TrimPrefix(block, agentsBlockBegin+"\n"), agentsBlockEnd+"\n")
 	mangled := userTop +
 		"  " + agentsBlockBegin + " \n" +
@@ -277,7 +278,7 @@ func TestEnsureRootAgentFilesToleratesWhitespaceAroundMarkers(t *testing.T) {
 	if !strings.HasPrefix(string(got), userTop) {
 		t.Errorf("user content above the block was destroyed: %q", got)
 	}
-	if string(got) != userTop+buildAgentsBlock(nil) {
+	if string(got) != userTop+buildAgentsBlock(nil, false) {
 		t.Errorf("block not refreshed: %q", got)
 	}
 }
@@ -363,7 +364,7 @@ func TestEnsureRootAgentFilesDoesNotReplaceUnreadableClaudeMD(t *testing.T) {
 	root := t.TempDir()
 	agentsPath := layout.RootAgentsPath(root)
 	claudePath := layout.RootClaudePath(root)
-	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(nil)), 0644); err != nil {
+	if err := os.WriteFile(agentsPath, []byte(buildAgentsBlock(nil, false)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	original := []byte("# 읽을 수 없는 사용자 CLAUDE.md\n")
@@ -439,7 +440,7 @@ func TestEnsureRootAgentFilesRejectsDanglingAgentsMDBeforeChangingClaudeMD(t *te
 
 func TestEnsureRootAgentFilesBacksUpClaudeMDWithLegacyHeadingOnly(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(nil)), 0644); err != nil {
+	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(buildAgentsBlock(nil, false)), 0644); err != nil {
 		t.Fatal(err)
 	}
 	original := "# Pylon — AI 멀티도메인 워크스페이스" + "\n\n우리 팀이 직접 작성한 규칙\n"
@@ -493,7 +494,7 @@ func TestBackupIfHandWrittenDoesNotClobber(t *testing.T) {
 
 func TestEnsureRootAgentFilesLeavesCurrentBlockUntouched(t *testing.T) {
 	root := t.TempDir()
-	current := "# 사용자 규칙\n\n" + buildAgentsBlock(nil) + "\n# 아래 규칙\n"
+	current := "# 사용자 규칙\n\n" + buildAgentsBlock(nil, false) + "\n# 아래 규칙\n"
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(current), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +513,7 @@ func TestEnsureRootAgentFilesLeavesCurrentBlockUntouched(t *testing.T) {
 // 블록 안은 pylon 소유다 — 직접 고친 내용은 백업 없이 되돌아간다.
 func TestEnsureRootAgentFilesRevertsEditsInsideBlock(t *testing.T) {
 	root := t.TempDir()
-	edited := strings.Replace(buildAgentsBlock(nil), "## 정체성과 책임", "## 내가 고친 제목", 1)
+	edited := strings.Replace(buildAgentsBlock(nil, false), "## 정체성과 책임", "## 내가 고친 제목", 1)
 	if err := os.WriteFile(layout.RootAgentsPath(root), []byte(edited), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +524,7 @@ func TestEnsureRootAgentFilesRevertsEditsInsideBlock(t *testing.T) {
 	if len(backedUp) != 0 {
 		t.Errorf("edits inside the generated block are not backed up, got %v", backedUp)
 	}
-	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != buildAgentsBlock(nil) {
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != buildAgentsBlock(nil, false) {
 		t.Errorf("edit inside the block was not reverted: %q", got)
 	}
 }
@@ -549,7 +550,7 @@ func TestEnsureRootAgentFilesBacksUpAuthoredLegacyBlockOnce(t *testing.T) {
 	if bak, _ := os.ReadFile(layout.RootAgentsPath(root) + rootFileBackupSuffix); string(bak) != original {
 		t.Errorf("backup must hold the original bytes: %q", bak)
 	}
-	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != userTop+buildAgentsBlock(nil)+userBottom {
+	if got, _ := os.ReadFile(layout.RootAgentsPath(root)); string(got) != userTop+buildAgentsBlock(nil, false)+userBottom {
 		t.Errorf("block not replaced in place: %q", got)
 	}
 	// 두 번째 실행은 아무것도 하지 않는다 — 백업이 늘어나면 안 된다.
@@ -608,5 +609,49 @@ func TestEnsureRootAgentFilesReportsActualBackupName(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, want)); string(got) != authored {
 		t.Errorf("%s does not hold the authored guide: %q", want, got)
+	}
+}
+
+func TestAutoReviewSectionFollowsConfig(t *testing.T) {
+	root := t.TempDir()
+	cfg := filepath.Join(layout.PylonDir(root), "config.yml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, on := range []bool{false, true, false} {
+		if err := os.WriteFile(cfg, []byte("auto_review: "+strconv.FormatBool(on)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, backedUp, err := ensureRootAgentFiles(root, nil); err != nil || len(backedUp) != 0 {
+			t.Fatalf("ensureRootAgentFiles: %v, backups %v", err, backedUp)
+		}
+		data, err := os.ReadFile(layout.RootAgentsPath(root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := strings.Index(string(data), "## PR 자체 리뷰")
+		if got := at >= 0; got != on {
+			t.Errorf("auto_review=%v: section present = %v", on, got)
+		}
+		if on && at > strings.Index(string(data), agentsFactsHeading) {
+			t.Error("section must come before the facts heading")
+		}
+	}
+
+	// 읽지 못하는 config.yml은 중단 없이 꺼진 것으로 처리한다
+	if err := os.WriteFile(cfg, []byte("auto_review: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ensureRootAgentFiles(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("auto_review: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ensureRootAgentFiles(root, nil); err != nil {
+		t.Fatalf("bad config must not abort: %v", err)
+	}
+	if data, _ := os.ReadFile(layout.RootAgentsPath(root)); strings.Contains(string(data), "## PR 자체 리뷰") {
+		t.Error("bad config must drop the section")
 	}
 }

@@ -43,7 +43,8 @@ formatting drift (`golangci-lint fmt` fixes it).
 `CLAUDE.md` is a deterministic `@AGENTS.md` import marker. Inside `AGENTS.md`, pylon owns only the **managed block**
 delimited by `<!-- pylon:begin -->` / `<!-- pylon:end -->`: `buildAgentsBlock` fills it with the embedded manual
 (`internal/cli/reference/pylon-usage.md`) verbatim plus the project list, and the block is rewritten whenever its bytes
-differ. Edits inside the block are reverted; content outside the block is user-owned and never modified, and a user's
+differ. When `.pylon/config.yml` has `auto_review: true`, the block also carries `autoReviewSection`, which tells the
+session to spawn reviewer subagents after it opens a PR; it is prose in the block, not a hook. Edits inside the block are reverted; content outside the block is user-owned and never modified, and a user's
 own `AGENTS.md` (no block) keeps its content with the block prepended so Codex sees it within the default instruction
 size limit (keep the manual well under 32KiB). A malformed marker pair aborts init/doctor before any file is touched;
 uninstall skips the file with a warning and proceeds. A block is replaced without a backup only when
@@ -105,7 +106,7 @@ checkout is nested deeper. A review finding outside these rules is a known limit
 - `internal/cli/` — every Cobra subcommand (`root.go` registers them) and the generation logic.
 - `internal/layout/` — **all** `.pylon/` and `.claude/` path construction. Never hand-build these paths.
 - `internal/config/` — workspace root and project discovery. `FindWorkspaceRoot` walks up to `.pylon/config.yml`, which
-  only marks a workspace; its content is not read.
+  marks a workspace; `LoadSettings` reads `auto_review` from it and ignores every other key.
 - `internal/memory/` — markdown-file memory store (`<category>/<slug>.md` + `INDEX.md`), token-match search.
 - `internal/slug/`, `internal/fsutil/` — supporting utilities.
 
