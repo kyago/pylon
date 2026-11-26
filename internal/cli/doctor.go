@@ -51,21 +51,21 @@ func newDoctorCmd() *cobra.Command {
 		Long: `필수 도구가 설치되어 있는지 확인하고 워크스페이스의 생성 파일을 갱신합니다.
 
 pylon 소유인 .pylon/builtin/(커맨드, 매뉴얼)도 이 바이너리에 담긴
-버전으로 되돌립니다. .pylon/agents/, .pylon/commands/의 사용자 리소스는 건드리지
+버전으로 되돌립니다. .pylon/agents/, .pylon/skills/, .pylon/commands/의 사용자 리소스는 건드리지
 않으며, 이름이 같으면 내장 리소스가 우선합니다.
 
 --fix-excludes는 .pylon/ 제외 항목이 없는 프로젝트의 .git/info/exclude에
 .pylon/을 추가합니다.
 
 이전 릴리스가 만들었고 이제 읽지 않는 파일(.pylon/runtime/, .pylon/history/,
-.pylon/skills/, *.pylon-bak, 프로젝트의 .pylon/verify.yml)은 목록으로 보여 주며,
+*.pylon-bak, 프로젝트의 .pylon/verify.yml)은 목록으로 보여 주며,
 --prune-legacy가 삭제합니다.`,
 		RunE: runDoctor,
 	}
 
 	cmd.Flags().Bool("fix-excludes", false, "프로젝트 저장소에 빠진 .pylon/ exclude 항목을 자동으로 추가")
 	cmd.Flags().Bool("yes", false, "확인 프롬프트(커맨드 동기화)를 건너뛰고 비인터랙티브로 실행")
-	cmd.Flags().Bool("prune-legacy", false, "이전 버전이 남긴 파일(.pylon/runtime·history·skills, *.pylon-bak, 프로젝트 verify.yml) 삭제")
+	cmd.Flags().Bool("prune-legacy", false, "이전 버전이 남긴 파일(.pylon/runtime·history, *.pylon-bak, 프로젝트 verify.yml) 삭제")
 
 	return cmd
 }
@@ -390,6 +390,9 @@ func syncGeneratedFilesIfWorkspace(in io.Reader, autoYes bool) {
 
 	if err := syncClaudeAgentLinks(root); err != nil {
 		fmt.Printf("⚠ .claude/agents/ 심링크 갱신 실패: %v\n", err)
+	}
+	if err := syncClaudeSkillLinks(root); err != nil {
+		fmt.Printf("⚠ .claude/skills/ 심링크 갱신 실패: %v\n", err)
 	}
 	pruneCodexSkills(root)
 

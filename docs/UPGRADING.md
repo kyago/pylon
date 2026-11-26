@@ -5,7 +5,8 @@
 - `pylon update`를 실행한 워크스페이스는 바로 정리됩니다. 다른 워크스페이스는 `pylon doctor`를 실행하거나, 옛 훅이 남아 있으면 다음 Claude Code 세션이 시작될 때 자동으로 정리됩니다.
 - 이 정리에서 구버전 Stop 훅이 메모리에 저장한 훅 JSON 항목도 지웁니다. 되돌릴 수 없으니 워크스페이스가 git 저장소가 아니면 필요할 때 `.pylon/memory`를 먼저 복사해 두세요.
 - 없어지는 것: `/pl:pipeline`과 단계 커맨드, 파이프라인 스크립트, `pylon` 단독 실행, `SessionStart` 훅, 11개 에이전트, Codex `$pl-*` 스킬.
-- 남는 것: `.pylon/runtime/`, `.pylon/history/`, `.pylon/skills/`, `*.pylon-bak` 파일, 프로젝트의 `.pylon/verify.yml`. 더 이상 읽지 않습니다. `pylon doctor`가 목록을 보여 주고, `pylon doctor --prune-legacy`가 삭제합니다. `config.yml`의 옛 키는 그대로 두어도 됩니다.
+- 남는 것: `.pylon/runtime/`, `.pylon/history/`, `*.pylon-bak` 파일, 프로젝트의 `.pylon/verify.yml`. 더 이상 읽지 않습니다. `pylon doctor`가 목록을 보여 주고, `pylon doctor --prune-legacy`가 삭제합니다. `config.yml`의 옛 키는 그대로 두어도 됩니다.
+- `.pylon/skills/`의 옛 `<이름>.md` 파일은 읽지 않습니다. 계속 쓰려면 `.pylon/skills/<이름>/SKILL.md`로 옮기세요. `pylon doctor`가 `.claude/skills/`에 연결합니다.
 - 진행 중인 파이프라인 run은 업데이트 전에 마감하세요. 끝나지 않은 run의 브랜치와 워크트리는 자동으로 정리되지 않습니다.
 
 ## 내장 에이전트 제거

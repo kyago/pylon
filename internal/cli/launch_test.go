@@ -78,3 +78,68 @@ func TestAddClaudeDirToGitignore_WholeLineMatch(t *testing.T) {
 		t.Fatalf("이미 있는 항목은 중복 추가하지 않아야 한다:\n%s", data)
 	}
 }
+
+func TestSyncClaudeSkillLinks(t *testing.T) {
+	root := t.TempDir()
+	skills := layout.ResourceDir(root, "skills")
+	claudeSkills := layout.ClaudeSkillsDir(root)
+	write := func(p string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(skills, "mine", "SKILL.md"))
+	write(filepath.Join(skills, "old-flat.md"))            // 옛 형식: 연결하지 않는다
+	write(filepath.Join(claudeSkills, "user", "SKILL.md")) // 사용자 것: 남긴다
+	if err := os.Symlink(layout.SkillLinkTarget("gone"), filepath.Join(claudeSkills, "gone")); err != nil {
+		t.Fatal(err)
+	}
+	// 사용자 링크: pylon 스킬과 이름이 같아도, 없어도 남긴다
+	write(filepath.Join(skills, "clash", "SKILL.md"))
+	for _, name := range []string{"clash", "foreign"} {
+		if err := os.Symlink(t.TempDir(), filepath.Join(claudeSkills, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := syncClaudeSkillLinks(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(claudeSkills, "mine", "SKILL.md")); err != nil {
+		t.Errorf("skill not linked: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(claudeSkills, "old-flat.md")); err == nil {
+		t.Error("flat .md must not be linked")
+	}
+	if _, err := os.Stat(filepath.Join(claudeSkills, "user", "SKILL.md")); err != nil {
+		t.Error("user skill removed")
+	}
+	if _, err := os.Lstat(filepath.Join(claudeSkills, "gone")); err == nil {
+		t.Error("stale link kept")
+	}
+	for _, name := range []string{"clash", "foreign"} {
+		if target, err := os.Readlink(filepath.Join(claudeSkills, name)); err != nil || target == layout.SkillLinkTarget(name) {
+			t.Errorf("user link %s changed: %q, %v", name, target, err)
+		}
+	}
+
+	// .claude/skills 자체가 링크면 그 안에 쓰지 않는다
+	root2, outside := t.TempDir(), t.TempDir()
+	write(filepath.Join(layout.ResourceDir(root2, "skills"), "mine", "SKILL.md"))
+	if err := os.MkdirAll(layout.ClaudeDir(root2), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, layout.ClaudeSkillsDir(root2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncClaudeSkillLinks(root2); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("wrote into linked skills dir: %v", entries)
+	}
+}

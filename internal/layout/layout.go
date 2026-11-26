@@ -66,6 +66,17 @@ func AgentLinkTarget(name string) string {
 	return filepath.Join("..", "..", ".pylon", "agents", name)
 }
 
+// ClaudeSkillsDir returns the Claude skill discovery directory (.claude/skills).
+func ClaudeSkillsDir(root string) string {
+	return filepath.Join(ClaudeDir(root), "skills")
+}
+
+// SkillLinkTarget returns the relative symlink target used inside
+// .claude/skills/ to point at the user-owned .pylon/skills/<name> directory.
+func SkillLinkTarget(name string) string {
+	return filepath.Join("..", "..", ".pylon", "skills", name)
+}
+
 // RootClaudePath returns the workspace-root CLAUDE.md (a thin @AGENTS.md import marker).
 func RootClaudePath(root string) string {
 	return filepath.Join(root, "CLAUDE.md")

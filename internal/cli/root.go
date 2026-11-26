@@ -21,6 +21,7 @@ var (
 // SetVersion sets the version string (called from main).
 func SetVersion(v string) {
 	version = v
+	rootCmd.Version = v // --version 플래그도 켠다
 }
 
 // rootCmd is the base command for pylon.

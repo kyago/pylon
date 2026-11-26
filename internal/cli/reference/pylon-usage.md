@@ -71,8 +71,8 @@ pylon은 에이전트를 내장하지 않습니다. 구현·탐색·리뷰 모�
 2. 맞는 것이 없으면 도구의 공식 기본 기능을 씁니다: Claude Code는 `general-purpose`·`Explore`·`Plan` 에이전트와
    `/code-review`, Codex는 `codex review`.
 
-어느 쪽에도 맞는 것이 없으면 직접 처리합니다. Claude Code는 `.pylon/agents/`를 `.claude/agents/`로 자동 등록하며, 다른
-도구에서는 파일을 읽어 프롬프트로 씁니다.
+어느 쪽에도 맞는 것이 없으면 직접 처리합니다. Claude Code는 `.pylon/agents/`를 `.claude/agents/`로,
+`.pylon/skills/<이름>/SKILL.md`를 `.claude/skills/`로 자동 등록하며, 다른 도구에서는 파일을 읽어 프롬프트로 씁니다.
 
 ## 검증 규약
 

@@ -56,7 +56,9 @@ list themselves.
 
 `//go:embed` from `internal/cli/`: `commands/*.md` (`/pl:cleanup`, `/pl:add-project`) and `reference/*.md` (the
 manual). Edit these, not any `.pylon/builtin/` copy. Pylon ships no agents: the manual points sessions at the host
-tool's own agents and review features, and `.pylon/agents/` holds the user's, linked into `.claude/agents/`.
+tool's own agents and review features, and `.pylon/agents/` holds the user's, linked into `.claude/agents/`. User skills
+(`.pylon/skills/<name>/SKILL.md`) are linked into `.claude/skills/` the same way; only links pointing into
+`.pylon/skills/` are ever replaced or pruned there, and a `.claude/skills` that is itself a symlink is left alone.
 
 **Ownership contract** (`syncBuiltinResources` in `doctor.go`, shared by init, doctor and `pylon mem inject`):
 `.pylon/builtin/` (git-ignored when the workspace root is in a git repository) is pylon-owned. Every sync compares
